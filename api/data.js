@@ -149,11 +149,18 @@ async function createAppointment(req, res, user, body) {
 
 async function updateAppointment(req, res, user, body) {
   if (!body.id) throw appError('Agendamento não informado.')
-  const scope = await appointmentScope(user)
   const allowed = ['confirmed','in_service','completed','cancelled','no_show','rescheduled']
   if (!allowed.includes(body.status)) throw appError('Status inválido.')
-  const params = [body.status, body.id, ...scope.params]
-  const { rows } = await query(`update public.appointments a set status=$1 where a.id=$2 and ${scope.sql} returning id`, params)
+  const params = [body.status, body.id]
+  let scopeSql = 'true'
+  if (user.role === 'client') {
+    params.push(user.id)
+    scopeSql = 'a.client_id in (select id from public.clients where profile_id=$3)'
+  } else if (user.role === 'professional') {
+    params.push(user.id)
+    scopeSql = 'a.professional_id in (select id from public.professionals where profile_id=$3)'
+  }
+  const { rows } = await query(`update public.appointments a set status=$1 where a.id=$2 and ${scopeSql} returning id`, params)
   if (!rows[0]) throw appError('Agendamento não encontrado.', 404)
   await query(`insert into public.appointment_status_history(appointment_id,to_status,changed_by,note) values($1,$2,$3,$4)`, [body.id, body.status, user.id, body.note || 'Atualizado pelo aplicativo'])
   return send(res, 200, { ok: true })
