@@ -51,6 +51,29 @@ async function getResource(req, res, user, resource) {
     return send(res, 200, { appointments: rows.map(formatAppointment) })
   }
 
+  if (resource === 'availability') {
+    const date = String(req.query?.date || '')
+    const serviceName = String(req.query?.serviceName || '')
+    const requestedProfessional = String(req.query?.professionalName || '')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw appError('Data inválida.')
+    const { rows: services } = await query('select duration_minutes from public.services where lower(name)=lower($1) and active limit 1', [serviceName])
+    if (!services[0]) throw appError('Serviço não encontrado.')
+    const professionalSql = requestedProfessional === 'Primeira disponível'
+      ? `select p.id,pp.full_name from public.professionals p join public.profiles pp on pp.id=p.profile_id where p.active order by pp.full_name limit 1`
+      : `select p.id,pp.full_name from public.professionals p join public.profiles pp on pp.id=p.profile_id where p.active and lower(pp.full_name)=lower($1) limit 1`
+    const { rows: professionals } = await query(professionalSql, requestedProfessional === 'Primeira disponível' ? [] : [requestedProfessional])
+    if (!professionals[0]) throw appError('Profissional não encontrada.')
+    const slots = ['09:00','10:30','14:00','16:00']
+    const result = []
+    for (const time of slots) {
+      const startsAt = new Date(`${date}T${time}:00-03:00`)
+      const endsAt = new Date(startsAt.getTime() + services[0].duration_minutes * 60_000)
+      const { rowCount } = await query(`select 1 from public.appointments where professional_id=$1 and status not in ('cancelled','no_show') and tstzrange(starts_at,ends_at,'[)') && tstzrange($2,$3,'[)') limit 1`, [professionals[0].id, startsAt.toISOString(), endsAt.toISOString()])
+      result.push({ time, available: rowCount === 0 })
+    }
+    return send(res, 200, { professional: professionals[0], slots: result })
+  }
+
   if (resource === 'clients') {
     await requireUser(req, ['professional', 'admin'])
     const { rows } = await query(`
