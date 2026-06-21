@@ -149,7 +149,7 @@ async function createAppointment(req, res, user, body) {
 
 async function updateAppointment(req, res, user, body) {
   if (!body.id) throw appError('Agendamento não informado.')
-  const allowed = ['confirmed','in_service','completed','cancelled','no_show','rescheduled']
+  const allowed = ['pending_deposit','confirmed','in_service','completed','cancelled','no_show','rescheduled']
   if (!allowed.includes(body.status)) throw appError('Status inválido.')
   const params = [body.status, body.id]
   let scopeSql = 'true'
@@ -191,13 +191,13 @@ export default async function handler(req, res) {
   try {
     const user = await requireUser(req)
     const resource = req.query?.resource || 'bootstrap'
-    if (req.method === 'GET') return getResource(req, res, user, resource)
+    if (req.method === 'GET') return await getResource(req, res, user, resource)
     const body = getBody(req)
-    if (req.method === 'POST' && resource === 'appointments') return createAppointment(req, res, user, body)
-    if (req.method === 'POST' && resource === 'photos') return createPhoto(req, res, user, body)
-    if (req.method === 'POST' && resource === 'inventory') return createInventory(req, res, user, body)
-    if (req.method === 'POST' && resource === 'technical-records') return createTechnicalRecord(req, res, user, body)
-    if (req.method === 'PATCH' && resource === 'appointments') return updateAppointment(req, res, user, body)
+    if (req.method === 'POST' && resource === 'appointments') return await createAppointment(req, res, user, body)
+    if (req.method === 'POST' && resource === 'photos') return await createPhoto(req, res, user, body)
+    if (req.method === 'POST' && resource === 'inventory') return await createInventory(req, res, user, body)
+    if (req.method === 'POST' && resource === 'technical-records') return await createTechnicalRecord(req, res, user, body)
+    if (req.method === 'PATCH' && resource === 'appointments') return await updateAppointment(req, res, user, body)
     return methodNotAllowed(res, ['GET', 'POST', 'PATCH'])
   } catch (error) {
     return handleError(res, error)
