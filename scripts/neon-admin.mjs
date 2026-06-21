@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import pg from 'pg'
+import bcrypt from 'bcryptjs'
 
 const { Client } = pg
 const command = process.argv[2] || 'inspect'
@@ -46,6 +47,7 @@ async function setup() {
   const schema = await readFile(resolve('supabase/schema.sql'), 'utf8')
   const seed = await readFile(resolve('database/neon-seed.sql'), 'utf8')
   const brandMigration = await readFile(resolve('database/neon-brand-carol-sol.sql'), 'utf8')
+  const operationalMigration = await readFile(resolve('database/neon-operational.sql'), 'utf8')
 
   await client.query('begin')
   try {
@@ -71,6 +73,16 @@ async function setup() {
     if (!brandApplied) {
       await client.query(brandMigration)
       await client.query("insert into public._luxe_migrations(version, description) values ('003_brand_carol_sol', 'Atualização da marca para Carol Sol')")
+    }
+    const { rowCount: operationalApplied } = await client.query("select 1 from public._luxe_migrations where version = '004_operational_api'")
+    if (!operationalApplied) {
+      await client.query(operationalMigration)
+      const passwordHash = await bcrypt.hash('CarolSol@2026', 12)
+      await client.query(`update auth.users set encrypted_password=$1 where id in (
+        '00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002',
+        '00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000010',
+        '00000000-0000-0000-0000-000000000011') and encrypted_password is null`, [passwordHash])
+      await client.query("insert into public._luxe_migrations(version, description) values ('004_operational_api', 'Autenticação e índices da API operacional')")
     }
     await client.query('commit')
   } catch (error) {

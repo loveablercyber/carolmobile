@@ -6,6 +6,7 @@ import { ClientArea } from './pages/client/ClientArea'
 import { ProfessionalArea } from './pages/professional/ProfessionalArea'
 import { AdminArea } from './pages/admin/AdminArea'
 import { Logo } from './components/ui'
+import { useAuth } from './context/AuthContext'
 
 type InstallEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> }
 
@@ -23,5 +24,13 @@ function ConnectionBanner(){
 }
 
 export default function App(){
-  return <><ConnectionBanner/><Routes><Route path="/" element={<IntroPage/>}/><Route path="/entrar" element={<AuthPage/>}/><Route path="/cadastro" element={<AuthPage/>}/><Route path="/recuperar" element={<AuthPage/>}/><Route path="/cliente/*" element={<ClientArea/>}/><Route path="/profissional/*" element={<ProfessionalArea/>}/><Route path="/admin/*" element={<AdminArea/>}/><Route path="*" element={<Navigate to="/" replace/>}/></Routes><InstallPrompt/></>
+  return <><ConnectionBanner/><Routes><Route path="/" element={<IntroPage/>}/><Route path="/entrar" element={<AuthPage/>}/><Route path="/cadastro" element={<AuthPage/>}/><Route path="/recuperar" element={<AuthPage/>}/><Route path="/redefinir" element={<AuthPage/>}/><Route path="/cliente/*" element={<Protected role="client"><ClientArea/></Protected>}/><Route path="/profissional/*" element={<Protected role="professional"><ProfessionalArea/></Protected>}/><Route path="/admin/*" element={<Protected role="admin"><AdminArea/></Protected>}/><Route path="*" element={<Navigate to="/" replace/>}/></Routes><InstallPrompt/></>
+}
+
+function Protected({role,children}:{role:'client'|'professional'|'admin';children:React.ReactNode}){
+  const {user,loading}=useAuth()
+  if(loading)return <div className="fixed inset-0 grid place-items-center bg-cream"><Logo/></div>
+  if(!user)return <Navigate to="/entrar" replace/>
+  if(user.role!==role){const destination=user.role==='client'?'/cliente/inicio':user.role==='professional'?'/profissional/hoje':'/admin/dashboard';return <Navigate to={destination} replace/>}
+  return children
 }

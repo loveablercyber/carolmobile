@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { notifications } from '../data/mock'
 import { Avatar, Badge, Logo } from './ui'
+import { useAuth } from '../context/AuthContext'
 
 export type Role = 'cliente' | 'profissional' | 'admin'
 
@@ -43,6 +44,7 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
   const [mobileMenu, setMobileMenu] = useState(false)
   const [alerts, setAlerts] = useState(false)
   const navigate = useNavigate(); const location = useLocation()
+  const { logout, user } = useAuth()
   const nav = roleNav[role]; const identity = identities[role]
   const mobileNav = role === 'admin' ? nav.slice(0, 5) : role === 'profissional' ? nav.slice(0, 5) : nav
   const title = useMemo(() => nav.find(n => location.pathname.startsWith(n.path))?.label ?? 'Carol Sol', [location.pathname, nav])
@@ -53,7 +55,7 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
       <nav className="no-scrollbar flex-1 space-y-1 overflow-y-auto px-3 pb-4">
         {nav.map(({ label, path, icon: Icon }) => <NavLink key={path} to={path} onClick={() => setMobileMenu(false)} className={({ isActive }) => `group flex items-center gap-3 rounded-2xl px-4 py-3 text-[13px] font-semibold transition ${isActive ? 'bg-white text-ink shadow-lg' : 'text-white/55 hover:bg-white/[.07] hover:text-white'}`}><Icon size={18} /><span>{label}</span></NavLink>)}
       </nav>
-      <button onClick={() => navigate('/entrar')} className="m-4 flex items-center gap-3 rounded-2xl border border-white/10 px-4 py-3 text-left"><Avatar src={identity.image} name={identity.name} size="sm" /><span className="min-w-0 flex-1"><span className="block truncate text-xs font-bold">{identity.name}</span><span className="block truncate text-[10px] text-white/45">{identity.detail}</span></span><LogOut size={16} className="text-white/45" /></button>
+      <button onClick={async () => { await logout(); navigate('/entrar') }} className="m-4 flex items-center gap-3 rounded-2xl border border-white/10 px-4 py-3 text-left"><Avatar src={user?.avatar_url || identity.image} name={user?.full_name || identity.name} size="sm" /><span className="min-w-0 flex-1"><span className="block truncate text-xs font-bold">{user?.full_name || identity.name}</span><span className="block truncate text-[10px] text-white/45">{identity.detail}</span></span><LogOut size={16} className="text-white/45" /></button>
     </aside>
   )
 
@@ -69,7 +71,7 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
           <div className="relative"><button onClick={() => setAlerts(!alerts)} aria-label="Notificações" className="relative grid h-10 w-10 place-items-center rounded-xl border border-black/[.06] bg-white"><Bell size={18} /><span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-champagne ring-2 ring-white" /></button>
             {alerts && <div className="absolute right-0 top-12 w-[min(350px,calc(100vw-24px))] rounded-[24px] border border-black/[.06] bg-white p-4 shadow-2xl"><div className="mb-3 flex items-center justify-between"><h3 className="font-display text-xl font-semibold">Notificações</h3><Badge tone="gold">2 novas</Badge></div>{notifications.map((n, i) => <div key={i} className="flex gap-3 border-t border-black/[.05] py-3 first:border-0"><span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${n.unread ? 'bg-champagne' : 'bg-stone-200'}`} /><div><div className="text-xs font-bold">{n.title}</div><div className="mt-1 text-[11px] leading-relaxed text-stone-500">{n.text}</div></div><span className="ml-auto shrink-0 text-[9px] text-stone-400">{n.time}</span></div>)}</div>}
           </div>
-          <button onClick={() => navigate(`/${role}/perfil`)} className="hidden items-center gap-2 rounded-xl bg-white py-1.5 pl-1.5 pr-3 sm:flex"><Avatar src={identity.image} name={identity.name} size="sm" /><span className="text-left"><span className="block text-[11px] font-bold">{identity.name}</span><span className="block text-[9px] text-stone-400">{identity.detail}</span></span><ChevronDown size={14} /></button>
+          <button onClick={() => navigate(`/${role}/perfil`)} className="hidden items-center gap-2 rounded-xl bg-white py-1.5 pl-1.5 pr-3 sm:flex"><Avatar src={user?.avatar_url || identity.image} name={user?.full_name || identity.name} size="sm" /><span className="text-left"><span className="block text-[11px] font-bold">{user?.full_name || identity.name}</span><span className="block text-[9px] text-stone-400">{identity.detail}</span></span><ChevronDown size={14} /></button>
         </div>
       </header>
       <main className="safe-bottom mx-auto max-w-[1500px] p-4 sm:p-7 lg:p-10">{children}</main>
