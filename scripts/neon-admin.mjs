@@ -45,6 +45,7 @@ async function setup() {
   const bootstrap = await readFile(resolve('database/neon-bootstrap.sql'), 'utf8')
   const schema = await readFile(resolve('supabase/schema.sql'), 'utf8')
   const seed = await readFile(resolve('database/neon-seed.sql'), 'utf8')
+  const brandMigration = await readFile(resolve('database/neon-brand-carol-sol.sql'), 'utf8')
 
   await client.query('begin')
   try {
@@ -58,13 +59,18 @@ async function setup() {
       } else {
         await client.query(schema)
       }
-      await client.query("insert into public._luxe_migrations(version, description) values ('001_initial_schema', 'Schema relacional Luxe Hair')")
+      await client.query("insert into public._luxe_migrations(version, description) values ('001_initial_schema', 'Schema relacional Carol Sol')")
     }
 
     const { rowCount: seedApplied } = await client.query("select 1 from public._luxe_migrations where version = '002_demo_seed'")
     if (!seedApplied) {
       await client.query(seed)
-      await client.query("insert into public._luxe_migrations(version, description) values ('002_demo_seed', 'Dados demonstrativos Luxe Hair')")
+      await client.query("insert into public._luxe_migrations(version, description) values ('002_demo_seed', 'Dados demonstrativos Carol Sol')")
+    }
+    const { rowCount: brandApplied } = await client.query("select 1 from public._luxe_migrations where version = '003_brand_carol_sol'")
+    if (!brandApplied) {
+      await client.query(brandMigration)
+      await client.query("insert into public._luxe_migrations(version, description) values ('003_brand_carol_sol', 'Atualização da marca para Carol Sol')")
     }
     await client.query('commit')
   } catch (error) {

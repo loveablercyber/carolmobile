@@ -3,9 +3,9 @@ import { Check, ChevronRight, LoaderCircle, X } from 'lucide-react'
 
 export function Logo({ compact = false, light = false }: { compact?: boolean; light?: boolean }) {
   return (
-    <div className="flex items-center gap-2.5" aria-label="Luxe Hair">
-      <div className={`grid h-10 w-10 place-items-center rounded-full border font-display text-2xl italic ${light ? 'border-white/20 text-champagne' : 'border-champagne/30 text-champagne'}`}>L</div>
-      {!compact && <div className="leading-none"><div className={`font-display text-[22px] font-semibold tracking-[.16em] ${light ? 'text-white' : 'text-ink'}`}>LUXE HAIR</div><div className={`mt-1 text-[7px] font-semibold tracking-[.33em] ${light ? 'text-white/50' : 'text-stone-400'}`}>MEGA HAIR PREMIUM</div></div>}
+    <div className="flex items-center gap-2.5" aria-label="Carol Sol">
+      <div className={`grid h-10 w-10 place-items-center rounded-full border font-display text-sm font-semibold tracking-[-.08em] ${light ? 'border-white/20 text-champagne' : 'border-champagne/30 text-champagne'}`}>CS</div>
+      {!compact && <div className="leading-none"><div className={`font-display text-[22px] font-semibold tracking-[.16em] ${light ? 'text-white' : 'text-ink'}`}>CAROL SOL</div><div className={`mt-1 text-[7px] font-semibold tracking-[.33em] ${light ? 'text-white/50' : 'text-stone-400'}`}>MEGA HAIR PREMIUM</div></div>}
     </div>
   )
 }

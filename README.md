@@ -1,4 +1,4 @@
-# Luxe Hair PWA
+# Carol Sol PWA
 
 Aplicativo demonstrativo premium para gestão especializada de Mega Hair, com áreas de cliente, profissional e administração.
 

@@ -45,7 +45,7 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
   const navigate = useNavigate(); const location = useLocation()
   const nav = roleNav[role]; const identity = identities[role]
   const mobileNav = role === 'admin' ? nav.slice(0, 5) : role === 'profissional' ? nav.slice(0, 5) : nav
-  const title = useMemo(() => nav.find(n => location.pathname.startsWith(n.path))?.label ?? 'Luxe Hair', [location.pathname, nav])
+  const title = useMemo(() => nav.find(n => location.pathname.startsWith(n.path))?.label ?? 'Carol Sol', [location.pathname, nav])
 
   const sidebar = (
     <aside className="flex h-full flex-col bg-ink text-white">
@@ -63,7 +63,7 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
     <div className="lg:pl-[260px]">
       <header className="glass sticky top-0 z-40 flex h-[74px] items-center border-b border-black/[.05] px-4 sm:px-7 lg:px-10">
         <button aria-label="Abrir menu" onClick={() => setMobileMenu(true)} className="mr-3 grid h-10 w-10 place-items-center rounded-xl bg-white lg:hidden"><Menu size={20} /></button>
-        <div className="lg:hidden"><Logo compact /></div><div className="hidden lg:block"><span className="text-xs font-semibold text-stone-400">Luxe Hair / </span><span className="text-xs font-bold">{title}</span></div>
+        <div className="lg:hidden"><Logo compact /></div><div className="hidden lg:block"><span className="text-xs font-semibold text-stone-400">Carol Sol / </span><span className="text-xs font-bold">{title}</span></div>
         <div className="ml-auto flex items-center gap-2">
           <button className="hidden h-10 items-center gap-2 rounded-xl border border-black/[.06] bg-white px-3 text-xs text-stone-500 sm:flex"><Search size={16} />Buscar <kbd className="ml-4 rounded bg-stone-100 px-1.5 py-0.5 text-[9px]">⌘K</kbd></button>
           <div className="relative"><button onClick={() => setAlerts(!alerts)} aria-label="Notificações" className="relative grid h-10 w-10 place-items-center rounded-xl border border-black/[.06] bg-white"><Bell size={18} /><span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-champagne ring-2 ring-white" /></button>

@@ -14,10 +14,10 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['luxe-icon.svg', 'offline.html'],
+      includeAssets: ['carol-sol-icon.svg', 'offline.html'],
       manifest: {
-        name: 'Luxe Hair — Mega Hair Premium',
-        short_name: 'Luxe Hair',
+        name: 'Carol Sol — Mega Hair Premium',
+        short_name: 'Carol Sol',
         description: 'Sua jornada completa de transformação, cuidado e manutenção do Mega Hair.',
         theme_color: '#181511',
         background_color: '#faf8f3',
@@ -27,12 +27,12 @@ export default defineConfig({
         lang: 'pt-BR',
         categories: ['beauty', 'lifestyle', 'business'],
         icons: [
-          { src: '/luxe-icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
-          { src: '/luxe-icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' }
+          { src: '/carol-sol-icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+          { src: '/carol-sol-icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' }
         ],
         shortcuts: [
-          { name: 'Agendar', short_name: 'Agendar', url: '/cliente/agenda', icons: [{ src: '/luxe-icon.svg', sizes: 'any', type: 'image/svg+xml' }] },
-          { name: 'Minha agenda', short_name: 'Agenda', url: '/cliente/agenda', icons: [{ src: '/luxe-icon.svg', sizes: 'any', type: 'image/svg+xml' }] }
+          { name: 'Agendar', short_name: 'Agendar', url: '/cliente/agenda', icons: [{ src: '/carol-sol-icon.svg', sizes: 'any', type: 'image/svg+xml' }] },
+          { name: 'Minha agenda', short_name: 'Agenda', url: '/cliente/agenda', icons: [{ src: '/carol-sol-icon.svg', sizes: 'any', type: 'image/svg+xml' }] }
         ]
       },
       workbox: {
@@ -41,7 +41,7 @@ export default defineConfig({
           {
             urlPattern: /^https:\/\/images\.unsplash\.com\//,
             handler: 'CacheFirst',
-            options: { cacheName: 'luxe-images', expiration: { maxEntries: 40, maxAgeSeconds: 60 * 60 * 24 * 30 } }
+            options: { cacheName: 'carol-sol-images', expiration: { maxEntries: 40, maxAgeSeconds: 60 * 60 * 24 * 30 } }
           }
         ]
       }

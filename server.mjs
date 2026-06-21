@@ -35,8 +35,8 @@ createServer(async (request, response) => {
     response.end(content)
   } catch (error) {
     response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' })
-    response.end('Não foi possível iniciar a Luxe Hair. Execute npm run build e tente novamente.')
+    response.end('Não foi possível iniciar a Carol Sol. Execute npm run build e tente novamente.')
   }
 }).listen(port, '127.0.0.1', () => {
-  console.log(`Luxe Hair disponível em http://localhost:${port}`)
+  console.log(`Carol Sol disponível em http://localhost:${port}`)
 })

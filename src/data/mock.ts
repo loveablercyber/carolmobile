@@ -35,10 +35,10 @@ export const clients = [
 ]
 
 export const inventory = [
-  { code: 'CAB-4571', item: 'Cabelo humano premium', detail: 'Castanho 4 • 60 cm • Liso', lot: 'LX2604', qty: 8, min: 5, cost: 'R$ 680', margin: '48%', status: 'Em estoque' },
-  { code: 'FIT-2110', item: 'Fita adesiva invisível', detail: 'Loiro 8.1 • 55 cm • Ondulado', lot: 'LX2602', qty: 3, min: 6, cost: 'R$ 520', margin: '52%', status: 'Estoque baixo' },
-  { code: 'MIC-0812', item: 'Microlink premium', detail: 'Morena iluminada • 65 cm', lot: 'LX2605', qty: 12, min: 4, cost: 'R$ 790', margin: '46%', status: 'Em estoque' },
-  { code: 'PRO-3301', item: 'Kit home care Luxe', detail: 'Shampoo + máscara + sérum', lot: 'LX2606', qty: 21, min: 8, cost: 'R$ 118', margin: '61%', status: 'Em estoque' }
+  { code: 'CAB-4571', item: 'Cabelo humano premium', detail: 'Castanho 4 • 60 cm • Liso', lot: 'CS2604', qty: 8, min: 5, cost: 'R$ 680', margin: '48%', status: 'Em estoque' },
+  { code: 'FIT-2110', item: 'Fita adesiva invisível', detail: 'Loiro 8.1 • 55 cm • Ondulado', lot: 'CS2602', qty: 3, min: 6, cost: 'R$ 520', margin: '52%', status: 'Estoque baixo' },
+  { code: 'MIC-0812', item: 'Microlink premium', detail: 'Morena iluminada • 65 cm', lot: 'CS2605', qty: 12, min: 4, cost: 'R$ 790', margin: '46%', status: 'Em estoque' },
+  { code: 'PRO-3301', item: 'Kit home care Carol Sol', detail: 'Shampoo + máscara + sérum', lot: 'CS2606', qty: 21, min: 8, cost: 'R$ 118', margin: '61%', status: 'Em estoque' }
 ]
 
 export const professionals = [

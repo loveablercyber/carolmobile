@@ -18,7 +18,7 @@ export default {
         sans: ['Manrope', 'sans-serif']
       },
       boxShadow: {
-        luxe: '0 22px 70px rgba(58, 43, 24, .10)',
+        premium: '0 22px 70px rgba(58, 43, 24, .10)',
         card: '0 10px 35px rgba(51, 42, 29, .07)'
       },
       animation: {

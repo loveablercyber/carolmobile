@@ -1,8 +1,8 @@
 -- Usuários demonstrativos. Senhas devem ser gerenciadas por um provedor de autenticação.
 insert into auth.users (id, email, phone, email_confirmed_at, raw_user_meta_data) values
-  ('00000000-0000-0000-0000-000000000001', 'admin@luxehair.com.br', '(11) 4002-8922', now(), '{"name":"Carolina Alves"}'),
-  ('00000000-0000-0000-0000-000000000002', 'juliana@luxehair.com.br', '(11) 99932-4430', now(), '{"name":"Juliana Almeida"}'),
-  ('00000000-0000-0000-0000-000000000003', 'renata@luxehair.com.br', '(11) 99822-1170', now(), '{"name":"Renata Moura"}'),
+  ('00000000-0000-0000-0000-000000000001', 'admin@carolsol.com.br', '(11) 4002-8922', now(), '{"name":"Carolina Alves"}'),
+  ('00000000-0000-0000-0000-000000000002', 'juliana@carolsol.com.br', '(11) 99932-4430', now(), '{"name":"Juliana Almeida"}'),
+  ('00000000-0000-0000-0000-000000000003', 'renata@carolsol.com.br', '(11) 99822-1170', now(), '{"name":"Renata Moura"}'),
   ('00000000-0000-0000-0000-000000000010', 'juliana.mendes@email.com', '(11) 99845-2201', now(), '{"name":"Juliana Mendes"}'),
   ('00000000-0000-0000-0000-000000000011', 'camila.ferreira@email.com', '(11) 99771-8802', now(), '{"name":"Camila Ferreira"}')
 on conflict (id) do nothing;
@@ -30,7 +30,7 @@ insert into public.admins (id, profile_id, permissions) values
 on conflict (id) do nothing;
 
 insert into public.salon_locations (id, name, address, phone) values
-  ('40000000-0000-0000-0000-000000000001', 'Luxe Hair Jardins', '{"street":"Alameda Santos","number":"1240","district":"Jardins","city":"São Paulo","state":"SP","zip":"01418-100"}', '(11) 4002-8922')
+  ('40000000-0000-0000-0000-000000000001', 'Carol Sol Jardins', '{"street":"Alameda Santos","number":"1240","district":"Jardins","city":"São Paulo","state":"SP","zip":"01418-100"}', '(11) 4002-8922')
 on conflict (id) do nothing;
 
 insert into public.chairs_or_rooms (id, location_id, name, kind) values
@@ -93,17 +93,17 @@ insert into public.loyalty_points (id, client_id, points, reason, created_at) va
 on conflict (id) do nothing;
 
 insert into public.coupons (id, code, description, discount_type, discount_value, starts_at, ends_at, usage_limit, target) values
-  ('90000000-0000-0000-0000-000000000001', 'LUXE15', '15% OFF no Kit Home Care Luxe', 'percentage', 15, '2026-06-01', '2026-06-30 23:59:59-03', 200, '{"level":"gold"}')
+  ('90000000-0000-0000-0000-000000000001', 'CAROLSOL15', '15% OFF no Kit Home Care Carol Sol', 'percentage', 15, '2026-06-01', '2026-06-30 23:59:59-03', 200, '{"level":"gold"}')
 on conflict (id) do nothing;
 
 insert into public.hair_inventory (id, code, supplier, category, color, shade, length_cm, texture, weight_grams, lot, unit_cost, suggested_price, quantity, minimum_stock) values
-  ('80000000-0000-0000-0000-000000000001', 'CAB-4571', 'Brasil Hair Premium', 'Cabelo humano', 'Castanho', '4', 60, 'Liso', 100, 'LX2604', 680, 1300, 8, 5),
-  ('80000000-0000-0000-0000-000000000002', 'FIT-2110', 'Luxe Imports', 'Fita adesiva', 'Loiro', '8.1', 55, 'Ondulado', 100, 'LX2602', 520, 1100, 3, 6),
-  ('80000000-0000-0000-0000-000000000003', 'MIC-0812', 'Brasil Hair Premium', 'Microlink', 'Morena iluminada', '6/7', 65, 'Ondulado', 100, 'LX2605', 790, 1650, 12, 4)
+  ('80000000-0000-0000-0000-000000000001', 'CAB-4571', 'Brasil Hair Premium', 'Cabelo humano', 'Castanho', '4', 60, 'Liso', 100, 'CS2604', 680, 1300, 8, 5),
+  ('80000000-0000-0000-0000-000000000002', 'FIT-2110', 'Carol Sol Imports', 'Fita adesiva', 'Loiro', '8.1', 55, 'Ondulado', 100, 'CS2602', 520, 1100, 3, 6),
+  ('80000000-0000-0000-0000-000000000003', 'MIC-0812', 'Brasil Hair Premium', 'Microlink', 'Morena iluminada', '6/7', 65, 'Ondulado', 100, 'CS2605', 790, 1650, 12, 4)
 on conflict (id) do nothing;
 
 insert into public.products (id, sku, name, category, cost, price, stock_quantity, minimum_stock) values
-  ('81000000-0000-0000-0000-000000000001', 'KIT-HC-01', 'Kit Home Care Luxe', 'Manutenção', 118, 349, 21, 8)
+  ('81000000-0000-0000-0000-000000000001', 'KIT-HC-01', 'Kit Home Care Carol Sol', 'Manutenção', 118, 349, 21, 8)
 on conflict (id) do nothing;
 
 insert into public.professional_goals (id, professional_id, period, revenue_goal, service_goal, product_goal, recurrence_goal) values

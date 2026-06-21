@@ -1,4 +1,4 @@
--- LUXE HAIR — estrutura inicial para Supabase/PostgreSQL
+-- CAROL SOL — estrutura inicial para Supabase/PostgreSQL
 create extension if not exists "uuid-ossp";
 
 create type public.user_role as enum ('client','professional','admin');
