@@ -9,12 +9,6 @@
       "maxDuration": 30
     }
   },
-  "crons": [
-    {
-      "path": "/api/cron-reminders",
-      "schedule": "0 12 * * *"
-    }
-  ],
   "rewrites": [
     {
       "source": "/(.*)",
