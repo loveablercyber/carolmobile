@@ -4,9 +4,9 @@ import { handleError, send } from '../server/lib/http.js'
 
 function reminderWindow(startsAt) {
   const hours = (new Date(startsAt).getTime() - Date.now()) / 3_600_000
-  if (hours >= 47 && hours < 49) return { key: '48h', label: 'em 48 horas' }
-  if (hours >= 23 && hours < 25) return { key: '24h', label: 'amanhã' }
-  if (hours >= 1 && hours < 3) return { key: '2h', label: 'em aproximadamente 2 horas' }
+  // A execução diária no plano Hobby usa janelas amplas para não perder lembretes.
+  if (hours >= 42 && hours < 54) return { key: '48h', label: 'em aproximadamente 48 horas' }
+  if (hours >= 18 && hours < 30) return { key: '24h', label: 'amanhã' }
   return null
 }
 
@@ -20,7 +20,7 @@ export default async function handler(req, res) {
       join public.services s on s.id=a.service_id
       join public.clients c on c.id=a.client_id join public.profiles cp on cp.id=c.profile_id join auth.users u on u.id=cp.id
       join public.professionals pr on pr.id=a.professional_id join public.profiles pp on pp.id=pr.profile_id
-      where a.status in ('confirmed','pending_deposit') and a.starts_at between now()+interval '1 hour' and now()+interval '49 hours'
+      where a.status in ('confirmed','pending_deposit') and a.starts_at between now()+interval '18 hours' and now()+interval '54 hours'
     `)
     let sent = 0
     for (const appointment of rows) {
