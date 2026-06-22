@@ -8,7 +8,7 @@ import { useAuth } from '../../context/AuthContext'
 type Result<T>={data:T}
 const brl=(v:unknown)=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})
 const dt=(v:unknown)=>v?new Date(String(v)).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'}):'—'
-const label:Record<string,string>={confirmed:'Confirmado',pending_deposit:'Aguardando sinal',in_service:'Em atendimento',completed:'Finalizado',cancelled:'Cancelado',no_show:'Faltou',rescheduled:'Reagendado',pending:'Pendente',approved:'Aprovada',paid:'Paga'}
+const label:Record<string,string>={requested:'Solicitado',awaiting_payment:'Aguardando pagamento',confirmed:'Confirmado',pending_deposit:'Aguardando sinal',reschedule_requested:'Reagendamento solicitado',in_service:'Em atendimento',completed:'Finalizado',cancelled:'Cancelado',no_show:'Faltou',rescheduled:'Reagendado',pending:'Pendente',approved:'Aprovada',paid:'Paga'}
 const tone=(s:string):'green'|'amber'|'rose'|'gold'|'neutral'=>['confirmed','completed','paid','approved'].includes(s)?'green':['pending_deposit','pending'].includes(s)?'amber':['cancelled','no_show'].includes(s)?'rose':'gold'
 function useLoad<T>(url:string){const[data,setData]=useState<T|null>(null);const[loading,setLoading]=useState(true);const[error,setError]=useState('');const reload=()=>{setLoading(true);return apiFetch<Result<T>>(url).then(r=>{setData(r.data);setError('')}).catch(e=>{console.error('Professional portal load error',e);setError(e.message)}).finally(()=>setLoading(false))};useEffect(()=>{reload()},[url]);return{data,loading,error,reload}}
 

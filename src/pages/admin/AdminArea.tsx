@@ -1,93 +1,1756 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
-  AlertTriangle, ArrowDownRight, ArrowUpRight, BadgeDollarSign, BarChart3, Boxes, CalendarDays, Check,
-  ChevronDown, CircleDollarSign, Clock3, CreditCard, Download, Eye, Filter, Gift, Import, Mail, Megaphone,
-  MessageCircle, MoreHorizontal, Package, Pencil, Plus, QrCode, Search, Send, Settings, Smartphone,
-  Sparkles, Star, Tags, Target, TrendingUp, Upload, UserPlus, Users, WalletCards, X, Zap
-} from 'lucide-react'
-import { AppShell } from '../../components/AppShell'
-import { Avatar, Badge, Modal, PageHeader, SectionHeading, StatCard, Toast } from '../../components/ui'
-import { appointments, clients, images, inventory, professionals, services } from '../../data/mock'
-import { apiFetch } from '../../lib/api'
-import { AdminAppointmentsPage, AdminClientDetailPage, AdminClientsPage, AdminCommissionsPage, AdminCouponsPage, AdminDashboardPage, AdminInventoryPage, AdminPaymentsPage, AdminPlansPage, AdminProfessionalsPage, AdminReportsPage, AdminServicesPage, AdminSettingsPage } from './AdminPortal'
-import { ClientNotificationsPage } from '../client/ClientPortal'
+  AlertTriangle,
+  ArrowDownRight,
+  ArrowUpRight,
+  BadgeDollarSign,
+  BarChart3,
+  Boxes,
+  CalendarDays,
+  Check,
+  ChevronDown,
+  CircleDollarSign,
+  Clock3,
+  CreditCard,
+  Download,
+  Eye,
+  Filter,
+  Gift,
+  Import,
+  Mail,
+  Megaphone,
+  MessageCircle,
+  MoreHorizontal,
+  Package,
+  Pencil,
+  Plus,
+  QrCode,
+  Search,
+  Send,
+  Settings,
+  Smartphone,
+  Sparkles,
+  Star,
+  Tags,
+  Target,
+  TrendingUp,
+  Upload,
+  UserPlus,
+  Users,
+  WalletCards,
+  X,
+  Zap,
+} from "lucide-react";
+import { AppShell } from "../../components/AppShell";
+import {
+  Avatar,
+  Badge,
+  Modal,
+  PageHeader,
+  SectionHeading,
+  StatCard,
+  Toast,
+} from "../../components/ui";
+import {
+  appointments,
+  clients,
+  images,
+  inventory,
+  professionals,
+  services,
+} from "../../data/mock";
+import { apiFetch } from "../../lib/api";
+import {
+  AdminAppointmentsPage,
+  AdminClientDetailPage,
+  AdminClientsPage,
+  AdminCommissionsPage,
+  AdminCouponsPage,
+  AdminDashboardPage,
+  AdminInventoryPage,
+  AdminPaymentsPage,
+  AdminPlansPage,
+  AdminProfessionalsPage,
+  AdminReportsPage,
+  AdminServicesPage,
+  AdminSettingsPage,
+  AdminSumupPage,
+} from "./AdminPortal";
+import { ClientNotificationsPage } from "../client/ClientPortal";
+import { WhatsAppIntegrationPage } from "../WhatsAppIntegration";
 
-export function AdminArea(){
-  const path=useLocation().pathname; let page=<AdminDashboardPage/>
-  if(path.match(/\/clientes\/[^/]+$/))page=<AdminClientDetailPage/>; else if(path.includes('/clientes'))page=<AdminClientsPage/>; else if(path.includes('/agenda')||path.includes('/agendamentos'))page=<AdminAppointmentsPage/>; else if(path.includes('/pagamentos')||path.includes('/financeiro'))page=<AdminPaymentsPage/>; else if(path.includes('/planos'))page=<AdminPlansPage/>; else if(path.includes('/cupons')||path.includes('/promocoes'))page=<AdminCouponsPage/>; else if(path.includes('/profissionais'))page=<AdminProfessionalsPage/>
-  else if(path.includes('/servicos'))page=<AdminServicesPage/>; else if(path.includes('/estoque'))page=<AdminInventoryPage/>
-  else if(path.includes('/notificacoes'))page=<ClientNotificationsPage/>
-  else if(path.includes('/comissoes'))page=<AdminCommissionsPage/>
-  else if(path.includes('/relatorios'))page=<AdminReportsPage/>; else if(path.includes('/configuracoes')||path.includes('/perfil'))page=<AdminSettingsPage/>
-  return <AppShell role="admin">{page}</AppShell>
+export function AdminArea() {
+  const path = useLocation().pathname;
+  let page = <AdminDashboardPage />;
+  if (path.match(/\/clientes\/[^/]+$/)) page = <AdminClientDetailPage />;
+  else if (path.includes("/clientes")) page = <AdminClientsPage />;
+  else if (path.includes("/agenda") || path.includes("/agendamentos"))
+    page = <AdminAppointmentsPage />;
+  else if (path.includes("/integracoes/sumup")) page = <AdminSumupPage />;
+  else if (path.includes("/integracoes/whatsapp"))
+    page = <WhatsAppIntegrationPage />;
+  else if (path.includes("/pagamentos") || path.includes("/financeiro"))
+    page = <AdminPaymentsPage />;
+  else if (path.includes("/planos")) page = <AdminPlansPage />;
+  else if (path.includes("/cupons") || path.includes("/promocoes"))
+    page = <AdminCouponsPage />;
+  else if (path.includes("/profissionais")) page = <AdminProfessionalsPage />;
+  else if (path.includes("/servicos")) page = <AdminServicesPage />;
+  else if (path.includes("/estoque")) page = <AdminInventoryPage />;
+  else if (path.includes("/notificacoes")) page = <ClientNotificationsPage />;
+  else if (path.includes("/comissoes")) page = <AdminCommissionsPage />;
+  else if (path.includes("/relatorios")) page = <AdminReportsPage />;
+  else if (path.includes("/configuracoes") || path.includes("/perfil"))
+    page = <AdminSettingsPage />;
+  return <AppShell role="admin">{page}</AppShell>;
 }
 
-function AdminDashboard(){
-  const [range,setRange]=useState('Este mês'); const [metrics,setMetrics]=useState<Record<string,any>>({}); useEffect(()=>{apiFetch<{dashboard:Record<string,any>}>('/api/data?resource=dashboard').then(data=>setMetrics(data.dashboard)).catch(()=>{})},[]); const revenue=metrics.monthly_revenue!==undefined?Number(metrics.monthly_revenue).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}):'R$ 184.620'
-  return <div className="animate-fade-up"><PageHeader eyebrow="VISÃO EXECUTIVA" title="Dashboard" subtitle="A operação da Carol Sol, do caixa à experiência da cliente." action={<div className="flex gap-2"><select value={range} onChange={e=>setRange(e.target.value)} className="field !w-auto"><option>Hoje</option><option>Esta semana</option><option>Este mês</option><option>Este ano</option></select><button className="btn-secondary"><Download size={16}/>Exportar</button></div>}/>
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Faturamento mensal" value={revenue} trend="Dados sincronizados com Neon" icon={<CircleDollarSign size={20}/>} tone="dark"/><StatCard label="Agenda futura" value={String(metrics.future_appointments??98)} trend="Agendamentos ativos" icon={<CalendarDays size={20}/>}/><StatCard label="Clientes" value={String(metrics.clients??'1.248')} trend="Cadastros persistidos" icon={<Users size={20}/>}/><StatCard label="Atendimentos hoje" value={String(metrics.today_appointments??4)} trend="Atualização em tempo real" icon={<Target size={20}/>} tone="gold"/></div>
-    <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Metric label="Novas clientes" value="48" trend="+8,2%" positive/><Metric label="Clientes recorrentes" value="68%" trend="+3,1%" positive/><Metric label="Cancelamentos" value="4,2%" trend="-0,8%" positive/><Metric label="Faltas" value="2,6%" trend="+0,4%"/></div>
-    <div className="mt-6 grid gap-5 xl:grid-cols-[1.35fr_.65fr]"><section className="surface p-6"><div className="flex flex-wrap items-center justify-between gap-3"><SectionHeading title="Faturamento"/><div className="flex items-center gap-4 text-[10px] font-semibold text-stone-400"><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-champagne"/>Realizado</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-stone-200"/>Meta</span></div></div><RevenueChart/></section><section className="surface p-6"><SectionHeading title="Meta do mês"/><div className="mx-auto mt-5 grid h-44 w-44 place-items-center rounded-full progress-ring"><div className="grid h-32 w-32 place-items-center rounded-full bg-white text-center"><div><b className="font-display text-4xl">74%</b><span className="block text-[9px] text-stone-400">R$ 184.620 / R$ 250.000</span></div></div></div><div className="mt-5 flex justify-between rounded-2xl bg-warm p-4 text-xs"><span className="text-stone-500">Faltam 9 dias</span><b>R$ 65.380</b></div></section></div>
-    <div className="mt-5 grid gap-5 lg:grid-cols-3"><section className="surface p-6"><SectionHeading title="Métodos mais vendidos"/><RankRow rank="01" label="Fita Adesiva" value="42%" width="82%"/><RankRow rank="02" label="Microlink" value="31%" width="64%"/><RankRow rank="03" label="Queratina" value="18%" width="42%"/><RankRow rank="04" label="Tic Tac" value="9%" width="23%"/></section><section className="surface p-6"><SectionHeading title="Destaque do mês"/><div className="flex items-center gap-4"><Avatar src={professionals[0].photo} name={professionals[0].name} size="lg"/><div><h3 className="font-display text-2xl font-semibold">Juliana Almeida</h3><div className="mt-1 flex items-center gap-1 text-[10px] text-champagne"><Star size={12} fill="currentColor"/>4,9 • 68 clientes</div></div></div><div className="mt-5 grid grid-cols-2 gap-3"><Info label="Faturamento" value="R$ 52.480"/><Info label="Conversão" value="76%"/></div><button className="mt-5 text-xs font-bold text-champagne">Ver desempenho completo →</button></section><section className="surface p-6"><div className="flex items-center justify-between"><h2 className="font-display text-2xl font-semibold">Alertas operacionais</h2><Badge tone="amber">4 alertas</Badge></div><div className="mt-4 space-y-3"><Alert icon={<Boxes/>} title="3 itens com estoque baixo" text="Reposição sugerida até 24/06"/><Alert icon={<Clock3/>} title="12 manutenções atrasadas" text="Campanha de retorno disponível"/><Alert icon={<CreditCard/>} title="5 sinais pendentes" text="Total de R$ 620,00"/></div></section></div>
-  </div>
+function AdminDashboard() {
+  const [range, setRange] = useState("Este mês");
+  const [metrics, setMetrics] = useState<Record<string, any>>({});
+  useEffect(() => {
+    apiFetch<{ dashboard: Record<string, any> }>("/api/data?resource=dashboard")
+      .then((data) => setMetrics(data.dashboard))
+      .catch(() => {});
+  }, []);
+  const revenue =
+    metrics.monthly_revenue !== undefined
+      ? Number(metrics.monthly_revenue).toLocaleString("pt-BR", {
+          style: "currency",
+          currency: "BRL",
+        })
+      : "R$ 184.620";
+  return (
+    <div className="animate-fade-up">
+      <PageHeader
+        eyebrow="VISÃO EXECUTIVA"
+        title="Dashboard"
+        subtitle="A operação da Carol Sol, do caixa à experiência da cliente."
+        action={
+          <div className="flex gap-2">
+            <select
+              value={range}
+              onChange={(e) => setRange(e.target.value)}
+              className="field !w-auto"
+            >
+              <option>Hoje</option>
+              <option>Esta semana</option>
+              <option>Este mês</option>
+              <option>Este ano</option>
+            </select>
+            <button className="btn-secondary">
+              <Download size={16} />
+              Exportar
+            </button>
+          </div>
+        }
+      />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Faturamento mensal"
+          value={revenue}
+          trend="Dados sincronizados com Neon"
+          icon={<CircleDollarSign size={20} />}
+          tone="dark"
+        />
+        <StatCard
+          label="Agenda futura"
+          value={String(metrics.future_appointments ?? 98)}
+          trend="Agendamentos ativos"
+          icon={<CalendarDays size={20} />}
+        />
+        <StatCard
+          label="Clientes"
+          value={String(metrics.clients ?? "1.248")}
+          trend="Cadastros persistidos"
+          icon={<Users size={20} />}
+        />
+        <StatCard
+          label="Atendimentos hoje"
+          value={String(metrics.today_appointments ?? 4)}
+          trend="Atualização em tempo real"
+          icon={<Target size={20} />}
+          tone="gold"
+        />
+      </div>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Metric label="Novas clientes" value="48" trend="+8,2%" positive />
+        <Metric
+          label="Clientes recorrentes"
+          value="68%"
+          trend="+3,1%"
+          positive
+        />
+        <Metric label="Cancelamentos" value="4,2%" trend="-0,8%" positive />
+        <Metric label="Faltas" value="2,6%" trend="+0,4%" />
+      </div>
+      <div className="mt-6 grid gap-5 xl:grid-cols-[1.35fr_.65fr]">
+        <section className="surface p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <SectionHeading title="Faturamento" />
+            <div className="flex items-center gap-4 text-[10px] font-semibold text-stone-400">
+              <span className="flex items-center gap-1">
+                <i className="h-2 w-2 rounded-full bg-champagne" />
+                Realizado
+              </span>
+              <span className="flex items-center gap-1">
+                <i className="h-2 w-2 rounded-full bg-stone-200" />
+                Meta
+              </span>
+            </div>
+          </div>
+          <RevenueChart />
+        </section>
+        <section className="surface p-6">
+          <SectionHeading title="Meta do mês" />
+          <div className="mx-auto mt-5 grid h-44 w-44 place-items-center rounded-full progress-ring">
+            <div className="grid h-32 w-32 place-items-center rounded-full bg-white text-center">
+              <div>
+                <b className="font-display text-4xl">74%</b>
+                <span className="block text-[9px] text-stone-400">
+                  R$ 184.620 / R$ 250.000
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="mt-5 flex justify-between rounded-2xl bg-warm p-4 text-xs">
+            <span className="text-stone-500">Faltam 9 dias</span>
+            <b>R$ 65.380</b>
+          </div>
+        </section>
+      </div>
+      <div className="mt-5 grid gap-5 lg:grid-cols-3">
+        <section className="surface p-6">
+          <SectionHeading title="Métodos mais vendidos" />
+          <RankRow rank="01" label="Fita Adesiva" value="42%" width="82%" />
+          <RankRow rank="02" label="Microlink" value="31%" width="64%" />
+          <RankRow rank="03" label="Queratina" value="18%" width="42%" />
+          <RankRow rank="04" label="Tic Tac" value="9%" width="23%" />
+        </section>
+        <section className="surface p-6">
+          <SectionHeading title="Destaque do mês" />
+          <div className="flex items-center gap-4">
+            <Avatar
+              src={professionals[0].photo}
+              name={professionals[0].name}
+              size="lg"
+            />
+            <div>
+              <h3 className="font-display text-2xl font-semibold">
+                Juliana Almeida
+              </h3>
+              <div className="mt-1 flex items-center gap-1 text-[10px] text-champagne">
+                <Star size={12} fill="currentColor" />
+                4,9 • 68 clientes
+              </div>
+            </div>
+          </div>
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <Info label="Faturamento" value="R$ 52.480" />
+            <Info label="Conversão" value="76%" />
+          </div>
+          <button className="mt-5 text-xs font-bold text-champagne">
+            Ver desempenho completo →
+          </button>
+        </section>
+        <section className="surface p-6">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display text-2xl font-semibold">
+              Alertas operacionais
+            </h2>
+            <Badge tone="amber">4 alertas</Badge>
+          </div>
+          <div className="mt-4 space-y-3">
+            <Alert
+              icon={<Boxes />}
+              title="3 itens com estoque baixo"
+              text="Reposição sugerida até 24/06"
+            />
+            <Alert
+              icon={<Clock3 />}
+              title="12 manutenções atrasadas"
+              text="Campanha de retorno disponível"
+            />
+            <Alert
+              icon={<CreditCard />}
+              title="5 sinais pendentes"
+              text="Total de R$ 620,00"
+            />
+          </div>
+        </section>
+      </div>
+    </div>
+  );
 }
-function Metric({label,value,trend,positive}:{label:string;value:string;trend:string;positive?:boolean}){return <div className="surface flex items-center justify-between p-5"><div><div className="text-[10px] font-semibold text-stone-400">{label}</div><div className="mt-1 font-display text-2xl font-semibold">{value}</div></div><span className={`flex items-center gap-1 rounded-full px-2 py-1 text-[9px] font-bold ${positive?'bg-emerald-50 text-emerald-700':'bg-rose-50 text-rose-700'}`}>{positive?<ArrowUpRight size={12}/>:<ArrowDownRight size={12}/>} {trend}</span></div>}
-function RevenueChart(){const data=[42,58,46,72,64,80,74,91,86,104,96,118];return <div className="mt-6 flex h-64 items-end gap-2 border-b border-black/[.06] sm:gap-4">{data.map((h,i)=><div key={i} className="group flex flex-1 flex-col items-center gap-2"><div className="relative flex h-[220px] w-full items-end justify-center"><div className="absolute bottom-0 w-[65%] rounded-t-lg bg-stone-100" style={{height:`${Math.min(100,h*.85)}%`}}/><div className="relative z-10 w-[45%] rounded-t-lg bg-gradient-to-t from-[#9e762e] to-[#dfc17b] transition group-hover:brightness-110" style={{height:`${h*.78}%`}}/><div className="absolute top-3 hidden rounded-lg bg-ink px-2 py-1 text-[8px] text-white group-hover:block">R$ {h},4k</div></div><span className="text-[8px] text-stone-400">{String(i+1).padStart(2,'0')}/06</span></div>)}</div>}
-function RankRow({rank,label,value,width}:{rank:string;label:string;value:string;width:string}){return <div className="border-b border-black/[.05] py-3 last:border-0"><div className="flex items-center gap-3"><span className="font-display text-lg text-champagne">{rank}</span><span className="flex-1 text-xs font-bold">{label}</span><b className="text-xs">{value}</b></div><div className="ml-9 mt-2 h-1.5 rounded-full bg-warm"><div className="h-full rounded-full bg-champagne" style={{width}}/></div></div>}
-function Alert({icon,title,text}:{icon:React.ReactNode;title:string;text:string}){return <button className="flex w-full items-center gap-3 rounded-2xl bg-amber-50/70 p-3 text-left"><span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-100 text-amber-700">{icon}</span><span><b className="block text-[10px]">{title}</b><span className="text-[9px] text-stone-400">{text}</span></span></button>}
-
-function GlobalAgenda(){
-  const [view,setView]=useState('Semana'); const [create,setCreate]=useState(false); const days=['Seg 22','Ter 23','Qua 24','Qui 25','Sex 26','Sáb 27']; const pros=['Juliana Almeida','Renata Moura','Bianca Freitas']
-  return <div className="animate-fade-up"><PageHeader eyebrow="OPERAÇÃO" title="Agenda global" subtitle="Visualize profissionais, salas e capacidade do salão em tempo real." action={<button onClick={()=>setCreate(true)} className="btn-primary"><Plus size={16}/>Novo agendamento</button>}/><div className="mb-5 flex flex-wrap items-center justify-between gap-3"><div className="flex rounded-2xl bg-warm p-1">{['Dia','Semana','Mês'].map(v=><button key={v} onClick={()=>setView(v)} className={`rounded-xl px-5 py-2 text-xs font-bold ${view===v?'bg-white shadow-sm':'text-stone-400'}`}>{v}</button>)}</div><div className="flex gap-2"><button className="btn-secondary !min-h-10"><Filter size={15}/>Filtros</button><button className="btn-secondary !min-h-10">‹</button><button className="btn-secondary !min-h-10">22–27 jun.</button><button className="btn-secondary !min-h-10">›</button></div></div>
-    <section className="surface overflow-x-auto"><div className="min-w-[920px]"><div className="grid grid-cols-[180px_repeat(6,1fr)] border-b border-black/[.06] bg-warm/60"><div className="p-4 text-[10px] font-bold text-stone-400">PROFISSIONAL</div>{days.map(d=><div key={d} className="border-l border-black/[.05] p-4 text-center text-[10px] font-bold">{d}</div>)}</div>{pros.map((p,pi)=><div key={p} className="grid min-h-32 grid-cols-[180px_repeat(6,1fr)] border-b border-black/[.05] last:border-0"><div className="flex items-start gap-3 p-4"><Avatar src={professionals[pi%2].photo} name={p}/><div><b className="text-[10px]">{p}</b><span className="mt-1 block text-[8px] text-stone-400">{pi===0?'Fita e Microlink':'Extensões'}</span></div></div>{days.map((d,di)=><div key={d} className="border-l border-black/[.05] p-2">{(di+pi)%2===0&&<div className={`rounded-xl p-2.5 text-[8px] ${pi===0?'bg-champagne/15 text-[#806123]':pi===1?'bg-emerald-50 text-emerald-800':'bg-violet-50 text-violet-800'}`}><b className="block">{9+di}:00 • {di%3===0?'Avaliação':'Manutenção'}</b><span className="mt-1 block opacity-65">{clients[(di+pi)%clients.length].name}</span></div>}{(di+pi)%3===0&&<div className="mt-2 rounded-xl bg-stone-100 p-2 text-[8px] text-stone-400">14:00 • Bloqueio</div>}</div>)}</div>)}</div></section><div className="mt-4 flex flex-wrap gap-3 text-[9px] text-stone-400"><span className="chip"><i className="h-2 w-2 rounded-full bg-champagne"/>Confirmado</span><span className="chip"><i className="h-2 w-2 rounded-full bg-emerald-300"/>Em atendimento</span><span className="chip"><i className="h-2 w-2 rounded-full bg-violet-300"/>Aguardando sinal</span><span className="chip"><i className="h-2 w-2 rounded-full bg-stone-300"/>Bloqueio</span></div>
-    <Modal open={create} onClose={()=>setCreate(false)} title="Novo agendamento"><div className="grid grid-cols-2 gap-4"><Label label="Cliente"><input className="field" placeholder="Buscar cliente"/></Label><Label label="Profissional"><select className="field"><option>Juliana Almeida</option><option>Renata Moura</option></select></Label><Label label="Data"><input className="field" type="date" defaultValue="2026-06-24"/></Label><Label label="Horário"><input className="field" type="time" defaultValue="14:00"/></Label></div><Label label="Serviço"><select className="field"><option>Avaliação personalizada</option><option>Aplicação Fita Adesiva</option><option>Manutenção</option></select></Label><button onClick={()=>setCreate(false)} className="btn-primary mt-5 w-full">Criar agendamento</button></Modal>
-  </div>
+function Metric({
+  label,
+  value,
+  trend,
+  positive,
+}: {
+  label: string;
+  value: string;
+  trend: string;
+  positive?: boolean;
+}) {
+  return (
+    <div className="surface flex items-center justify-between p-5">
+      <div>
+        <div className="text-[10px] font-semibold text-stone-400">{label}</div>
+        <div className="mt-1 font-display text-2xl font-semibold">{value}</div>
+      </div>
+      <span
+        className={`flex items-center gap-1 rounded-full px-2 py-1 text-[9px] font-bold ${positive ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}
+      >
+        {positive ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}{" "}
+        {trend}
+      </span>
+    </div>
+  );
 }
-function Label({label,children}:{label:string;children:React.ReactNode}){return <label className="mt-4 block"><span className="mb-2 block text-xs font-bold">{label}</span>{children}</label>}
-
-function CRM(){
-  const [search,setSearch]=useState('');const [importOpen,setImportOpen]=useState(false);const [detail,setDetail]=useState(false);const [toast,setToast]=useState(false);const [remote,setRemote]=useState<Array<Record<string,any>>>([]);useEffect(()=>{apiFetch<{clients:Array<Record<string,any>>}>('/api/data?resource=clients').then(data=>setRemote(data.clients)).catch(()=>{})},[]);const source=remote.length?remote:clients;const filtered=source.filter(c=>String(c.name).toLowerCase().includes(search.toLowerCase())||String(c.tag).toLowerCase().includes(search.toLowerCase()))
-  return <div className="animate-fade-up"><Toast show={toast} message="Arquivo analisado: nenhum duplicado encontrado"/><PageHeader eyebrow="CRM DE CLIENTES" title="Relacionamentos que permanecem" subtitle="Conheça cada cliente, antecipe retornos e crie experiências relevantes." action={<div className="flex gap-2"><button onClick={()=>setImportOpen(true)} className="btn-secondary"><Import size={16}/>Importar</button><button className="btn-primary"><UserPlus size={16}/>Nova cliente</button></div>}/><div className="mb-5 flex flex-wrap items-center gap-3"><div className="relative flex-1 sm:max-w-sm"><Search className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-400" size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} className="field pl-11" placeholder="Nome, telefone ou tag"/></div><button className="btn-secondary !min-h-12"><Filter size={15}/>Filtros</button><div className="ml-auto text-[10px] text-stone-400">{filtered.length} de 1.248 clientes</div></div>
-    <section className="surface overflow-x-auto"><div className="min-w-[960px]"><TableHead cols={['Cliente','Última visita','Próxima manutenção','Ticket médio','Pontos','Tags','']}/>{filtered.map(c=><div key={c.name} className="grid grid-cols-[1.5fr_.8fr_1fr_.7fr_.5fr_1fr_40px] items-center gap-3 border-b border-black/[.05] p-4 last:border-0"><div className="flex items-center gap-3"><Avatar src={c.photo} name={c.name}/><div><b className="text-[11px]">{c.name}</b><span className="block text-[9px] text-stone-400">{c.phone}</span></div></div><span className="text-[10px]">{c.last}</span><span className="text-[10px]">{c.next}</span><b className="text-[10px]">{c.ticket}</b><span className="text-[10px]">{c.points}</span><span><Badge tone={c.tag.includes('atrasada')?'amber':c.tag==='VIP'?'gold':'neutral'}>{c.tag}</Badge></span><button onClick={()=>setDetail(true)} className="grid h-8 w-8 place-items-center rounded-lg bg-warm"><MoreHorizontal size={15}/></button></div>)}</div></section>
-    <Modal open={importOpen} onClose={()=>setImportOpen(false)} title="Importar clientes"><div className="rounded-2xl bg-warm p-4 text-[11px] leading-relaxed text-stone-600">Importe CSV ou VCF. Antes de criar cadastros, o sistema verifica telefone e e-mail, sugere duplicados e permite mesclar informações.</div><label className="mt-5 grid min-h-36 cursor-pointer place-items-center rounded-2xl border border-dashed border-champagne/60 bg-champagne/[.05] text-center"><div><Upload className="mx-auto text-champagne"/><b className="mt-2 block text-xs">Selecionar CSV ou VCF</b><span className="mt-1 block text-[10px] text-stone-400">Máximo de 10 MB</span></div><input type="file" accept=".csv,.vcf" className="hidden"/></label><button onClick={()=>{setImportOpen(false);setToast(true);setTimeout(()=>setToast(false),2400)}} className="btn-primary mt-5 w-full">Analisar arquivo</button></Modal>
-    <Modal open={detail} onClose={()=>setDetail(false)} title="Camila Ferreira"><div className="flex items-center gap-4"><Avatar src={images.client1} name="Camila Ferreira" size="lg"/><div><Badge tone="gold">VIP</Badge><h3 className="mt-1 font-display text-2xl font-semibold">Camila Ferreira</h3><p className="text-[10px] text-stone-400">Cliente desde 12/08/2024</p></div></div><div className="mt-5 grid grid-cols-2 gap-3"><Info label="Valor vitalício" value="R$ 12.840"/><Info label="Ticket médio" value="R$ 1.460"/><Info label="Última visita" value="14/06/2026"/><Info label="Próximo retorno" value="24/06/2026"/></div><button className="btn-primary mt-5 w-full">Abrir perfil completo</button></Modal>
-  </div>
+function RevenueChart() {
+  const data = [42, 58, 46, 72, 64, 80, 74, 91, 86, 104, 96, 118];
+  return (
+    <div className="mt-6 flex h-64 items-end gap-2 border-b border-black/[.06] sm:gap-4">
+      {data.map((h, i) => (
+        <div key={i} className="group flex flex-1 flex-col items-center gap-2">
+          <div className="relative flex h-[220px] w-full items-end justify-center">
+            <div
+              className="absolute bottom-0 w-[65%] rounded-t-lg bg-stone-100"
+              style={{ height: `${Math.min(100, h * 0.85)}%` }}
+            />
+            <div
+              className="relative z-10 w-[45%] rounded-t-lg bg-gradient-to-t from-[#9e762e] to-[#dfc17b] transition group-hover:brightness-110"
+              style={{ height: `${h * 0.78}%` }}
+            />
+            <div className="absolute top-3 hidden rounded-lg bg-ink px-2 py-1 text-[8px] text-white group-hover:block">
+              R$ {h},4k
+            </div>
+          </div>
+          <span className="text-[8px] text-stone-400">
+            {String(i + 1).padStart(2, "0")}/06
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
-function TableHead({cols}:{cols:string[]}){return <div className="grid grid-cols-[1.5fr_.8fr_1fr_.7fr_.5fr_1fr_40px] gap-3 border-b border-black/[.06] bg-warm/60 p-4">{cols.map((c,i)=><span key={i} className="text-[9px] font-bold uppercase tracking-wider text-stone-400">{c}</span>)}</div>}
-
-function Inventory(){
-  const [lowOnly,setLowOnly]=useState(false);const [add,setAdd]=useState(false);const [remote,setRemote]=useState<Array<Record<string,any>>>([]);useEffect(()=>{apiFetch<{inventory:Array<Record<string,any>>}>('/api/data?resource=inventory').then(data=>setRemote(data.inventory)).catch(()=>{})},[]);const source=remote.length?remote:inventory;const shown=lowOnly?source.filter(i=>String(i.status).includes('baixo')):source
-  return <div className="animate-fade-up"><PageHeader eyebrow="ESTOQUE ESPECIALIZADO" title="Cabelos e produtos" subtitle="Controle lotes, custo, margem e disponibilidade de cada item usado no salão." action={<button onClick={()=>setAdd(true)} className="btn-primary"><Plus size={16}/>Novo item</button>}/><div className="mb-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><StatCard label="Valor em estoque" value="R$ 86.420" trend="Custo total atual" icon={<Boxes size={19}/>}/><StatCard label="Itens disponíveis" value="428" trend="32 categorias e variações" icon={<Package size={19}/>}/><StatCard label="Estoque baixo" value="3" trend="Reposição recomendada" icon={<AlertTriangle size={19}/>} tone="gold"/><StatCard label="Margem média" value="52%" trend="+2,8% no trimestre" icon={<TrendingUp size={19}/>} tone="dark"/></div><div className="mb-4 flex items-center gap-3"><button onClick={()=>setLowOnly(!lowOnly)} className={`btn-secondary ${lowOnly?'!border-amber-300 !bg-amber-50':''}`}><AlertTriangle size={15}/>Somente estoque baixo</button><button className="btn-secondary"><Filter size={15}/>Filtrar categoria</button></div><section className="surface overflow-x-auto"><div className="min-w-[980px]"><div className="grid grid-cols-[.7fr_1.5fr_.8fr_.7fr_.6fr_.6fr_.7fr_40px] gap-3 border-b border-black/[.05] bg-warm/60 p-4">{['Código / lote','Item','Variação','Qtd. / mínimo','Custo','Margem','Status',''].map(x=><span key={x} className="text-[9px] font-bold uppercase tracking-wider text-stone-400">{x}</span>)}</div>{shown.map(i=><div key={i.code} className="grid grid-cols-[.7fr_1.5fr_.8fr_.7fr_.6fr_.6fr_.7fr_40px] items-center gap-3 border-b border-black/[.05] p-4 last:border-0"><span className="text-[10px]"><b>{i.code}</b><small className="block text-[8px] text-stone-400">{i.lot}</small></span><span className="text-[10px] font-bold">{i.item}</span><span className="text-[9px] text-stone-500">{i.detail}</span><span className="text-[10px]"><b>{i.qty}</b> / {i.min}</span><span className="text-[10px]">{i.cost}</span><b className="text-[10px] text-emerald-700">{i.margin}</b><Badge tone={i.status.includes('baixo')?'amber':'green'}>{i.status}</Badge><button className="grid h-8 w-8 place-items-center rounded-lg bg-warm"><MoreHorizontal size={15}/></button></div>)}</div></section><Modal open={add} onClose={()=>setAdd(false)} title="Cadastrar item"><div className="grid grid-cols-2 gap-3"><Field label="Código" placeholder="CAB-0000"/><Field label="Fornecedor" placeholder="Nome do fornecedor"/><Field label="Cor" placeholder="Castanho 4"/><Field label="Comprimento" placeholder="60 cm"/><Field label="Peso" placeholder="100g"/><Field label="Lote" placeholder="CS2607"/><Field label="Custo" placeholder="R$ 0,00"/><Field label="Quantidade" placeholder="0"/></div><button onClick={()=>setAdd(false)} className="btn-primary mt-5 w-full">Salvar item</button></Modal></div>
+function RankRow({
+  rank,
+  label,
+  value,
+  width,
+}: {
+  rank: string;
+  label: string;
+  value: string;
+  width: string;
+}) {
+  return (
+    <div className="border-b border-black/[.05] py-3 last:border-0">
+      <div className="flex items-center gap-3">
+        <span className="font-display text-lg text-champagne">{rank}</span>
+        <span className="flex-1 text-xs font-bold">{label}</span>
+        <b className="text-xs">{value}</b>
+      </div>
+      <div className="ml-9 mt-2 h-1.5 rounded-full bg-warm">
+        <div className="h-full rounded-full bg-champagne" style={{ width }} />
+      </div>
+    </div>
+  );
 }
-function Field({label,placeholder}:{label:string;placeholder:string}){return <label><span className="mb-2 block text-[10px] font-bold">{label}</span><input className="field !min-h-10 !text-xs" placeholder={placeholder}/></label>}
-
-function Finance(){
-  return <div className="animate-fade-up"><PageHeader eyebrow="FINANCEIRO" title="Fluxo financeiro" subtitle="Receitas, formas de pagamento e previsibilidade do negócio." action={<div className="flex gap-2"><button className="btn-secondary"><Filter size={16}/>Filtros</button><button className="btn-secondary"><Download size={16}/>Exportar</button></div>}/><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Receita recebida" value="R$ 184.620" trend="+12,4% no mês" icon={<CircleDollarSign size={19}/>} tone="dark"/><StatCard label="Contas a receber" value="R$ 38.480" trend="63 lançamentos" icon={<WalletCards size={19}/>}/><StatCard label="Sinais pendentes" value="R$ 1.860" trend="14 agendamentos" icon={<Clock3 size={19}/>} tone="gold"/><StatCard label="Estornos e descontos" value="R$ 4.220" trend="2,2% da receita" icon={<ArrowDownRight size={19}/>}/></div><div className="mt-6 grid gap-5 xl:grid-cols-[1.25fr_.75fr]"><section className="surface p-6"><SectionHeading title="Receita por período" link="Junho de 2026"/><RevenueChart/></section><section className="surface p-6"><SectionHeading title="Formas de pagamento"/><div className="mt-5 space-y-5"><PayRow icon={<QrCode/>} label="Pix" value="42%" amount="R$ 77.540" width="82%"/><PayRow icon={<CreditCard/>} label="Cartão" value="38%" amount="R$ 70.160" width="72%"/><PayRow icon={<WalletCards/>} label="Parcelado" value="14%" amount="R$ 25.850" width="35%"/><PayRow icon={<CircleDollarSign/>} label="Dinheiro" value="6%" amount="R$ 11.070" width="18%"/></div></section></div><section className="surface mt-5 overflow-hidden"><div className="p-6"><SectionHeading title="Últimos lançamentos"/></div>{[['21/06 • 14:32','Aplicação Microlink — Camila Ferreira','Pix','R$ 1.680,00','Pago'],['21/06 • 12:18','Avaliação — Marina Costa','Cartão','R$ 80,00','Pago'],['21/06 • 10:04','Kit Home Care — Beatriz Lima','Parcelado','R$ 349,00','Pago'],['20/06 • 18:42','Estorno parcial — Ana Souza','Pix','- R$ 120,00','Estorno']].map(x=><div key={x[0]} className="grid grid-cols-[1fr_auto] gap-4 border-t border-black/[.05] p-5 sm:grid-cols-[.8fr_1.5fr_.6fr_.7fr_.5fr]"><span className="text-[10px] text-stone-400">{x[0]}</span><b className="hidden text-[10px] sm:block">{x[1]}</b><span className="hidden text-[10px] sm:block">{x[2]}</span><b className="text-[10px]">{x[3]}</b><Badge tone={x[4]==='Pago'?'green':'rose'}>{x[4]}</Badge></div>)}</section></div>
-}
-function PayRow({icon,label,value,amount,width}:{icon:React.ReactNode;label:string;value:string;amount:string;width:string}){return <div><div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-warm text-champagne">{icon}</span><span className="flex-1 text-xs font-bold">{label}<small className="block text-[9px] font-normal text-stone-400">{amount}</small></span><b className="text-xs">{value}</b></div><div className="ml-12 mt-2 h-1.5 rounded-full bg-warm"><div className="h-full rounded-full bg-champagne" style={{width}}/></div></div>}
-
-function Professionals(){return <div className="animate-fade-up"><PageHeader eyebrow="EQUIPE" title="Profissionais" subtitle="Agenda, especialidades, metas e desempenho da equipe." action={<button className="btn-primary"><Plus size={16}/>Adicionar profissional</button>}/><div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">{[...professionals,{...professionals[1],name:'Bianca Freitas',specialty:'Queratina e coloração',rating:4.8}].map((p,i)=><div key={p.name} className="surface overflow-hidden"><div className="relative h-36 bg-gradient-to-r from-ink to-[#594534]"><div className="absolute -bottom-9 left-6"><Avatar src={p.photo} name={p.name} size="lg"/></div><span className="absolute right-4 top-4"><Badge tone="green">Ativa</Badge></span></div><div className="p-6 pt-14"><h2 className="font-display text-3xl font-semibold">{p.name}</h2><p className="text-[10px] text-stone-400">{p.specialty}</p><div className="mt-5 grid grid-cols-3 rounded-2xl bg-warm p-4 text-center"><InfoSmall label="Ocupação" value={`${82-i*4}%`}/><InfoSmall label="Receita" value={`R$ ${52-i*8}k`}/><InfoSmall label="Nota" value={String(p.rating).replace('.',',')}/></div><button className="btn-secondary mt-5 w-full">Ver desempenho</button></div></div>)}</div></div>}
-function InfoSmall({label,value}:{label:string;value:string}){return <div><b className="block text-xs">{value}</b><span className="text-[8px] text-stone-400">{label}</span></div>}
-function Catalog(){return <div className="animate-fade-up"><PageHeader eyebrow="CATÁLOGO" title="Serviços e métodos" subtitle="Preços, duração, materiais e margem de cada procedimento." action={<button className="btn-primary"><Plus size={16}/>Novo serviço</button>}/><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{services.map((s,i)=><article key={s.id} className="surface overflow-hidden"><div className="h-44"><img src={s.image} className="h-full w-full object-cover" alt={s.name}/></div><div className="p-5"><div className="flex justify-between"><h2 className="font-display text-2xl font-semibold">{s.name}</h2><Badge tone="green">Ativo</Badge></div><p className="muted mt-2">{s.description}</p><div className="mt-4 grid grid-cols-3 rounded-2xl bg-warm p-3 text-center"><InfoSmall label="Duração" value={s.duration}/><InfoSmall label="A partir" value={`R$ ${s.price}`}/><InfoSmall label="Margem" value={`${42+i*2}%`}/></div></div></article>)}</div></div>}
-function Commissions(){return <div className="animate-fade-up"><PageHeader eyebrow="COMISSÕES" title="Comissões da equipe" subtitle="Conferência e fechamento por profissional e período." action={<button className="btn-secondary"><Download size={16}/>Exportar folha</button>}/><div className="grid gap-4 sm:grid-cols-3"><StatCard label="Total a pagar" value="R$ 38.420" trend="Fechamento em 30/06" icon={<BadgeDollarSign size={19}/>} tone="dark"/><StatCard label="Serviços" value="R$ 34.260" trend="89,2% do total" icon={<Sparkles size={19}/>}/><StatCard label="Produtos" value="R$ 4.160" trend="10,8% do total" icon={<Package size={19}/>} tone="gold"/></div><section className="surface mt-6 overflow-hidden">{['Juliana Almeida','Renata Moura','Bianca Freitas','Patrícia Melo'].map((p,i)=><div key={p} className="grid grid-cols-[1fr_auto] items-center gap-4 border-b border-black/[.05] p-5 last:border-0 sm:grid-cols-[1.2fr_.7fr_.7fr_.7fr_auto]"><div className="flex items-center gap-3"><Avatar src={professionals[i%2].photo} name={p}/><div><b className="text-xs">{p}</b><span className="block text-[9px] text-stone-400">{54-i*7} serviços</span></div></div><span className="hidden text-xs sm:block">R$ {18-i*2}.420</span><span className="hidden text-xs sm:block">{30+i}%</span><b className="text-xs">R$ {5-i}.526</b><Badge tone={i===0?'green':'amber'}>{i===0?'Aprovada':'Revisar'}</Badge></div>)}</section></div>}
-
-function Marketing(){
-  const [create,setCreate]=useState(false);const campaigns=[['Retorno de manutenção','12 clientes atrasadas','WhatsApp','38%','Ativa'],['Cliente inativa há 60 dias','86 clientes','E-mail + Push','22%','Ativa'],['Indique uma amiga','Base completa','Push','18%','Ativa'],['Horários ociosos — terça','142 clientes','WhatsApp','31%','Rascunho']]
-  return <div className="animate-fade-up"><PageHeader eyebrow="AUTOMAÇÃO E CRESCIMENTO" title="Marketing e campanhas" subtitle="Mensagens relevantes para trazer a cliente de volta no momento certo." action={<button onClick={()=>setCreate(true)} className="btn-primary"><Plus size={16}/>Criar campanha</button>}/><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Receita atribuída" value="R$ 28.640" trend="+22% no período" icon={<CircleDollarSign size={18}/>} tone="dark"/><StatCard label="Conversão média" value="27,4%" trend="+4,1 p.p." icon={<TrendingUp size={18}/>}/><StatCard label="Cupons usados" value="184" trend="R$ 8.420 em descontos" icon={<Tags size={18}/>} tone="gold"/><StatCard label="Clientes reativadas" value="42" trend="Últimos 30 dias" icon={<Users size={18}/>}/></div><section className="surface mt-6 overflow-hidden"><div className="flex items-center justify-between p-6"><SectionHeading title="Campanhas"/><button className="text-xs font-bold text-champagne">Ver modelos</button></div>{campaigns.map(c=><div key={c[0]} className="grid grid-cols-[1fr_auto] items-center gap-4 border-t border-black/[.05] p-5 sm:grid-cols-[1.4fr_.9fr_.7fr_.6fr_.5fr_40px]"><div><b className="text-xs">{c[0]}</b><span className="mt-1 block text-[9px] text-stone-400">Atualizada em 20/06/2026</span></div><span className="hidden text-[10px] sm:block">{c[1]}</span><span className="hidden text-[10px] sm:block">{c[2]}</span><b className="hidden text-[10px] sm:block">{c[3]}</b><Badge tone={c[4]==='Ativa'?'green':'neutral'}>{c[4]}</Badge><button className="grid h-8 w-8 place-items-center rounded-lg bg-warm"><MoreHorizontal size={15}/></button></div>)}</section><div className="mt-5 grid gap-4 md:grid-cols-3"><CampaignIdea icon={<Gift/>} title="Aniversário" text="Cupom especial enviado 7 dias antes."/><CampaignIdea icon={<Clock3/>} title="Manutenção atrasada" text="Lembrete gentil com benefício de retorno."/><CampaignIdea icon={<Zap/>} title="Horário ocioso" text="Oferta segmentada para preencher lacunas."/></div>
-    <Modal open={create} onClose={()=>setCreate(false)} title="Criar campanha"><Label label="Objetivo"><select className="field"><option>Manutenção atrasada</option><option>Cliente inativa</option><option>Aniversário</option><option>Horários ociosos</option><option>Indicação</option></select></Label><Label label="Público-alvo"><select className="field"><option>Clientes com manutenção atrasada</option><option>Clientes VIP</option><option>Clientes inativas há 60 dias</option></select></Label><div className="mt-4 grid grid-cols-3 gap-2">{[[MessageCircle,'WhatsApp'],[Smartphone,'Push'],[Mail,'E-mail']].map(([I,t])=>{const Icon=I as React.ComponentType<{size?:number}>;return <button key={t as string} className="rounded-2xl border border-black/[.07] p-3 text-[10px] font-bold"><Icon size={17}/><span className="mt-2 block">{t as string}</span></button>})}</div><Label label="Mensagem"><textarea className="field min-h-28 py-3" defaultValue="Oi, {{nome}}! Seu Mega Hair merece um cuidado especial. Notamos que está perto da hora da manutenção. Reserve seu horário e mantenha o resultado impecável ✨"/></Label><div className="mt-4 rounded-2xl bg-amber-50 p-4 text-[10px] leading-relaxed text-amber-800">A mensagem será salva como modelo. Nenhum envio será feito sem integração configurada e confirmação final.</div><button onClick={()=>setCreate(false)} className="btn-primary mt-5 w-full">Salvar como rascunho</button></Modal>
-  </div>
-}
-function CampaignIdea({icon,title,text}:{icon:React.ReactNode;title:string;text:string}){return <button className="surface flex items-center gap-4 p-5 text-left"><span className="grid h-11 w-11 place-items-center rounded-xl bg-warm text-champagne">{icon}</span><span><b className="text-xs">{title}</b><span className="mt-1 block text-[9px] text-stone-400">{text}</span></span></button>}
-
-function Loyalty(){return <div className="animate-fade-up"><PageHeader eyebrow="FIDELIDADE" title="Clube Carol Sol" subtitle="Pontos, níveis, cashback, indicações e experiências exclusivas." action={<button className="btn-primary"><Plus size={16}/>Nova recompensa</button>}/><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Membros ativos" value="842" trend="67% da base" icon={<Users size={18}/>} tone="dark"/><StatCard label="Pontos emitidos" value="428 mil" trend="R$ 21.400 em valor" icon={<Star size={18}/>}/><StatCard label="Cashback usado" value="R$ 8.640" trend="41% de utilização" icon={<WalletCards size={18}/>}/><StatCard label="Indicações" value="126" trend="74 convertidas" icon={<Gift size={18}/>} tone="gold"/></div><div className="mt-6 grid gap-5 lg:grid-cols-[1fr_380px]"><section className="surface p-6"><SectionHeading title="Distribuição por nível"/><div className="mt-6 space-y-4"><Tier label="Essencial" count="362 clientes" value="43%" width="43%" color="#d8cec0"/><Tier label="Silver" count="248 clientes" value="29%" width="29%" color="#9e9e9e"/><Tier label="Gold" count="184 clientes" value="22%" width="22%" color="#cda75c"/><Tier label="Black" count="48 clientes" value="6%" width="6%" color="#181511"/></div></section><section className="hair-gradient rounded-[26px] p-7 text-white"><div className="eyebrow">RECOMPENSA MAIS USADA</div><h2 className="mt-4 font-display text-4xl font-semibold">R$ 100 em serviços</h2><p className="mt-3 text-xs leading-relaxed text-white/50">Resgate por 1.000 pontos. 84 clientes utilizaram este benefício em junho.</p><div className="mt-6 rounded-2xl bg-white/[.06] p-4"><div className="flex justify-between text-xs"><span className="text-white/45">Taxa de resgate</span><b>38%</b></div><div className="mt-3 h-1.5 rounded-full bg-white/10"><div className="h-full w-[38%] rounded-full bg-champagne"/></div></div></section></div></div>}
-function Tier({label,count,value,width,color}:{label:string;count:string;value:string;width:string;color:string}){return <div><div className="flex justify-between text-xs"><span><b>{label}</b><span className="ml-2 text-[9px] text-stone-400">{count}</span></span><b>{value}</b></div><div className="mt-2 h-2 rounded-full bg-warm"><div className="h-full rounded-full" style={{width,background:color}}/></div></div>}
-
-function Reports(){
-  const reports=[['Lucratividade por método','Fita Adesiva lidera com margem de 58%','R$ 52.480'],['Conversão por profissional','Juliana Almeida converte 76% das avaliações','76%'],['Clientes atrasadas','12 clientes precisam de retorno','12'],['Perdas com cancelamento','R$ 3.840 no mês atual','R$ 3.840'],['Cor e comprimento mais vendidos','Castanho iluminado • 60 cm','34%'],['Valor vitalício','48 clientes acima de R$ 10 mil','48']]
-  return <div className="animate-fade-up"><PageHeader eyebrow="INTELIGÊNCIA DE NEGÓCIO" title="Relatórios" subtitle="Respostas práticas para decisões de operação, vendas e relacionamento." action={<div className="flex gap-2"><button className="btn-secondary"><Filter size={16}/>Período</button><button className="btn-secondary"><Download size={16}/>Exportar CSV</button></div>}/><div className="grid gap-5 lg:grid-cols-[1fr_380px]"><section className="grid gap-4 sm:grid-cols-2">{reports.map((r,i)=><button key={r[0]} className="surface p-6 text-left transition hover:-translate-y-1"><div className="flex justify-between"><span className="grid h-11 w-11 place-items-center rounded-xl bg-warm text-champagne">{i%2?<TrendingUp/>:<BarChart3/>}</span><ArrowUpRight size={17} className="text-stone-300"/></div><h2 className="mt-5 font-display text-2xl font-semibold">{r[0]}</h2><p className="muted mt-2">{r[1]}</p><div className="mt-4 text-xl font-bold">{r[2]}</div></button>)}</section><aside className="space-y-5"><div className="surface p-6"><SectionHeading title="Horários com menor ocupação"/><div className="mt-5 space-y-3"><RankRow rank="01" label="Terça • 14h–16h" value="42%" width="42%"/><RankRow rank="02" label="Quarta • 09h–11h" value="51%" width="51%"/><RankRow rank="03" label="Sexta • 17h–19h" value="58%" width="58%"/></div></div><div className="hair-gradient rounded-[26px] p-6 text-white"><div className="eyebrow">INSIGHT CAROL SOL</div><h3 className="mt-3 font-display text-3xl font-semibold">Campanha sugerida</h3><p className="mt-2 text-xs leading-relaxed text-white/50">Oferecer 8% de cashback para manutenções na terça à tarde pode elevar a ocupação em até 16%.</p><button className="btn-gold mt-5 w-full">Criar campanha</button></div></aside></div></div>
+function Alert({
+  icon,
+  title,
+  text,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  text: string;
+}) {
+  return (
+    <button className="flex w-full items-center gap-3 rounded-2xl bg-amber-50/70 p-3 text-left">
+      <span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-100 text-amber-700">
+        {icon}
+      </span>
+      <span>
+        <b className="block text-[10px]">{title}</b>
+        <span className="text-[9px] text-stone-400">{text}</span>
+      </span>
+    </button>
+  );
 }
 
-function AdminSettings(){const [toast,setToast]=useState(false);return <div className="animate-fade-up"><Toast show={toast} message="Configurações salvas"/><PageHeader eyebrow="CONFIGURAÇÕES" title="Preferências do salão" subtitle="Unidades, permissões, integrações, políticas e segurança."/><div className="grid gap-5 lg:grid-cols-[280px_1fr]"><aside className="surface self-start p-3">{['Dados da empresa','Unidades e salas','Usuários e permissões','Agenda e cancelamento','Pagamentos','Integrações','Notificações','LGPD e auditoria'].map((x,i)=><button key={x} className={`w-full rounded-xl px-4 py-3 text-left text-xs font-semibold ${i===0?'bg-ink text-white':'text-stone-500 hover:bg-warm'}`}>{x}</button>)}</aside><section className="surface p-6 sm:p-8"><SectionHeading title="Dados da empresa"/><div className="mt-6 grid gap-4 sm:grid-cols-2"><Field label="Nome fantasia" placeholder="Carol Sol"/><Field label="CNPJ" placeholder="12.345.678/0001-90"/><Field label="Telefone" placeholder="(11) 4002-8922"/><Field label="E-mail" placeholder="contato@carolsol.com.br"/><Field label="Moeda" placeholder="Real brasileiro (R$)"/><Field label="Fuso horário" placeholder="America/Sao_Paulo"/></div><Label label="Endereço principal"><input className="field" defaultValue="Al. Santos, 1.240 — Jardins, São Paulo/SP"/></Label><div className="mt-6 border-t border-black/[.06] pt-6"><h3 className="font-display text-2xl font-semibold">Identidade e segurança</h3><div className="mt-4 space-y-3">{[['Autenticação em duas etapas','Obrigatória para administradores'],['Logs de auditoria','Registrar alterações por 24 meses'],['Consentimento LGPD','Solicitar em cadastro e importações']].map(x=><label key={x[0]} className="flex items-center justify-between rounded-2xl bg-warm p-4"><span><b className="block text-xs">{x[0]}</b><span className="text-[9px] text-stone-400">{x[1]}</span></span><input type="checkbox" defaultChecked className="h-4 w-4 accent-[#181511]"/></label>)}</div></div><button onClick={()=>{setToast(true);setTimeout(()=>setToast(false),2200)}} className="btn-primary mt-6">Salvar configurações</button></section></div></div>}
+function GlobalAgenda() {
+  const [view, setView] = useState("Semana");
+  const [create, setCreate] = useState(false);
+  const days = ["Seg 22", "Ter 23", "Qua 24", "Qui 25", "Sex 26", "Sáb 27"];
+  const pros = ["Juliana Almeida", "Renata Moura", "Bianca Freitas"];
+  return (
+    <div className="animate-fade-up">
+      <PageHeader
+        eyebrow="OPERAÇÃO"
+        title="Agenda global"
+        subtitle="Visualize profissionais, salas e capacidade do salão em tempo real."
+        action={
+          <button onClick={() => setCreate(true)} className="btn-primary">
+            <Plus size={16} />
+            Novo agendamento
+          </button>
+        }
+      />
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex rounded-2xl bg-warm p-1">
+          {["Dia", "Semana", "Mês"].map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={`rounded-xl px-5 py-2 text-xs font-bold ${view === v ? "bg-white shadow-sm" : "text-stone-400"}`}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <button className="btn-secondary !min-h-10">
+            <Filter size={15} />
+            Filtros
+          </button>
+          <button className="btn-secondary !min-h-10">‹</button>
+          <button className="btn-secondary !min-h-10">22–27 jun.</button>
+          <button className="btn-secondary !min-h-10">›</button>
+        </div>
+      </div>
+      <section className="surface overflow-x-auto">
+        <div className="min-w-[920px]">
+          <div className="grid grid-cols-[180px_repeat(6,1fr)] border-b border-black/[.06] bg-warm/60">
+            <div className="p-4 text-[10px] font-bold text-stone-400">
+              PROFISSIONAL
+            </div>
+            {days.map((d) => (
+              <div
+                key={d}
+                className="border-l border-black/[.05] p-4 text-center text-[10px] font-bold"
+              >
+                {d}
+              </div>
+            ))}
+          </div>
+          {pros.map((p, pi) => (
+            <div
+              key={p}
+              className="grid min-h-32 grid-cols-[180px_repeat(6,1fr)] border-b border-black/[.05] last:border-0"
+            >
+              <div className="flex items-start gap-3 p-4">
+                <Avatar src={professionals[pi % 2].photo} name={p} />
+                <div>
+                  <b className="text-[10px]">{p}</b>
+                  <span className="mt-1 block text-[8px] text-stone-400">
+                    {pi === 0 ? "Fita e Microlink" : "Extensões"}
+                  </span>
+                </div>
+              </div>
+              {days.map((d, di) => (
+                <div key={d} className="border-l border-black/[.05] p-2">
+                  {(di + pi) % 2 === 0 && (
+                    <div
+                      className={`rounded-xl p-2.5 text-[8px] ${pi === 0 ? "bg-champagne/15 text-[#806123]" : pi === 1 ? "bg-emerald-50 text-emerald-800" : "bg-violet-50 text-violet-800"}`}
+                    >
+                      <b className="block">
+                        {9 + di}:00 •{" "}
+                        {di % 3 === 0 ? "Avaliação" : "Manutenção"}
+                      </b>
+                      <span className="mt-1 block opacity-65">
+                        {clients[(di + pi) % clients.length].name}
+                      </span>
+                    </div>
+                  )}
+                  {(di + pi) % 3 === 0 && (
+                    <div className="mt-2 rounded-xl bg-stone-100 p-2 text-[8px] text-stone-400">
+                      14:00 • Bloqueio
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </section>
+      <div className="mt-4 flex flex-wrap gap-3 text-[9px] text-stone-400">
+        <span className="chip">
+          <i className="h-2 w-2 rounded-full bg-champagne" />
+          Confirmado
+        </span>
+        <span className="chip">
+          <i className="h-2 w-2 rounded-full bg-emerald-300" />
+          Em atendimento
+        </span>
+        <span className="chip">
+          <i className="h-2 w-2 rounded-full bg-violet-300" />
+          Aguardando sinal
+        </span>
+        <span className="chip">
+          <i className="h-2 w-2 rounded-full bg-stone-300" />
+          Bloqueio
+        </span>
+      </div>
+      <Modal
+        open={create}
+        onClose={() => setCreate(false)}
+        title="Novo agendamento"
+      >
+        <div className="grid grid-cols-2 gap-4">
+          <Label label="Cliente">
+            <input className="field" placeholder="Buscar cliente" />
+          </Label>
+          <Label label="Profissional">
+            <select className="field">
+              <option>Juliana Almeida</option>
+              <option>Renata Moura</option>
+            </select>
+          </Label>
+          <Label label="Data">
+            <input className="field" type="date" defaultValue="2026-06-24" />
+          </Label>
+          <Label label="Horário">
+            <input className="field" type="time" defaultValue="14:00" />
+          </Label>
+        </div>
+        <Label label="Serviço">
+          <select className="field">
+            <option>Avaliação personalizada</option>
+            <option>Aplicação Fita Adesiva</option>
+            <option>Manutenção</option>
+          </select>
+        </Label>
+        <button
+          onClick={() => setCreate(false)}
+          className="btn-primary mt-5 w-full"
+        >
+          Criar agendamento
+        </button>
+      </Modal>
+    </div>
+  );
+}
+function Label({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="mt-4 block">
+      <span className="mb-2 block text-xs font-bold">{label}</span>
+      {children}
+    </label>
+  );
+}
 
-function Info({label,value}:{label:string;value:string}){return <div className="rounded-2xl bg-warm p-4"><span className="text-[9px] font-bold uppercase tracking-wider text-stone-400">{label}</span><b className="mt-2 block text-xs">{value}</b></div>}
+function CRM() {
+  const [search, setSearch] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
+  const [detail, setDetail] = useState(false);
+  const [toast, setToast] = useState(false);
+  const [remote, setRemote] = useState<Array<Record<string, any>>>([]);
+  useEffect(() => {
+    apiFetch<{ clients: Array<Record<string, any>> }>(
+      "/api/data?resource=clients",
+    )
+      .then((data) => setRemote(data.clients))
+      .catch(() => {});
+  }, []);
+  const source = remote.length ? remote : clients;
+  const filtered = source.filter(
+    (c) =>
+      String(c.name).toLowerCase().includes(search.toLowerCase()) ||
+      String(c.tag).toLowerCase().includes(search.toLowerCase()),
+  );
+  return (
+    <div className="animate-fade-up">
+      <Toast
+        show={toast}
+        message="Arquivo analisado: nenhum duplicado encontrado"
+      />
+      <PageHeader
+        eyebrow="CRM DE CLIENTES"
+        title="Relacionamentos que permanecem"
+        subtitle="Conheça cada cliente, antecipe retornos e crie experiências relevantes."
+        action={
+          <div className="flex gap-2">
+            <button
+              onClick={() => setImportOpen(true)}
+              className="btn-secondary"
+            >
+              <Import size={16} />
+              Importar
+            </button>
+            <button className="btn-primary">
+              <UserPlus size={16} />
+              Nova cliente
+            </button>
+          </div>
+        }
+      />
+      <div className="mb-5 flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 sm:max-w-sm">
+          <Search
+            className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-400"
+            size={16}
+          />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="field pl-11"
+            placeholder="Nome, telefone ou tag"
+          />
+        </div>
+        <button className="btn-secondary !min-h-12">
+          <Filter size={15} />
+          Filtros
+        </button>
+        <div className="ml-auto text-[10px] text-stone-400">
+          {filtered.length} de 1.248 clientes
+        </div>
+      </div>
+      <section className="surface overflow-x-auto">
+        <div className="min-w-[960px]">
+          <TableHead
+            cols={[
+              "Cliente",
+              "Última visita",
+              "Próxima manutenção",
+              "Ticket médio",
+              "Pontos",
+              "Tags",
+              "",
+            ]}
+          />
+          {filtered.map((c) => (
+            <div
+              key={c.name}
+              className="grid grid-cols-[1.5fr_.8fr_1fr_.7fr_.5fr_1fr_40px] items-center gap-3 border-b border-black/[.05] p-4 last:border-0"
+            >
+              <div className="flex items-center gap-3">
+                <Avatar src={c.photo} name={c.name} />
+                <div>
+                  <b className="text-[11px]">{c.name}</b>
+                  <span className="block text-[9px] text-stone-400">
+                    {c.phone}
+                  </span>
+                </div>
+              </div>
+              <span className="text-[10px]">{c.last}</span>
+              <span className="text-[10px]">{c.next}</span>
+              <b className="text-[10px]">{c.ticket}</b>
+              <span className="text-[10px]">{c.points}</span>
+              <span>
+                <Badge
+                  tone={
+                    c.tag.includes("atrasada")
+                      ? "amber"
+                      : c.tag === "VIP"
+                        ? "gold"
+                        : "neutral"
+                  }
+                >
+                  {c.tag}
+                </Badge>
+              </span>
+              <button
+                onClick={() => setDetail(true)}
+                className="grid h-8 w-8 place-items-center rounded-lg bg-warm"
+              >
+                <MoreHorizontal size={15} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
+      <Modal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        title="Importar clientes"
+      >
+        <div className="rounded-2xl bg-warm p-4 text-[11px] leading-relaxed text-stone-600">
+          Importe CSV ou VCF. Antes de criar cadastros, o sistema verifica
+          telefone e e-mail, sugere duplicados e permite mesclar informações.
+        </div>
+        <label className="mt-5 grid min-h-36 cursor-pointer place-items-center rounded-2xl border border-dashed border-champagne/60 bg-champagne/[.05] text-center">
+          <div>
+            <Upload className="mx-auto text-champagne" />
+            <b className="mt-2 block text-xs">Selecionar CSV ou VCF</b>
+            <span className="mt-1 block text-[10px] text-stone-400">
+              Máximo de 10 MB
+            </span>
+          </div>
+          <input type="file" accept=".csv,.vcf" className="hidden" />
+        </label>
+        <button
+          onClick={() => {
+            setImportOpen(false);
+            setToast(true);
+            setTimeout(() => setToast(false), 2400);
+          }}
+          className="btn-primary mt-5 w-full"
+        >
+          Analisar arquivo
+        </button>
+      </Modal>
+      <Modal
+        open={detail}
+        onClose={() => setDetail(false)}
+        title="Camila Ferreira"
+      >
+        <div className="flex items-center gap-4">
+          <Avatar src={images.client1} name="Camila Ferreira" size="lg" />
+          <div>
+            <Badge tone="gold">VIP</Badge>
+            <h3 className="mt-1 font-display text-2xl font-semibold">
+              Camila Ferreira
+            </h3>
+            <p className="text-[10px] text-stone-400">
+              Cliente desde 12/08/2024
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <Info label="Valor vitalício" value="R$ 12.840" />
+          <Info label="Ticket médio" value="R$ 1.460" />
+          <Info label="Última visita" value="14/06/2026" />
+          <Info label="Próximo retorno" value="24/06/2026" />
+        </div>
+        <button className="btn-primary mt-5 w-full">
+          Abrir perfil completo
+        </button>
+      </Modal>
+    </div>
+  );
+}
+function TableHead({ cols }: { cols: string[] }) {
+  return (
+    <div className="grid grid-cols-[1.5fr_.8fr_1fr_.7fr_.5fr_1fr_40px] gap-3 border-b border-black/[.06] bg-warm/60 p-4">
+      {cols.map((c, i) => (
+        <span
+          key={i}
+          className="text-[9px] font-bold uppercase tracking-wider text-stone-400"
+        >
+          {c}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function Inventory() {
+  const [lowOnly, setLowOnly] = useState(false);
+  const [add, setAdd] = useState(false);
+  const [remote, setRemote] = useState<Array<Record<string, any>>>([]);
+  useEffect(() => {
+    apiFetch<{ inventory: Array<Record<string, any>> }>(
+      "/api/data?resource=inventory",
+    )
+      .then((data) => setRemote(data.inventory))
+      .catch(() => {});
+  }, []);
+  const source = remote.length ? remote : inventory;
+  const shown = lowOnly
+    ? source.filter((i) => String(i.status).includes("baixo"))
+    : source;
+  return (
+    <div className="animate-fade-up">
+      <PageHeader
+        eyebrow="ESTOQUE ESPECIALIZADO"
+        title="Cabelos e produtos"
+        subtitle="Controle lotes, custo, margem e disponibilidade de cada item usado no salão."
+        action={
+          <button onClick={() => setAdd(true)} className="btn-primary">
+            <Plus size={16} />
+            Novo item
+          </button>
+        }
+      />
+      <div className="mb-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="Valor em estoque"
+          value="R$ 86.420"
+          trend="Custo total atual"
+          icon={<Boxes size={19} />}
+        />
+        <StatCard
+          label="Itens disponíveis"
+          value="428"
+          trend="32 categorias e variações"
+          icon={<Package size={19} />}
+        />
+        <StatCard
+          label="Estoque baixo"
+          value="3"
+          trend="Reposição recomendada"
+          icon={<AlertTriangle size={19} />}
+          tone="gold"
+        />
+        <StatCard
+          label="Margem média"
+          value="52%"
+          trend="+2,8% no trimestre"
+          icon={<TrendingUp size={19} />}
+          tone="dark"
+        />
+      </div>
+      <div className="mb-4 flex items-center gap-3">
+        <button
+          onClick={() => setLowOnly(!lowOnly)}
+          className={`btn-secondary ${lowOnly ? "!border-amber-300 !bg-amber-50" : ""}`}
+        >
+          <AlertTriangle size={15} />
+          Somente estoque baixo
+        </button>
+        <button className="btn-secondary">
+          <Filter size={15} />
+          Filtrar categoria
+        </button>
+      </div>
+      <section className="surface overflow-x-auto">
+        <div className="min-w-[980px]">
+          <div className="grid grid-cols-[.7fr_1.5fr_.8fr_.7fr_.6fr_.6fr_.7fr_40px] gap-3 border-b border-black/[.05] bg-warm/60 p-4">
+            {[
+              "Código / lote",
+              "Item",
+              "Variação",
+              "Qtd. / mínimo",
+              "Custo",
+              "Margem",
+              "Status",
+              "",
+            ].map((x) => (
+              <span
+                key={x}
+                className="text-[9px] font-bold uppercase tracking-wider text-stone-400"
+              >
+                {x}
+              </span>
+            ))}
+          </div>
+          {shown.map((i) => (
+            <div
+              key={i.code}
+              className="grid grid-cols-[.7fr_1.5fr_.8fr_.7fr_.6fr_.6fr_.7fr_40px] items-center gap-3 border-b border-black/[.05] p-4 last:border-0"
+            >
+              <span className="text-[10px]">
+                <b>{i.code}</b>
+                <small className="block text-[8px] text-stone-400">
+                  {i.lot}
+                </small>
+              </span>
+              <span className="text-[10px] font-bold">{i.item}</span>
+              <span className="text-[9px] text-stone-500">{i.detail}</span>
+              <span className="text-[10px]">
+                <b>{i.qty}</b> / {i.min}
+              </span>
+              <span className="text-[10px]">{i.cost}</span>
+              <b className="text-[10px] text-emerald-700">{i.margin}</b>
+              <Badge tone={i.status.includes("baixo") ? "amber" : "green"}>
+                {i.status}
+              </Badge>
+              <button className="grid h-8 w-8 place-items-center rounded-lg bg-warm">
+                <MoreHorizontal size={15} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
+      <Modal open={add} onClose={() => setAdd(false)} title="Cadastrar item">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Código" placeholder="CAB-0000" />
+          <Field label="Fornecedor" placeholder="Nome do fornecedor" />
+          <Field label="Cor" placeholder="Castanho 4" />
+          <Field label="Comprimento" placeholder="60 cm" />
+          <Field label="Peso" placeholder="100g" />
+          <Field label="Lote" placeholder="CS2607" />
+          <Field label="Custo" placeholder="R$ 0,00" />
+          <Field label="Quantidade" placeholder="0" />
+        </div>
+        <button
+          onClick={() => setAdd(false)}
+          className="btn-primary mt-5 w-full"
+        >
+          Salvar item
+        </button>
+      </Modal>
+    </div>
+  );
+}
+function Field({ label, placeholder }: { label: string; placeholder: string }) {
+  return (
+    <label>
+      <span className="mb-2 block text-[10px] font-bold">{label}</span>
+      <input className="field !min-h-10 !text-xs" placeholder={placeholder} />
+    </label>
+  );
+}
+
+function Finance() {
+  return (
+    <div className="animate-fade-up">
+      <PageHeader
+        eyebrow="FINANCEIRO"
+        title="Fluxo financeiro"
+        subtitle="Receitas, formas de pagamento e previsibilidade do negócio."
+        action={
+          <div className="flex gap-2">
+            <button className="btn-secondary">
+              <Filter size={16} />
+              Filtros
+            </button>
+            <button className="btn-secondary">
+              <Download size={16} />
+              Exportar
+            </button>
+          </div>
+        }
+      />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Receita recebida"
+          value="R$ 184.620"
+          trend="+12,4% no mês"
+          icon={<CircleDollarSign size={19} />}
+          tone="dark"
+        />
+        <StatCard
+          label="Contas a receber"
+          value="R$ 38.480"
+          trend="63 lançamentos"
+          icon={<WalletCards size={19} />}
+        />
+        <StatCard
+          label="Sinais pendentes"
+          value="R$ 1.860"
+          trend="14 agendamentos"
+          icon={<Clock3 size={19} />}
+          tone="gold"
+        />
+        <StatCard
+          label="Estornos e descontos"
+          value="R$ 4.220"
+          trend="2,2% da receita"
+          icon={<ArrowDownRight size={19} />}
+        />
+      </div>
+      <div className="mt-6 grid gap-5 xl:grid-cols-[1.25fr_.75fr]">
+        <section className="surface p-6">
+          <SectionHeading title="Receita por período" link="Junho de 2026" />
+          <RevenueChart />
+        </section>
+        <section className="surface p-6">
+          <SectionHeading title="Formas de pagamento" />
+          <div className="mt-5 space-y-5">
+            <PayRow
+              icon={<QrCode />}
+              label="Pix"
+              value="42%"
+              amount="R$ 77.540"
+              width="82%"
+            />
+            <PayRow
+              icon={<CreditCard />}
+              label="Cartão"
+              value="38%"
+              amount="R$ 70.160"
+              width="72%"
+            />
+            <PayRow
+              icon={<WalletCards />}
+              label="Parcelado"
+              value="14%"
+              amount="R$ 25.850"
+              width="35%"
+            />
+            <PayRow
+              icon={<CircleDollarSign />}
+              label="Dinheiro"
+              value="6%"
+              amount="R$ 11.070"
+              width="18%"
+            />
+          </div>
+        </section>
+      </div>
+      <section className="surface mt-5 overflow-hidden">
+        <div className="p-6">
+          <SectionHeading title="Últimos lançamentos" />
+        </div>
+        {[
+          [
+            "21/06 • 14:32",
+            "Aplicação Microlink — Camila Ferreira",
+            "Pix",
+            "R$ 1.680,00",
+            "Pago",
+          ],
+          [
+            "21/06 • 12:18",
+            "Avaliação — Marina Costa",
+            "Cartão",
+            "R$ 80,00",
+            "Pago",
+          ],
+          [
+            "21/06 • 10:04",
+            "Kit Home Care — Beatriz Lima",
+            "Parcelado",
+            "R$ 349,00",
+            "Pago",
+          ],
+          [
+            "20/06 • 18:42",
+            "Estorno parcial — Ana Souza",
+            "Pix",
+            "- R$ 120,00",
+            "Estorno",
+          ],
+        ].map((x) => (
+          <div
+            key={x[0]}
+            className="grid grid-cols-[1fr_auto] gap-4 border-t border-black/[.05] p-5 sm:grid-cols-[.8fr_1.5fr_.6fr_.7fr_.5fr]"
+          >
+            <span className="text-[10px] text-stone-400">{x[0]}</span>
+            <b className="hidden text-[10px] sm:block">{x[1]}</b>
+            <span className="hidden text-[10px] sm:block">{x[2]}</span>
+            <b className="text-[10px]">{x[3]}</b>
+            <Badge tone={x[4] === "Pago" ? "green" : "rose"}>{x[4]}</Badge>
+          </div>
+        ))}
+      </section>
+    </div>
+  );
+}
+function PayRow({
+  icon,
+  label,
+  value,
+  amount,
+  width,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  amount: string;
+  width: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-3">
+        <span className="grid h-9 w-9 place-items-center rounded-xl bg-warm text-champagne">
+          {icon}
+        </span>
+        <span className="flex-1 text-xs font-bold">
+          {label}
+          <small className="block text-[9px] font-normal text-stone-400">
+            {amount}
+          </small>
+        </span>
+        <b className="text-xs">{value}</b>
+      </div>
+      <div className="ml-12 mt-2 h-1.5 rounded-full bg-warm">
+        <div className="h-full rounded-full bg-champagne" style={{ width }} />
+      </div>
+    </div>
+  );
+}
+
+function Professionals() {
+  return (
+    <div className="animate-fade-up">
+      <PageHeader
+        eyebrow="EQUIPE"
+        title="Profissionais"
+        subtitle="Agenda, especialidades, metas e desempenho da equipe."
+        action={
+          <button className="btn-primary">
+            <Plus size={16} />
+            Adicionar profissional
+          </button>
+        }
+      />
+      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        {[
+          ...professionals,
+          {
+            ...professionals[1],
+            name: "Bianca Freitas",
+            specialty: "Queratina e coloração",
+            rating: 4.8,
+          },
+        ].map((p, i) => (
+          <div key={p.name} className="surface overflow-hidden">
+            <div className="relative h-36 bg-gradient-to-r from-ink to-[#594534]">
+              <div className="absolute -bottom-9 left-6">
+                <Avatar src={p.photo} name={p.name} size="lg" />
+              </div>
+              <span className="absolute right-4 top-4">
+                <Badge tone="green">Ativa</Badge>
+              </span>
+            </div>
+            <div className="p-6 pt-14">
+              <h2 className="font-display text-3xl font-semibold">{p.name}</h2>
+              <p className="text-[10px] text-stone-400">{p.specialty}</p>
+              <div className="mt-5 grid grid-cols-3 rounded-2xl bg-warm p-4 text-center">
+                <InfoSmall label="Ocupação" value={`${82 - i * 4}%`} />
+                <InfoSmall label="Receita" value={`R$ ${52 - i * 8}k`} />
+                <InfoSmall
+                  label="Nota"
+                  value={String(p.rating).replace(".", ",")}
+                />
+              </div>
+              <button className="btn-secondary mt-5 w-full">
+                Ver desempenho
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+function InfoSmall({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <b className="block text-xs">{value}</b>
+      <span className="text-[8px] text-stone-400">{label}</span>
+    </div>
+  );
+}
+function Catalog() {
+  return (
+    <div className="animate-fade-up">
+      <PageHeader
+        eyebrow="CATÁLOGO"
+        title="Serviços e métodos"
+        subtitle="Preços, duração, materiais e margem de cada procedimento."
+        action={
+          <button className="btn-primary">
+            <Plus size={16} />
+            Novo serviço
+          </button>
+        }
+      />
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {services.map((s, i) => (
+          <article key={s.id} className="surface overflow-hidden">
+            <div className="h-44">
+              <img
+                src={s.image}
+                className="h-full w-full object-cover"
+                alt={s.name}
+              />
+            </div>
+            <div className="p-5">
+              <div className="flex justify-between">
+                <h2 className="font-display text-2xl font-semibold">
+                  {s.name}
+                </h2>
+                <Badge tone="green">Ativo</Badge>
+              </div>
+              <p className="muted mt-2">{s.description}</p>
+              <div className="mt-4 grid grid-cols-3 rounded-2xl bg-warm p-3 text-center">
+                <InfoSmall label="Duração" value={s.duration} />
+                <InfoSmall label="A partir" value={`R$ ${s.price}`} />
+                <InfoSmall label="Margem" value={`${42 + i * 2}%`} />
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+function Commissions() {
+  return (
+    <div className="animate-fade-up">
+      <PageHeader
+        eyebrow="COMISSÕES"
+        title="Comissões da equipe"
+        subtitle="Conferência e fechamento por profissional e período."
+        action={
+          <button className="btn-secondary">
+            <Download size={16} />
+            Exportar folha
+          </button>
+        }
+      />
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard
+          label="Total a pagar"
+          value="R$ 38.420"
+          trend="Fechamento em 30/06"
+          icon={<BadgeDollarSign size={19} />}
+          tone="dark"
+        />
+        <StatCard
+          label="Serviços"
+          value="R$ 34.260"
+          trend="89,2% do total"
+          icon={<Sparkles size={19} />}
+        />
+        <StatCard
+          label="Produtos"
+          value="R$ 4.160"
+          trend="10,8% do total"
+          icon={<Package size={19} />}
+          tone="gold"
+        />
+      </div>
+      <section className="surface mt-6 overflow-hidden">
+        {[
+          "Juliana Almeida",
+          "Renata Moura",
+          "Bianca Freitas",
+          "Patrícia Melo",
+        ].map((p, i) => (
+          <div
+            key={p}
+            className="grid grid-cols-[1fr_auto] items-center gap-4 border-b border-black/[.05] p-5 last:border-0 sm:grid-cols-[1.2fr_.7fr_.7fr_.7fr_auto]"
+          >
+            <div className="flex items-center gap-3">
+              <Avatar src={professionals[i % 2].photo} name={p} />
+              <div>
+                <b className="text-xs">{p}</b>
+                <span className="block text-[9px] text-stone-400">
+                  {54 - i * 7} serviços
+                </span>
+              </div>
+            </div>
+            <span className="hidden text-xs sm:block">R$ {18 - i * 2}.420</span>
+            <span className="hidden text-xs sm:block">{30 + i}%</span>
+            <b className="text-xs">R$ {5 - i}.526</b>
+            <Badge tone={i === 0 ? "green" : "amber"}>
+              {i === 0 ? "Aprovada" : "Revisar"}
+            </Badge>
+          </div>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+function Marketing() {
+  const [create, setCreate] = useState(false);
+  const campaigns = [
+    [
+      "Retorno de manutenção",
+      "12 clientes atrasadas",
+      "WhatsApp",
+      "38%",
+      "Ativa",
+    ],
+    [
+      "Cliente inativa há 60 dias",
+      "86 clientes",
+      "E-mail + Push",
+      "22%",
+      "Ativa",
+    ],
+    ["Indique uma amiga", "Base completa", "Push", "18%", "Ativa"],
+    ["Horários ociosos — terça", "142 clientes", "WhatsApp", "31%", "Rascunho"],
+  ];
+  return (
+    <div className="animate-fade-up">
+      <PageHeader
+        eyebrow="AUTOMAÇÃO E CRESCIMENTO"
+        title="Marketing e campanhas"
+        subtitle="Mensagens relevantes para trazer a cliente de volta no momento certo."
+        action={
+          <button onClick={() => setCreate(true)} className="btn-primary">
+            <Plus size={16} />
+            Criar campanha
+          </button>
+        }
+      />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Receita atribuída"
+          value="R$ 28.640"
+          trend="+22% no período"
+          icon={<CircleDollarSign size={18} />}
+          tone="dark"
+        />
+        <StatCard
+          label="Conversão média"
+          value="27,4%"
+          trend="+4,1 p.p."
+          icon={<TrendingUp size={18} />}
+        />
+        <StatCard
+          label="Cupons usados"
+          value="184"
+          trend="R$ 8.420 em descontos"
+          icon={<Tags size={18} />}
+          tone="gold"
+        />
+        <StatCard
+          label="Clientes reativadas"
+          value="42"
+          trend="Últimos 30 dias"
+          icon={<Users size={18} />}
+        />
+      </div>
+      <section className="surface mt-6 overflow-hidden">
+        <div className="flex items-center justify-between p-6">
+          <SectionHeading title="Campanhas" />
+          <button className="text-xs font-bold text-champagne">
+            Ver modelos
+          </button>
+        </div>
+        {campaigns.map((c) => (
+          <div
+            key={c[0]}
+            className="grid grid-cols-[1fr_auto] items-center gap-4 border-t border-black/[.05] p-5 sm:grid-cols-[1.4fr_.9fr_.7fr_.6fr_.5fr_40px]"
+          >
+            <div>
+              <b className="text-xs">{c[0]}</b>
+              <span className="mt-1 block text-[9px] text-stone-400">
+                Atualizada em 20/06/2026
+              </span>
+            </div>
+            <span className="hidden text-[10px] sm:block">{c[1]}</span>
+            <span className="hidden text-[10px] sm:block">{c[2]}</span>
+            <b className="hidden text-[10px] sm:block">{c[3]}</b>
+            <Badge tone={c[4] === "Ativa" ? "green" : "neutral"}>{c[4]}</Badge>
+            <button className="grid h-8 w-8 place-items-center rounded-lg bg-warm">
+              <MoreHorizontal size={15} />
+            </button>
+          </div>
+        ))}
+      </section>
+      <div className="mt-5 grid gap-4 md:grid-cols-3">
+        <CampaignIdea
+          icon={<Gift />}
+          title="Aniversário"
+          text="Cupom especial enviado 7 dias antes."
+        />
+        <CampaignIdea
+          icon={<Clock3 />}
+          title="Manutenção atrasada"
+          text="Lembrete gentil com benefício de retorno."
+        />
+        <CampaignIdea
+          icon={<Zap />}
+          title="Horário ocioso"
+          text="Oferta segmentada para preencher lacunas."
+        />
+      </div>
+      <Modal
+        open={create}
+        onClose={() => setCreate(false)}
+        title="Criar campanha"
+      >
+        <Label label="Objetivo">
+          <select className="field">
+            <option>Manutenção atrasada</option>
+            <option>Cliente inativa</option>
+            <option>Aniversário</option>
+            <option>Horários ociosos</option>
+            <option>Indicação</option>
+          </select>
+        </Label>
+        <Label label="Público-alvo">
+          <select className="field">
+            <option>Clientes com manutenção atrasada</option>
+            <option>Clientes VIP</option>
+            <option>Clientes inativas há 60 dias</option>
+          </select>
+        </Label>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          {[
+            [MessageCircle, "WhatsApp"],
+            [Smartphone, "Push"],
+            [Mail, "E-mail"],
+          ].map(([I, t]) => {
+            const Icon = I as React.ComponentType<{ size?: number }>;
+            return (
+              <button
+                key={t as string}
+                className="rounded-2xl border border-black/[.07] p-3 text-[10px] font-bold"
+              >
+                <Icon size={17} />
+                <span className="mt-2 block">{t as string}</span>
+              </button>
+            );
+          })}
+        </div>
+        <Label label="Mensagem">
+          <textarea
+            className="field min-h-28 py-3"
+            defaultValue="Oi, {{nome}}! Seu Mega Hair merece um cuidado especial. Notamos que está perto da hora da manutenção. Reserve seu horário e mantenha o resultado impecável ✨"
+          />
+        </Label>
+        <div className="mt-4 rounded-2xl bg-amber-50 p-4 text-[10px] leading-relaxed text-amber-800">
+          A mensagem será salva como modelo. Nenhum envio será feito sem
+          integração configurada e confirmação final.
+        </div>
+        <button
+          onClick={() => setCreate(false)}
+          className="btn-primary mt-5 w-full"
+        >
+          Salvar como rascunho
+        </button>
+      </Modal>
+    </div>
+  );
+}
+function CampaignIdea({
+  icon,
+  title,
+  text,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  text: string;
+}) {
+  return (
+    <button className="surface flex items-center gap-4 p-5 text-left">
+      <span className="grid h-11 w-11 place-items-center rounded-xl bg-warm text-champagne">
+        {icon}
+      </span>
+      <span>
+        <b className="text-xs">{title}</b>
+        <span className="mt-1 block text-[9px] text-stone-400">{text}</span>
+      </span>
+    </button>
+  );
+}
+
+function Loyalty() {
+  return (
+    <div className="animate-fade-up">
+      <PageHeader
+        eyebrow="FIDELIDADE"
+        title="Clube Carol Sol"
+        subtitle="Pontos, níveis, cashback, indicações e experiências exclusivas."
+        action={
+          <button className="btn-primary">
+            <Plus size={16} />
+            Nova recompensa
+          </button>
+        }
+      />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Membros ativos"
+          value="842"
+          trend="67% da base"
+          icon={<Users size={18} />}
+          tone="dark"
+        />
+        <StatCard
+          label="Pontos emitidos"
+          value="428 mil"
+          trend="R$ 21.400 em valor"
+          icon={<Star size={18} />}
+        />
+        <StatCard
+          label="Cashback usado"
+          value="R$ 8.640"
+          trend="41% de utilização"
+          icon={<WalletCards size={18} />}
+        />
+        <StatCard
+          label="Indicações"
+          value="126"
+          trend="74 convertidas"
+          icon={<Gift size={18} />}
+          tone="gold"
+        />
+      </div>
+      <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_380px]">
+        <section className="surface p-6">
+          <SectionHeading title="Distribuição por nível" />
+          <div className="mt-6 space-y-4">
+            <Tier
+              label="Essencial"
+              count="362 clientes"
+              value="43%"
+              width="43%"
+              color="#d8cec0"
+            />
+            <Tier
+              label="Silver"
+              count="248 clientes"
+              value="29%"
+              width="29%"
+              color="#9e9e9e"
+            />
+            <Tier
+              label="Gold"
+              count="184 clientes"
+              value="22%"
+              width="22%"
+              color="#cda75c"
+            />
+            <Tier
+              label="Black"
+              count="48 clientes"
+              value="6%"
+              width="6%"
+              color="#181511"
+            />
+          </div>
+        </section>
+        <section className="hair-gradient rounded-[26px] p-7 text-white">
+          <div className="eyebrow">RECOMPENSA MAIS USADA</div>
+          <h2 className="mt-4 font-display text-4xl font-semibold">
+            R$ 100 em serviços
+          </h2>
+          <p className="mt-3 text-xs leading-relaxed text-white/50">
+            Resgate por 1.000 pontos. 84 clientes utilizaram este benefício em
+            junho.
+          </p>
+          <div className="mt-6 rounded-2xl bg-white/[.06] p-4">
+            <div className="flex justify-between text-xs">
+              <span className="text-white/45">Taxa de resgate</span>
+              <b>38%</b>
+            </div>
+            <div className="mt-3 h-1.5 rounded-full bg-white/10">
+              <div className="h-full w-[38%] rounded-full bg-champagne" />
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+function Tier({
+  label,
+  count,
+  value,
+  width,
+  color,
+}: {
+  label: string;
+  count: string;
+  value: string;
+  width: string;
+  color: string;
+}) {
+  return (
+    <div>
+      <div className="flex justify-between text-xs">
+        <span>
+          <b>{label}</b>
+          <span className="ml-2 text-[9px] text-stone-400">{count}</span>
+        </span>
+        <b>{value}</b>
+      </div>
+      <div className="mt-2 h-2 rounded-full bg-warm">
+        <div
+          className="h-full rounded-full"
+          style={{ width, background: color }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function Reports() {
+  const reports = [
+    [
+      "Lucratividade por método",
+      "Fita Adesiva lidera com margem de 58%",
+      "R$ 52.480",
+    ],
+    [
+      "Conversão por profissional",
+      "Juliana Almeida converte 76% das avaliações",
+      "76%",
+    ],
+    ["Clientes atrasadas", "12 clientes precisam de retorno", "12"],
+    ["Perdas com cancelamento", "R$ 3.840 no mês atual", "R$ 3.840"],
+    ["Cor e comprimento mais vendidos", "Castanho iluminado • 60 cm", "34%"],
+    ["Valor vitalício", "48 clientes acima de R$ 10 mil", "48"],
+  ];
+  return (
+    <div className="animate-fade-up">
+      <PageHeader
+        eyebrow="INTELIGÊNCIA DE NEGÓCIO"
+        title="Relatórios"
+        subtitle="Respostas práticas para decisões de operação, vendas e relacionamento."
+        action={
+          <div className="flex gap-2">
+            <button className="btn-secondary">
+              <Filter size={16} />
+              Período
+            </button>
+            <button className="btn-secondary">
+              <Download size={16} />
+              Exportar CSV
+            </button>
+          </div>
+        }
+      />
+      <div className="grid gap-5 lg:grid-cols-[1fr_380px]">
+        <section className="grid gap-4 sm:grid-cols-2">
+          {reports.map((r, i) => (
+            <button
+              key={r[0]}
+              className="surface p-6 text-left transition hover:-translate-y-1"
+            >
+              <div className="flex justify-between">
+                <span className="grid h-11 w-11 place-items-center rounded-xl bg-warm text-champagne">
+                  {i % 2 ? <TrendingUp /> : <BarChart3 />}
+                </span>
+                <ArrowUpRight size={17} className="text-stone-300" />
+              </div>
+              <h2 className="mt-5 font-display text-2xl font-semibold">
+                {r[0]}
+              </h2>
+              <p className="muted mt-2">{r[1]}</p>
+              <div className="mt-4 text-xl font-bold">{r[2]}</div>
+            </button>
+          ))}
+        </section>
+        <aside className="space-y-5">
+          <div className="surface p-6">
+            <SectionHeading title="Horários com menor ocupação" />
+            <div className="mt-5 space-y-3">
+              <RankRow
+                rank="01"
+                label="Terça • 14h–16h"
+                value="42%"
+                width="42%"
+              />
+              <RankRow
+                rank="02"
+                label="Quarta • 09h–11h"
+                value="51%"
+                width="51%"
+              />
+              <RankRow
+                rank="03"
+                label="Sexta • 17h–19h"
+                value="58%"
+                width="58%"
+              />
+            </div>
+          </div>
+          <div className="hair-gradient rounded-[26px] p-6 text-white">
+            <div className="eyebrow">INSIGHT CAROL SOL</div>
+            <h3 className="mt-3 font-display text-3xl font-semibold">
+              Campanha sugerida
+            </h3>
+            <p className="mt-2 text-xs leading-relaxed text-white/50">
+              Oferecer 8% de cashback para manutenções na terça à tarde pode
+              elevar a ocupação em até 16%.
+            </p>
+            <button className="btn-gold mt-5 w-full">Criar campanha</button>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function AdminSettings() {
+  const [toast, setToast] = useState(false);
+  return (
+    <div className="animate-fade-up">
+      <Toast show={toast} message="Configurações salvas" />
+      <PageHeader
+        eyebrow="CONFIGURAÇÕES"
+        title="Preferências do salão"
+        subtitle="Unidades, permissões, integrações, políticas e segurança."
+      />
+      <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
+        <aside className="surface self-start p-3">
+          {[
+            "Dados da empresa",
+            "Unidades e salas",
+            "Usuários e permissões",
+            "Agenda e cancelamento",
+            "Pagamentos",
+            "Integrações",
+            "Notificações",
+            "LGPD e auditoria",
+          ].map((x, i) => (
+            <button
+              key={x}
+              className={`w-full rounded-xl px-4 py-3 text-left text-xs font-semibold ${i === 0 ? "bg-ink text-white" : "text-stone-500 hover:bg-warm"}`}
+            >
+              {x}
+            </button>
+          ))}
+        </aside>
+        <section className="surface p-6 sm:p-8">
+          <SectionHeading title="Dados da empresa" />
+          <div className="mt-6 grid gap-4 sm:grid-cols-2">
+            <Field label="Nome fantasia" placeholder="Carol Sol" />
+            <Field label="CNPJ" placeholder="12.345.678/0001-90" />
+            <Field label="Telefone" placeholder="(11) 4002-8922" />
+            <Field label="E-mail" placeholder="contato@carolsol.com.br" />
+            <Field label="Moeda" placeholder="Real brasileiro (R$)" />
+            <Field label="Fuso horário" placeholder="America/Sao_Paulo" />
+          </div>
+          <Label label="Endereço principal">
+            <input
+              className="field"
+              defaultValue="Al. Santos, 1.240 — Jardins, São Paulo/SP"
+            />
+          </Label>
+          <div className="mt-6 border-t border-black/[.06] pt-6">
+            <h3 className="font-display text-2xl font-semibold">
+              Identidade e segurança
+            </h3>
+            <div className="mt-4 space-y-3">
+              {[
+                [
+                  "Autenticação em duas etapas",
+                  "Obrigatória para administradores",
+                ],
+                ["Logs de auditoria", "Registrar alterações por 24 meses"],
+                ["Consentimento LGPD", "Solicitar em cadastro e importações"],
+              ].map((x) => (
+                <label
+                  key={x[0]}
+                  className="flex items-center justify-between rounded-2xl bg-warm p-4"
+                >
+                  <span>
+                    <b className="block text-xs">{x[0]}</b>
+                    <span className="text-[9px] text-stone-400">{x[1]}</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    defaultChecked
+                    className="h-4 w-4 accent-[#181511]"
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              setToast(true);
+              setTimeout(() => setToast(false), 2200);
+            }}
+            className="btn-primary mt-6"
+          >
+            Salvar configurações
+          </button>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl bg-warm p-4">
+      <span className="text-[9px] font-bold uppercase tracking-wider text-stone-400">
+        {label}
+      </span>
+      <b className="mt-2 block text-xs">{value}</b>
+    </div>
+  );
+}

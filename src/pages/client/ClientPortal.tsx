@@ -1,78 +1,1920 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { CalendarDays, Check, Clock3, Copy, CreditCard, Download, ExternalLink, FileText, Gift, MapPin, Plus, Save, Scissors, Sparkles, Trash2, UserPlus, WalletCards } from 'lucide-react'
-import { Avatar, Badge, EmptyState, LoadingState, Modal, PageHeader, SectionHeading, Toast } from '../../components/ui'
-import { apiFetch, uploadImage } from '../../lib/api'
-import { useAuth } from '../../context/AuthContext'
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import {
+  CalendarDays,
+  Check,
+  Clock3,
+  Copy,
+  CreditCard,
+  Download,
+  ExternalLink,
+  FileText,
+  Gift,
+  MapPin,
+  Plus,
+  QrCode,
+  Save,
+  Scissors,
+  Sparkles,
+  Trash2,
+  UserPlus,
+  Upload,
+  WalletCards,
+} from "lucide-react";
+import {
+  Avatar,
+  Badge,
+  EmptyState,
+  LoadingState,
+  Modal,
+  PageHeader,
+  SectionHeading,
+  Toast,
+} from "../../components/ui";
+import { apiFetch, uploadImage } from "../../lib/api";
+import { useAuth } from "../../context/AuthContext";
 
-type PortalResponse<T> = { data: T }
-const brl = (value: unknown) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-const date = (value: unknown) => value ? new Date(String(value)).toLocaleDateString('pt-BR') : '—'
-const dateTime = (value: unknown) => value ? new Date(String(value)).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—'
-const statusLabel: Record<string,string> = { pending:'Pendente',pending_deposit:'Aguardando sinal',under_review:'Em análise',confirmed:'Confirmado',in_service:'Em atendimento',rescheduled:'Reagendado',paid:'Pago',partial:'Parcial',cancelled:'Cancelado',refunded:'Reembolsado',failed:'Falhou',no_show:'Faltou',active:'Ativo',awaiting_payment:'Aguardando pagamento',paused:'Pausado',expired:'Expirado',delinquent:'Inadimplente',draft:'Rascunho',requested:'Solicitado',completed:'Concluído' }
-const statusTone = (status:string): 'green'|'gold'|'amber'|'rose'|'neutral' => status==='paid'||status==='active'||status==='completed'||status==='confirmed'?'green':status==='pending'||status==='pending_deposit'||status==='awaiting_payment'||status==='under_review'||status==='rescheduled'||status==='in_service'?'amber':status==='cancelled'||status==='refunded'||status==='failed'||status==='delinquent'||status==='no_show'?'rose':'neutral'
+type PortalResponse<T> = { data: T };
+const brl = (value: unknown) =>
+  Number(value || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+const date = (value: unknown) =>
+  value ? new Date(String(value)).toLocaleDateString("pt-BR") : "—";
+const dateTime = (value: unknown) =>
+  value
+    ? new Date(String(value)).toLocaleString("pt-BR", {
+        dateStyle: "short",
+        timeStyle: "short",
+      })
+    : "—";
+const statusLabel: Record<string, string> = {
+  pending: "Pendente",
+  pending_deposit: "Aguardando sinal",
+  under_review: "Em análise",
+  confirmed: "Confirmado",
+  in_service: "Em atendimento",
+  rescheduled: "Reagendado",
+  reschedule_requested: "Reagendamento solicitado",
+  paid: "Pago",
+  partial: "Parcial",
+  cancelled: "Cancelado",
+  refunded: "Reembolsado",
+  failed: "Falhou",
+  no_show: "Faltou",
+  active: "Ativo",
+  awaiting_payment: "Aguardando pagamento",
+  paused: "Pausado",
+  expired: "Expirado",
+  delinquent: "Inadimplente",
+  draft: "Rascunho",
+  requested: "Solicitação enviada",
+  completed: "Concluído",
+};
+const statusTone = (
+  status: string,
+): "green" | "gold" | "amber" | "rose" | "neutral" =>
+  status === "paid" ||
+  status === "active" ||
+  status === "completed" ||
+  status === "confirmed"
+    ? "green"
+    : status === "pending" ||
+        status === "requested" ||
+        status === "pending_deposit" ||
+        status === "awaiting_payment" ||
+        status === "under_review" ||
+        status === "rescheduled" ||
+        status === "reschedule_requested" ||
+        status === "in_service"
+      ? "amber"
+      : status === "cancelled" ||
+          status === "refunded" ||
+          status === "failed" ||
+          status === "delinquent" ||
+          status === "no_show"
+        ? "rose"
+        : "neutral";
 
 function usePortal<T>(url: string) {
-  const [data,setData]=useState<T|null>(null); const [loading,setLoading]=useState(true); const [error,setError]=useState('')
-  const reload=()=>{setLoading(true);setError('');return apiFetch<PortalResponse<T>|T>(url).then(result=>setData(((result as PortalResponse<T>).data??result) as T)).catch(err=>{console.error('Portal load error',err);setError(err.message)}).finally(()=>setLoading(false))}
-  useEffect(()=>{reload()},[url])
-  return {data,loading,error,reload,setData}
+  const [data, setData] = useState<T | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const reload = () => {
+    setLoading(true);
+    setError("");
+    return apiFetch<PortalResponse<T> | T>(url)
+      .then((result) =>
+        setData(((result as PortalResponse<T>).data ?? result) as T),
+      )
+      .catch((err) => {
+        console.error("Portal load error", err);
+        setError(err.message);
+      })
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => {
+    reload();
+  }, [url]);
+  return { data, loading, error, reload, setData };
 }
 
-function Notice({message}:{message:string}) { return message?<div className="rounded-2xl bg-rose-50 p-4 text-xs font-semibold text-rose-700">{message}</div>:null }
+function Notice({ message }: { message: string }) {
+  return message ? (
+    <div className="rounded-2xl bg-rose-50 p-4 text-xs font-semibold text-rose-700">
+      {message}
+    </div>
+  ) : null;
+}
 
-export function ClientHomePage(){const nav=useNavigate();const overview=usePortal<any>('/api/portal?resource=client-overview');const bootstrap=usePortal<any>('/api/data?resource=bootstrap');if(overview.loading||bootstrap.loading)return <LoadingState/>;if(!overview.data)return <Notice message={overview.error}/>;const d=overview.data;const firstName=String(d.profile?.full_name||'Cliente').split(' ')[0];return <div><PageHeader eyebrow="MINHA JORNADA" title={`Olá, ${firstName}.`} subtitle="Seus próximos cuidados e benefícios atualizados em tempo real."/><section className="hair-gradient rounded-[30px] p-7 text-white sm:p-10"><div className="eyebrow">PRÓXIMO CUIDADO</div>{d.nextAppointment?<><h2 className="mt-3 font-display text-4xl">{d.nextAppointment.service}</h2><p className="mt-3 text-sm text-white/60">{dateTime(d.nextAppointment.starts_at)} • {d.nextAppointment.professional} • {d.nextAppointment.location||'Carol Sol'}</p><button onClick={()=>nav('/cliente/agendamentos')} className="btn-gold mt-6">Ver agendamento</button></>:<><h2 className="mt-3 font-display text-4xl">Sua agenda está livre</h2><p className="mt-3 text-sm text-white/60">Escolha um serviço e reserve seu próximo cuidado.</p><button onClick={()=>nav('/cliente/agendamentos')} className="btn-gold mt-6">Agendar agora</button></>}</section><div className="mt-5 grid gap-4 sm:grid-cols-4"><button onClick={()=>nav('/cliente/beneficios')} className="surface p-5 text-left"><Gift className="text-champagne"/><b className="mt-3 block text-xl">{d.points} pontos</b><span className="text-[10px] text-stone-400">{d.subscription?.name?`${d.subscription.name} • ${statusLabel[d.subscription.status]||d.subscription.status}`:'Nenhum plano ativo'}</span></button><button onClick={()=>nav('/cliente/cupons')} className="surface p-5 text-left"><Sparkles className="text-champagne"/><b className="mt-3 block text-xl">{d.coupons.length} cupons</b><span className="text-[10px] text-stone-400">Benefícios disponíveis</span></button><button onClick={()=>nav('/cliente/pagamentos')} className="surface p-5 text-left"><WalletCards className="text-champagne"/><b className="mt-3 block text-xl">{brl(d.pendingPayments.amount)}</b><span className="text-[10px] text-stone-400">{d.pendingPayments.count} pagamentos pendentes</span></button><button onClick={()=>nav('/cliente/historico')} className="surface p-5 text-left"><FileText className="text-champagne"/><b className="mt-3 block text-xl">Histórico</b><span className="text-[10px] text-stone-400">Serviços, fichas e fotos</span></button></div><section className="mt-8"><SectionHeading title="Serviços disponíveis" link="Ver todos" onClick={()=>nav('/cliente/servicos')}/><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{bootstrap.data?.services?.length?bootstrap.data.services.map((s:any)=><div key={s.id} className="surface p-5"><CalendarDays className="text-champagne"/><h3 className="mt-3 font-display text-2xl">{s.name}</h3><p className="muted mt-2">{s.description}</p><div className="mt-4 flex justify-between text-xs"><span><Clock3 className="mr-1 inline" size={13}/>{s.duration_minutes}min</span><b>{brl(s.base_price)}</b></div><button onClick={()=>nav('/cliente/agendamentos')} className="btn-primary mt-5 w-full">Agendar</button></div>):<EmptyState title="Nenhum serviço disponível" text="O catálogo está temporariamente vazio."/>}</div></section></div>}
+export function ClientHomePage() {
+  const nav = useNavigate();
+  const overview = usePortal<any>("/api/portal?resource=client-overview");
+  const bootstrap = usePortal<any>("/api/data?resource=bootstrap");
+  if (overview.loading || bootstrap.loading) return <LoadingState />;
+  if (!overview.data) return <Notice message={overview.error} />;
+  const d = overview.data;
+  const firstName = String(d.profile?.full_name || "Cliente").split(" ")[0];
+  return (
+    <div>
+      <PageHeader
+        eyebrow="MINHA JORNADA"
+        title={`Olá, ${firstName}.`}
+        subtitle="Seus próximos cuidados e benefícios atualizados em tempo real."
+      />
+      <section className="hair-gradient rounded-[30px] p-7 text-white sm:p-10">
+        <div className="eyebrow">PRÓXIMO CUIDADO</div>
+        {d.nextAppointment ? (
+          <>
+            <h2 className="mt-3 font-display text-4xl">
+              {d.nextAppointment.service}
+            </h2>
+            <p className="mt-3 text-sm text-white/60">
+              {dateTime(d.nextAppointment.starts_at)} •{" "}
+              {d.nextAppointment.professional} •{" "}
+              {d.nextAppointment.location || "Carol Sol"}
+            </p>
+            <button
+              onClick={() => nav("/cliente/agendamentos")}
+              className="btn-gold mt-6"
+            >
+              Ver agendamento
+            </button>
+          </>
+        ) : (
+          <>
+            <h2 className="mt-3 font-display text-4xl">
+              Sua agenda está livre
+            </h2>
+            <p className="mt-3 text-sm text-white/60">
+              Escolha um serviço e reserve seu próximo cuidado.
+            </p>
+            <button
+              onClick={() => nav("/cliente/agendamentos")}
+              className="btn-gold mt-6"
+            >
+              Agendar agora
+            </button>
+          </>
+        )}
+      </section>
+      <div className="mt-5 grid gap-4 sm:grid-cols-4">
+        <button
+          onClick={() => nav("/cliente/beneficios")}
+          className="surface p-5 text-left"
+        >
+          <Gift className="text-champagne" />
+          <b className="mt-3 block text-xl">{d.points} pontos</b>
+          <span className="text-[10px] text-stone-400">
+            {d.subscription?.name
+              ? `${d.subscription.name} • ${statusLabel[d.subscription.status] || d.subscription.status}`
+              : "Nenhum plano ativo"}
+          </span>
+        </button>
+        <button
+          onClick={() => nav("/cliente/cupons")}
+          className="surface p-5 text-left"
+        >
+          <Sparkles className="text-champagne" />
+          <b className="mt-3 block text-xl">{d.coupons.length} cupons</b>
+          <span className="text-[10px] text-stone-400">
+            Benefícios disponíveis
+          </span>
+        </button>
+        <button
+          onClick={() => nav("/cliente/pagamentos")}
+          className="surface p-5 text-left"
+        >
+          <WalletCards className="text-champagne" />
+          <b className="mt-3 block text-xl">{brl(d.pendingPayments.amount)}</b>
+          <span className="text-[10px] text-stone-400">
+            {d.pendingPayments.count} pagamentos pendentes
+          </span>
+        </button>
+        <button
+          onClick={() => nav("/cliente/historico")}
+          className="surface p-5 text-left"
+        >
+          <FileText className="text-champagne" />
+          <b className="mt-3 block text-xl">Histórico</b>
+          <span className="text-[10px] text-stone-400">
+            Serviços, fichas e fotos
+          </span>
+        </button>
+      </div>
+      <section className="mt-8">
+        <SectionHeading
+          title="Serviços disponíveis"
+          link="Ver todos"
+          onClick={() => nav("/cliente/servicos")}
+        />
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {bootstrap.data?.services?.length ? (
+            bootstrap.data.services.map((s: any) => (
+              <div key={s.id} className="surface p-5">
+                <CalendarDays className="text-champagne" />
+                <h3 className="mt-3 font-display text-2xl">{s.name}</h3>
+                <p className="muted mt-2">{s.description}</p>
+                <div className="mt-4 flex justify-between text-xs">
+                  <span>
+                    <Clock3 className="mr-1 inline" size={13} />
+                    {s.duration_minutes}min
+                  </span>
+                  <b>{brl(s.base_price)}</b>
+                </div>
+                <button
+                  onClick={() => nav("/cliente/agendamentos")}
+                  className="btn-primary mt-5 w-full"
+                >
+                  Agendar
+                </button>
+              </div>
+            ))
+          ) : (
+            <EmptyState
+              title="Nenhum serviço disponível"
+              text="O catálogo está temporariamente vazio."
+            />
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
 
 export function ClientProfilePage() {
-  const nav=useNavigate(); const {refresh}=useAuth(); const portal=usePortal<any>('/api/portal?resource=profile'); const history=usePortal<any>('/api/portal?resource=client-history'); const [form,setForm]=useState<any>({}); const [saving,setSaving]=useState(false); const [toast,setToast]=useState(''); const [uploading,setUploading]=useState(false)
-  useEffect(()=>{if(portal.data)setForm({fullName:portal.data.full_name||'',email:portal.data.email||'',phone:portal.data.phone||'',birthDate:portal.data.birth_date?.slice(0,10)||'',instagram:portal.data.instagram||'',address:portal.data.address||{},preferences:portal.data.preferences||{},personalNotes:portal.data.personal_notes||'',avatarUrl:portal.data.avatar_url||''})},[portal.data])
-  if(portal.loading)return <LoadingState/>; if(!portal.data)return <><PageHeader title="Perfil"/><Notice message={portal.error}/></>
-  const save=async(e:FormEvent)=>{e.preventDefault();setSaving(true);try{await apiFetch('/api/portal?resource=profile',{method:'PATCH',body:JSON.stringify(form)});await Promise.all([portal.reload(),refresh()]);setToast('Alterações salvas com sucesso.')}catch(err){console.error('Profile save error',err);setToast(err instanceof Error?err.message:'Ocorreu um erro ao salvar os dados.')}finally{setSaving(false);setTimeout(()=>setToast(''),2600)}}
-  const photo=async(file?:File)=>{if(!file)return;setUploading(true);try{const uploaded=await uploadImage(file,'profile-photo');setForm((current:any)=>({...current,avatarUrl:uploaded.url}))}catch(err){console.error('Profile photo error',err);setToast(err instanceof Error?err.message:'Não foi possível enviar a foto.')}finally{setUploading(false)}}
-  const recent=history.data?.appointments?.slice(0,3)||[]; const summary=history.data?.summary||{}
-  return <div className="animate-fade-up"><Toast show={!!toast} message={toast}/><PageHeader eyebrow="MINHA CONTA" title="Perfil e preferências" subtitle="Dados reais da sua conta Carol Sol." action={<button onClick={()=>nav('/cliente/historico')} className="btn-secondary"><FileText size={16}/>Ver histórico completo</button>}/><form onSubmit={save} className="grid gap-5 lg:grid-cols-[300px_1fr]"><aside className="surface self-start p-7 text-center"><Avatar src={form.avatarUrl} name={form.fullName} size="lg"/><h2 className="mt-4 font-display text-3xl font-semibold">{form.fullName}</h2><p className="text-xs text-stone-400">Conta {statusLabel[portal.data.account_status]||portal.data.account_status}</p><div className="mt-5 grid grid-cols-3 rounded-2xl bg-warm p-4 text-center text-[10px]"><span><b className="block text-sm">{summary.loyaltyBalance??'—'}</b>Pontos</span><span><b className="block text-sm">{summary.completedAppointments??'—'}</b>Atend.</span><span><b className="block text-sm">{summary.technicalRecords??'—'}</b>Fichas</span></div><label className="btn-secondary mt-5 cursor-pointer">{uploading?'Enviando…':'Trocar foto'}<input type="file" accept="image/*" className="hidden" disabled={uploading} onChange={e=>photo(e.target.files?.[0])}/></label></aside><section className="surface p-6 sm:p-8"><div className="grid gap-4 sm:grid-cols-2"><Field label="Nome completo" value={form.fullName} onChange={v=>setForm({...form,fullName:v})}/><Field label="E-mail" type="email" value={form.email} onChange={v=>setForm({...form,email:v})}/><Field label="Telefone" value={form.phone} onChange={v=>setForm({...form,phone:v})}/><Field label="Nascimento" type="date" value={form.birthDate} onChange={v=>setForm({...form,birthDate:v})}/><Field label="Instagram" value={form.instagram} onChange={v=>setForm({...form,instagram:v})}/><Field label="CEP" value={form.address?.zip||''} onChange={v=>setForm({...form,address:{...form.address,zip:v}})}/><Field label="Cidade" value={form.address?.city||''} onChange={v=>setForm({...form,address:{...form.address,city:v}})}/><Field label="Estado" value={form.address?.state||''} onChange={v=>setForm({...form,address:{...form.address,state:v}})}/></div><label className="mt-4 block"><span className="mb-2 block text-xs font-bold">Endereço</span><input className="field" value={form.address?.street||''} onChange={e=>setForm({...form,address:{...form.address,street:e.target.value}})}/></label><label className="mt-4 block"><span className="mb-2 block text-xs font-bold">Preferências e observações pessoais</span><textarea className="field min-h-24 py-3" value={form.personalNotes} onChange={e=>setForm({...form,personalNotes:e.target.value})}/></label><button disabled={saving} className="btn-primary mt-6 disabled:opacity-50"><Save size={16}/>{saving?'Salvando…':'Salvar alterações'}</button></section></form><section className="surface mt-5 p-6"><SectionHeading title="Histórico de serviços" link="Ver todos" onClick={()=>nav('/cliente/historico')}/>{history.loading?<LoadingState/>:recent.length?<div className="grid gap-3">{recent.map((a:any)=><button key={a.id} onClick={()=>nav(`/cliente/agendamentos/${a.id}`)} className="flex items-center gap-4 rounded-2xl border border-black/5 p-4 text-left transition hover:bg-warm"><Scissors size={17} className="text-champagne"/><span className="min-w-0 flex-1"><b className="block truncate text-xs">{a.service}</b><span className="text-[10px] text-stone-400">{dateTime(a.starts_at)} • {a.professional}</span></span><Badge tone={statusTone(a.status)}>{statusLabel[a.status]||a.status}</Badge></button>)}</div>:<EmptyState title="Nenhum histórico ainda" text="Quando houver atendimentos, eles aparecerão aqui com fichas técnicas e registros."/>}</section></div>
+  const nav = useNavigate();
+  const { refresh } = useAuth();
+  const portal = usePortal<any>("/api/portal?resource=profile");
+  const history = usePortal<any>("/api/portal?resource=client-history");
+  const [form, setForm] = useState<any>({});
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+  const [uploading, setUploading] = useState(false);
+  useEffect(() => {
+    if (portal.data)
+      setForm({
+        fullName: portal.data.full_name || "",
+        email: portal.data.email || "",
+        phone: portal.data.phone || "",
+        birthDate: portal.data.birth_date?.slice(0, 10) || "",
+        instagram: portal.data.instagram || "",
+        address: portal.data.address || {},
+        preferences: portal.data.preferences || {},
+        personalNotes: portal.data.personal_notes || "",
+        avatarUrl: portal.data.avatar_url || "",
+      });
+  }, [portal.data]);
+  if (portal.loading) return <LoadingState />;
+  if (!portal.data)
+    return (
+      <>
+        <PageHeader title="Perfil" />
+        <Notice message={portal.error} />
+      </>
+    );
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await apiFetch("/api/portal?resource=profile", {
+        method: "PATCH",
+        body: JSON.stringify(form),
+      });
+      await Promise.all([portal.reload(), refresh()]);
+      setToast("Alterações salvas com sucesso.");
+    } catch (err) {
+      console.error("Profile save error", err);
+      setToast(
+        err instanceof Error
+          ? err.message
+          : "Ocorreu um erro ao salvar os dados.",
+      );
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2600);
+    }
+  };
+  const photo = async (file?: File) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const uploaded = await uploadImage(file, "profile-photo");
+      setForm((current: any) => ({ ...current, avatarUrl: uploaded.url }));
+    } catch (err) {
+      console.error("Profile photo error", err);
+      setToast(
+        err instanceof Error ? err.message : "Não foi possível enviar a foto.",
+      );
+    } finally {
+      setUploading(false);
+    }
+  };
+  const recent = history.data?.appointments?.slice(0, 3) || [];
+  const summary = history.data?.summary || {};
+  return (
+    <div className="animate-fade-up">
+      <Toast show={!!toast} message={toast} />
+      <PageHeader
+        eyebrow="MINHA CONTA"
+        title="Perfil e preferências"
+        subtitle="Dados reais da sua conta Carol Sol."
+        action={
+          <button
+            onClick={() => nav("/cliente/historico")}
+            className="btn-secondary"
+          >
+            <FileText size={16} />
+            Ver histórico completo
+          </button>
+        }
+      />
+      <form onSubmit={save} className="grid gap-5 lg:grid-cols-[300px_1fr]">
+        <aside className="surface self-start p-7 text-center">
+          <Avatar src={form.avatarUrl} name={form.fullName} size="lg" />
+          <h2 className="mt-4 font-display text-3xl font-semibold">
+            {form.fullName}
+          </h2>
+          <p className="text-xs text-stone-400">
+            Conta{" "}
+            {statusLabel[portal.data.account_status] ||
+              portal.data.account_status}
+          </p>
+          <div className="mt-5 grid grid-cols-3 rounded-2xl bg-warm p-4 text-center text-[10px]">
+            <span>
+              <b className="block text-sm">{summary.loyaltyBalance ?? "—"}</b>
+              Pontos
+            </span>
+            <span>
+              <b className="block text-sm">
+                {summary.completedAppointments ?? "—"}
+              </b>
+              Atend.
+            </span>
+            <span>
+              <b className="block text-sm">{summary.technicalRecords ?? "—"}</b>
+              Fichas
+            </span>
+          </div>
+          <label className="btn-secondary mt-5 cursor-pointer">
+            {uploading ? "Enviando…" : "Trocar foto"}
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={uploading}
+              onChange={(e) => photo(e.target.files?.[0])}
+            />
+          </label>
+        </aside>
+        <section className="surface p-6 sm:p-8">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Nome completo"
+              value={form.fullName}
+              onChange={(v) => setForm({ ...form, fullName: v })}
+            />
+            <Field
+              label="E-mail"
+              type="email"
+              value={form.email}
+              onChange={(v) => setForm({ ...form, email: v })}
+            />
+            <Field
+              label="Telefone"
+              value={form.phone}
+              onChange={(v) => setForm({ ...form, phone: v })}
+            />
+            <Field
+              label="Nascimento"
+              type="date"
+              value={form.birthDate}
+              onChange={(v) => setForm({ ...form, birthDate: v })}
+            />
+            <Field
+              label="Instagram"
+              value={form.instagram}
+              onChange={(v) => setForm({ ...form, instagram: v })}
+            />
+            <Field
+              label="CEP"
+              value={form.address?.zip || ""}
+              onChange={(v) =>
+                setForm({ ...form, address: { ...form.address, zip: v } })
+              }
+            />
+            <Field
+              label="Cidade"
+              value={form.address?.city || ""}
+              onChange={(v) =>
+                setForm({ ...form, address: { ...form.address, city: v } })
+              }
+            />
+            <Field
+              label="Estado"
+              value={form.address?.state || ""}
+              onChange={(v) =>
+                setForm({ ...form, address: { ...form.address, state: v } })
+              }
+            />
+          </div>
+          <label className="mt-4 block">
+            <span className="mb-2 block text-xs font-bold">Endereço</span>
+            <input
+              className="field"
+              value={form.address?.street || ""}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  address: { ...form.address, street: e.target.value },
+                })
+              }
+            />
+          </label>
+          <label className="mt-4 block">
+            <span className="mb-2 block text-xs font-bold">
+              Preferências e observações pessoais
+            </span>
+            <textarea
+              className="field min-h-24 py-3"
+              value={form.personalNotes}
+              onChange={(e) =>
+                setForm({ ...form, personalNotes: e.target.value })
+              }
+            />
+          </label>
+          <button
+            disabled={saving}
+            className="btn-primary mt-6 disabled:opacity-50"
+          >
+            <Save size={16} />
+            {saving ? "Salvando…" : "Salvar alterações"}
+          </button>
+        </section>
+      </form>
+      <section className="surface mt-5 p-6">
+        <SectionHeading
+          title="Histórico de serviços"
+          link="Ver todos"
+          onClick={() => nav("/cliente/historico")}
+        />
+        {history.loading ? (
+          <LoadingState />
+        ) : recent.length ? (
+          <div className="grid gap-3">
+            {recent.map((a: any) => (
+              <button
+                key={a.id}
+                onClick={() => nav(`/cliente/agendamentos/${a.id}`)}
+                className="flex items-center gap-4 rounded-2xl border border-black/5 p-4 text-left transition hover:bg-warm"
+              >
+                <Scissors size={17} className="text-champagne" />
+                <span className="min-w-0 flex-1">
+                  <b className="block truncate text-xs">{a.service}</b>
+                  <span className="text-[10px] text-stone-400">
+                    {dateTime(a.starts_at)} • {a.professional}
+                  </span>
+                </span>
+                <Badge tone={statusTone(a.status)}>
+                  {statusLabel[a.status] || a.status}
+                </Badge>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            title="Nenhum histórico ainda"
+            text="Quando houver atendimentos, eles aparecerão aqui com fichas técnicas e registros."
+          />
+        )}
+      </section>
+    </div>
+  );
 }
 
 export function ClientPaymentsPage() {
-  const location=useLocation(); const id=location.pathname.split('/pagamentos/')[1]; const portal=usePortal<any>(`/api/portal?resource=payments${id?`&id=${encodeURIComponent(id)}`:''}`)
-  if(portal.loading)return <LoadingState/>; if(!portal.data)return <><PageHeader title="Pagamentos"/><Notice message={portal.error}/></>
-  if(id){const p=portal.data;return <div><PageHeader eyebrow="DETALHE FINANCEIRO" title={`Pagamento ${String(p.id).slice(0,8).toUpperCase()}`} subtitle={p.service||p.plan||'Pagamento Carol Sol'}/><section className="surface p-6"><div className="mb-5 flex justify-between"><Badge tone={statusTone(p.status)}>{statusLabel[p.status]||p.status}</Badge><b className="font-display text-3xl">{brl(p.amount)}</b></div><div className="grid gap-3 sm:grid-cols-2"><Info label="Valor pago" value={brl(p.paid_amount)}/><Info label="Valor restante" value={brl(Number(p.amount)-Number(p.paid_amount||0)-Number(p.discount_amount||0))}/><Info label="Desconto" value={brl(p.discount_amount)}/><Info label="Método" value={p.method}/><Info label="Criação" value={dateTime(p.created_at)}/><Info label="Confirmação" value={dateTime(p.paid_at)}/></div>{p.receipt_url&&<a className="btn-secondary mt-5" href={p.receipt_url} target="_blank" rel="noreferrer">Ver comprovante <ExternalLink size={15}/></a>}</section></div>}
-  const list=portal.data as any[];const pending=list.filter(p=>['pending','under_review','partial'].includes(p.status));return <div><PageHeader eyebrow="FINANCEIRO" title="Meus pagamentos" subtitle="Acompanhe sinais, planos e pagamentos realizados."/><div className="grid gap-4 sm:grid-cols-3"><Info label="Pendentes" value={String(pending.length)}/><Info label="Valor pendente" value={brl(pending.reduce((sum,p)=>sum+Number(p.amount)-Number(p.paid_amount||0),0))}/><Info label="Total pago" value={brl(list.filter(p=>p.status==='paid').reduce((sum,p)=>sum+Number(p.paid_amount||p.amount),0))}/></div><section className="surface mt-5 overflow-hidden">{list.length?list.map(p=><a key={p.id} href={`/cliente/pagamentos/${p.id}`} className="grid grid-cols-[1fr_auto] gap-3 border-b border-black/[.05] p-5 last:border-0 sm:grid-cols-[1.5fr_.8fr_.8fr_auto]"><span><b className="block text-xs">{p.service||p.plan||'Pagamento'}</b><span className="text-[10px] text-stone-400">{dateTime(p.created_at)}</span></span><span className="hidden text-xs sm:block">{p.method}</span><b className="text-xs">{brl(p.amount)}</b><Badge tone={statusTone(p.status)}>{statusLabel[p.status]||p.status}</Badge></a>):<EmptyState title="Você ainda não possui pagamentos" text="Seus pagamentos de serviços e planos aparecerão aqui."/>}</section></div>
+  const location = useLocation();
+  const id = location.pathname.split("/pagamentos/")[1];
+  const [busy, setBusy] = useState("");
+  const [toast, setToast] = useState("");
+  const portal = usePortal<any>(
+    `/api/portal?resource=payments${id ? `&id=${encodeURIComponent(id)}` : ""}`,
+  );
+  const chooseMethod = async (provider: "pix_manual" | "local") => {
+    if (!id) return;
+    setBusy(provider);
+    try {
+      await apiFetch("/api/payments?resource=payment-method", {
+        method: "POST",
+        body: JSON.stringify({ paymentId: id, provider }),
+      });
+      await portal.reload();
+      setToast("Forma de pagamento atualizada.");
+    } catch (error) {
+      console.error("Payment method error", error);
+      setToast(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível concluir a ação.",
+      );
+    } finally {
+      setBusy("");
+      setTimeout(() => setToast(""), 2600);
+    }
+  };
+  const openSumup = async () => {
+    if (!id) return;
+    setBusy("sumup");
+    try {
+      const result = await apiFetch<{ url: string }>(
+        "/api/payments?resource=create-sumup-checkout",
+        {
+          method: "POST",
+          body: JSON.stringify({ paymentId: id }),
+        },
+      );
+      window.location.assign(result.url);
+    } catch (error) {
+      console.error("SumUp checkout error", error);
+      setToast(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível abrir o pagamento seguro.",
+      );
+      setBusy("");
+      setTimeout(() => setToast(""), 3200);
+    }
+  };
+  const receipt = async (file?: File) => {
+    if (!file || !id) return;
+    setBusy("receipt");
+    try {
+      const uploaded = await uploadImage(file, "payment-receipt");
+      await apiFetch("/api/payments?resource=receipt", {
+        method: "POST",
+        body: JSON.stringify({ paymentId: id, url: uploaded.url }),
+      });
+      await portal.reload();
+      setToast("Comprovante enviado para análise.");
+    } catch (error) {
+      console.error("Receipt upload error", error);
+      setToast(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível enviar o comprovante.",
+      );
+    } finally {
+      setBusy("");
+      setTimeout(() => setToast(""), 2800);
+    }
+  };
+  if (portal.loading) return <LoadingState />;
+  if (!portal.data)
+    return (
+      <>
+        <PageHeader title="Pagamentos" />
+        <Notice message={portal.error} />
+      </>
+    );
+  if (id) {
+    const p = portal.data;
+    return (
+      <div>
+        <Toast show={!!toast} message={toast} />
+        <PageHeader
+          eyebrow="DETALHE FINANCEIRO"
+          title={`Pagamento ${String(p.id).slice(0, 8).toUpperCase()}`}
+          subtitle={p.service || p.plan || "Pagamento Carol Sol"}
+        />
+        <section className="surface p-6">
+          <div className="mb-5 flex justify-between">
+            <Badge tone={statusTone(p.status)}>
+              {statusLabel[p.status] || p.status}
+            </Badge>
+            <b className="font-display text-3xl">{brl(p.amount)}</b>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Info label="Valor pago" value={brl(p.paid_amount)} />
+            <Info
+              label="Valor restante"
+              value={brl(
+                Number(p.amount) -
+                  Number(p.paid_amount || 0) -
+                  Number(p.discount_amount || 0),
+              )}
+            />
+            <Info label="Desconto" value={brl(p.discount_amount)} />
+            <Info label="Método" value={p.method} />
+            <Info label="Provedor" value={p.provider || "manual"} />
+            <Info label="Criação" value={dateTime(p.created_at)} />
+            <Info label="Confirmação" value={dateTime(p.paid_at)} />
+          </div>
+          {p.receipt_url && (
+            <a
+              className="btn-secondary mt-5"
+              href={p.receipt_url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Ver comprovante <ExternalLink size={15} />
+            </a>
+          )}
+          {["pending", "failed", "expired", "awaiting_confirmation"].includes(
+            p.status,
+          ) && (
+            <div className="mt-6 border-t border-black/5 pt-6">
+              <h3 className="font-display text-2xl">Escolha como pagar</h3>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <button
+                  disabled={!!busy}
+                  onClick={openSumup}
+                  className="btn-primary"
+                >
+                  <CreditCard size={16} />
+                  {busy === "sumup" ? "Abrindo…" : "Cartão via SumUp"}
+                </button>
+                <button
+                  disabled={!!busy}
+                  onClick={() => chooseMethod("pix_manual")}
+                  className="btn-secondary"
+                >
+                  <QrCode size={16} />
+                  Pix manual
+                </button>
+                <button
+                  disabled={!!busy}
+                  onClick={() => chooseMethod("local")}
+                  className="btn-secondary"
+                >
+                  <WalletCards size={16} />
+                  Pagar no local
+                </button>
+              </div>
+              <label className="btn-secondary mt-3 cursor-pointer">
+                <Upload size={16} />
+                {busy === "receipt" ? "Enviando…" : "Enviar comprovante"}
+                <input
+                  type="file"
+                  accept="image/*,application/pdf"
+                  className="hidden"
+                  disabled={!!busy}
+                  onChange={(event) => receipt(event.target.files?.[0])}
+                />
+              </label>
+            </div>
+          )}
+          {p.history?.length > 0 && (
+            <div className="mt-6 border-t border-black/5 pt-6">
+              <SectionHeading title="Histórico de status" />
+              {p.history.map((item: any, index: number) => (
+                <div
+                  key={`${item.created_at}-${index}`}
+                  className="flex justify-between border-b border-black/5 py-3 text-xs"
+                >
+                  <span>
+                    {statusLabel[item.new_status] || item.new_status}
+                    <small className="block text-stone-400">{item.notes}</small>
+                  </span>
+                  <span>{dateTime(item.created_at)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    );
+  }
+  const list = portal.data as any[];
+  const pending = list.filter((p) =>
+    ["pending", "under_review", "partial"].includes(p.status),
+  );
+  return (
+    <div>
+      <PageHeader
+        eyebrow="FINANCEIRO"
+        title="Meus pagamentos"
+        subtitle="Acompanhe sinais, planos e pagamentos realizados."
+      />
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Info label="Pendentes" value={String(pending.length)} />
+        <Info
+          label="Valor pendente"
+          value={brl(
+            pending.reduce(
+              (sum, p) => sum + Number(p.amount) - Number(p.paid_amount || 0),
+              0,
+            ),
+          )}
+        />
+        <Info
+          label="Total pago"
+          value={brl(
+            list
+              .filter((p) => p.status === "paid")
+              .reduce((sum, p) => sum + Number(p.paid_amount || p.amount), 0),
+          )}
+        />
+      </div>
+      <section className="surface mt-5 overflow-hidden">
+        {list.length ? (
+          list.map((p) => (
+            <a
+              key={p.id}
+              href={`/cliente/pagamentos/${p.id}`}
+              className="grid grid-cols-[1fr_auto] gap-3 border-b border-black/[.05] p-5 last:border-0 sm:grid-cols-[1.5fr_.8fr_.8fr_auto]"
+            >
+              <span>
+                <b className="block text-xs">
+                  {p.service || p.plan || "Pagamento"}
+                </b>
+                <span className="text-[10px] text-stone-400">
+                  {dateTime(p.created_at)}
+                </span>
+              </span>
+              <span className="hidden text-xs sm:block">{p.method}</span>
+              <b className="text-xs">{brl(p.amount)}</b>
+              <Badge tone={statusTone(p.status)}>
+                {statusLabel[p.status] || p.status}
+              </Badge>
+            </a>
+          ))
+        ) : (
+          <EmptyState
+            title="Você ainda não possui pagamentos"
+            text="Seus pagamentos de serviços e planos aparecerão aqui."
+          />
+        )}
+      </section>
+    </div>
+  );
 }
 
-export function ClientAppointmentDetailPage(){const id=useLocation().pathname.split('/agendamentos/')[1];const portal=usePortal<{appointments:any[]}>('/api/data?resource=appointments');if(portal.loading)return <LoadingState/>;const a=portal.data?.appointments.find(item=>item.id===id);if(!a)return <EmptyState title="Agendamento não encontrado" text="Este registro não existe ou não pertence à sua conta."/>;return <div><PageHeader eyebrow="MEU AGENDAMENTO" title={a.service} subtitle={`Código CS${String(a.id).slice(0,8).toUpperCase()}`}/><section className="surface p-7"><div className="flex justify-between"><Badge tone={statusTone(a.status)}>{statusLabel[a.status]||a.status}</Badge><b className="font-display text-3xl">{a.value}</b></div><div className="mt-6 grid gap-4 sm:grid-cols-2"><Info label="Data" value={`${a.date} às ${a.time}`}/><Info label="Duração" value={a.duration}/><Info label="Profissional" value={a.professional}/><Info label="Local" value={a.location||'Carol Sol'}/></div>{a.notes&&<div className="mt-5 rounded-2xl bg-warm p-4 text-xs">{a.notes}</div>}</section></div>}
-
-export function ClientHistoryPage(){
-  const nav=useNavigate(); const portal=usePortal<any>('/api/portal?resource=client-history')
-  const appointments=portal.data?.appointments||[]; const records=portal.data?.records||[]; const photos=portal.data?.photos||[]; const summary=portal.data?.summary||{}
-  const completed=useMemo(()=>appointments.filter((a:any)=>a.status==='completed'),[appointments])
-  if(portal.loading)return <LoadingState/>; if(!portal.data)return <><PageHeader title="Histórico"/><Notice message={portal.error}/></>
-  return <div className="animate-fade-up"><PageHeader eyebrow="HISTÓRICO DA CLIENTE" title="Histórico de serviços" subtitle="Atendimentos, fichas técnicas, fotos e pagamentos vinculados à sua conta." action={<button onClick={()=>nav('/cliente/agendamentos')} className="btn-primary"><Plus size={16}/>Novo agendamento</button>}/><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Info label="Atendimentos" value={String(summary.totalAppointments||0)}/><Info label="Concluídos" value={String(completed.length||summary.completedAppointments||0)}/><Info label="Fichas técnicas" value={String(records.length)}/><Info label="Fotos enviadas" value={String(photos.length)}/></div>{summary.nextAppointment&&<section className="hair-gradient mt-5 rounded-[28px] p-6 text-white"><div className="eyebrow">PRÓXIMO CUIDADO</div><h2 className="mt-2 font-display text-3xl">{summary.nextAppointment.service}</h2><p className="mt-2 text-sm text-white/60">{dateTime(summary.nextAppointment.starts_at)} • {summary.nextAppointment.professional}</p></section>}<section className="surface mt-6 overflow-hidden"><SectionHeading title="Todos os atendimentos"/>{appointments.length?appointments.map((a:any)=><button key={a.id} onClick={()=>nav(`/cliente/agendamentos/${a.id}`)} className="grid w-full gap-3 border-b border-black/5 p-5 text-left transition hover:bg-warm last:border-0 sm:grid-cols-[1.2fr_.9fr_.8fr_auto]"><span className="flex min-w-0 items-center gap-3"><Scissors size={18} className="text-champagne"/><span className="min-w-0"><b className="block truncate text-xs">{a.service}</b><small className="text-stone-400">CS{String(a.id).slice(0,8).toUpperCase()}</small></span></span><span className="text-xs"><Clock3 className="mr-1 inline text-champagne" size={14}/>{dateTime(a.starts_at)}</span><span className="text-xs"><MapPin className="mr-1 inline text-champagne" size={14}/>{a.location||'Carol Sol'}</span><Badge tone={statusTone(a.status)}>{statusLabel[a.status]||a.status}</Badge></button>):<EmptyState title="Nenhum atendimento" text="Seus atendimentos aparecerão aqui assim que forem criados."/>}</section><div className="mt-6 grid gap-5 lg:grid-cols-2"><section className="surface p-6"><SectionHeading title="Fichas técnicas"/>{records.length?<div className="space-y-3">{records.map((r:any)=><div key={r.id} className="rounded-2xl border border-black/5 p-4"><div className="flex items-center justify-between gap-3"><span><b className="text-xs">{r.method||'Método não informado'}</b><span className="mt-1 block text-[10px] text-stone-400">{dateTime(r.starts_at||r.created_at)} • {r.professional||'Carol Sol'}</span></span><FileText className="text-champagne"/></div><div className="mt-4 grid grid-cols-2 gap-3 text-[11px]"><span><b className="block">{r.weight_grams?`${r.weight_grams}g`:'—'}</b><small className="text-stone-400">Peso</small></span><span><b className="block">{r.length_cm?`${r.length_cm} cm`:'—'}</b><small className="text-stone-400">Comprimento</small></span><span><b className="block">{[r.color,r.shade].filter(Boolean).join(' / ')||'—'}</b><small className="text-stone-400">Cor</small></span><span><b className="block">{date(r.next_maintenance_date)}</b><small className="text-stone-400">Próxima manutenção</small></span></div>{r.recommendations&&<p className="mt-4 rounded-2xl bg-warm p-3 text-[11px] text-stone-500">{r.recommendations}</p>}</div>)}</div>:<EmptyState title="Nenhuma ficha técnica" text="As fichas salvas pela profissional aparecerão aqui."/>}</section><section className="surface p-6"><SectionHeading title="Fotos e registros"/>{photos.length?<div className="grid grid-cols-2 gap-3">{photos.slice(0,8).map((p:any)=><a key={p.id} href={p.storage_path} target="_blank" rel="noreferrer" className="group relative aspect-square overflow-hidden rounded-2xl bg-warm"><img src={p.storage_path} alt={p.kind} className="h-full w-full object-cover transition group-hover:scale-105"/><span className="absolute bottom-2 left-2 rounded-full bg-white/90 px-2 py-1 text-[9px] font-bold">{p.kind}</span></a>)}</div>:<EmptyState title="Nenhuma foto enviada" text="Fotos de avaliação ou antes/depois aparecerão aqui com seu consentimento."/>}</section></div></div>
+export function ClientPaymentReturnPage() {
+  const location = useLocation();
+  const paymentId =
+    new URLSearchParams(location.search).get("payment_id") || "";
+  const portal = usePortal<any>(
+    `/api/payments?resource=status&id=${encodeURIComponent(paymentId)}`,
+  );
+  useEffect(() => {
+    if (
+      !paymentId ||
+      !["pending", "processing", "awaiting_confirmation"].includes(
+        portal.data?.payment?.status,
+      )
+    )
+      return;
+    const timer = window.setInterval(() => portal.reload(), 4000);
+    return () => window.clearInterval(timer);
+  }, [paymentId, portal.data?.payment?.status]);
+  if (portal.loading) return <LoadingState />;
+  const payment = portal.data?.payment;
+  if (!payment)
+    return <Notice message={portal.error || "Pagamento não encontrado."} />;
+  const confirmed = payment.status === "paid";
+  return (
+    <div>
+      <PageHeader
+        eyebrow="PAGAMENTO SEGURO"
+        title={
+          confirmed
+            ? "Pagamento confirmado"
+            : "Estamos confirmando seu pagamento"
+        }
+        subtitle="O retorno da página não confirma o pagamento; o status abaixo vem do backend."
+      />
+      <section className="surface p-7 text-center">
+        <Badge tone={statusTone(payment.status)}>
+          {statusLabel[payment.status] || payment.status}
+        </Badge>
+        <h2 className="mt-5 font-display text-4xl">{brl(payment.amount)}</h2>
+        <p className="muted mt-3">
+          {confirmed
+            ? "Seu pagamento foi conciliado e os benefícios relacionados foram liberados."
+            : "Aguardando a confirmação da SumUp. Esta tela atualiza automaticamente."}
+        </p>
+        <a
+          href={`/cliente/pagamentos/${payment.id}`}
+          className="btn-primary mt-6"
+        >
+          Ver detalhes
+        </a>
+      </section>
+    </div>
+  );
 }
 
-export function ClientCardsPage(){
-  const portal=usePortal<any[]>('/api/portal?resource=cards');const [open,setOpen]=useState(false);const [form,setForm]=useState({brand:'Visa',lastFour:'',holderName:'',isDefault:true});const [saving,setSaving]=useState(false);const [toast,setToast]=useState('')
-  if(portal.loading)return <LoadingState/>;const act=async(body:any)=>{setSaving(true);try{await apiFetch('/api/portal?resource=cards',{method:body.action?'PATCH':'POST',body:JSON.stringify(body)});await portal.reload();setOpen(false);setToast('Alterações salvas com sucesso.')}catch(err){console.error('Card action error',err);setToast(err instanceof Error?err.message:'Não foi possível concluir a ação.')}finally{setSaving(false);setTimeout(()=>setToast(''),2400)}}
-  return <div><Toast show={!!toast} message={toast}/><PageHeader eyebrow="PAGAMENTOS" title="Cartões salvos" subtitle="Guardamos somente bandeira e últimos quatro dígitos; nenhum número completo ou CVV." action={<button onClick={()=>setOpen(true)} className="btn-primary"><Plus size={16}/>Adicionar cartão</button>}/><div className="grid gap-4 md:grid-cols-2">{portal.data?.length?portal.data.map(card=><div key={card.id} className="hair-gradient rounded-[26px] p-6 text-white"><CreditCard/><div className="mt-8 font-display text-2xl">•••• •••• •••• {card.last_four}</div><div className="mt-5 flex justify-between text-xs"><span>{card.holder_name}</span><b>{card.brand}</b></div><div className="mt-5 flex gap-2">{card.is_default?<Badge tone="gold">PRINCIPAL</Badge>:<button onClick={()=>act({id:card.id,action:'default'})} className="text-[10px] font-bold text-champagne">Definir principal</button>}<button onClick={()=>act({id:card.id,action:'remove'})} className="ml-auto text-white/60"><Trash2 size={16}/></button></div></div>):<EmptyState title="Nenhum cartão salvo" text="Adicione somente uma referência segura para uso futuro." action={<button onClick={()=>setOpen(true)} className="btn-primary">Adicionar cartão</button>}/>}</div><Modal open={open} onClose={()=>setOpen(false)} title="Adicionar cartão"><div className="space-y-4"><Field label="Bandeira" value={form.brand} onChange={v=>setForm({...form,brand:v})}/><Field label="Últimos 4 dígitos" value={form.lastFour} onChange={v=>setForm({...form,lastFour:v.replace(/\D/g,'').slice(0,4)})}/><Field label="Nome impresso" value={form.holderName} onChange={v=>setForm({...form,holderName:v})}/><label className="flex gap-2 text-xs"><input type="checkbox" checked={form.isDefault} onChange={e=>setForm({...form,isDefault:e.target.checked})}/>Definir como cartão principal</label><button disabled={saving} onClick={()=>act(form)} className="btn-primary w-full">{saving?'Salvando…':'Salvar referência'}</button></div></Modal></div>
+export function ClientAppointmentDetailPage() {
+  const id = useLocation().pathname.split("/agendamentos/")[1];
+  const portal = usePortal<{ appointments: any[] }>(
+    "/api/data?resource=appointments",
+  );
+  if (portal.loading) return <LoadingState />;
+  const a = portal.data?.appointments.find((item) => item.id === id);
+  if (!a)
+    return (
+      <EmptyState
+        title="Agendamento não encontrado"
+        text="Este registro não existe ou não pertence à sua conta."
+      />
+    );
+  return (
+    <div>
+      <PageHeader
+        eyebrow="MEU AGENDAMENTO"
+        title={a.service}
+        subtitle={`Código CS${String(a.id).slice(0, 8).toUpperCase()}`}
+      />
+      <section className="surface p-7">
+        <div className="flex justify-between">
+          <Badge tone={statusTone(a.status)}>
+            {statusLabel[a.status] || a.status}
+          </Badge>
+          <b className="font-display text-3xl">{a.value}</b>
+        </div>
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <Info label="Data" value={`${a.date} às ${a.time}`} />
+          <Info label="Duração" value={a.duration} />
+          <Info label="Profissional" value={a.professional} />
+          <Info label="Local" value={a.location || "Carol Sol"} />
+        </div>
+        {a.notes && (
+          <div className="mt-5 rounded-2xl bg-warm p-4 text-xs">{a.notes}</div>
+        )}
+      </section>
+    </div>
+  );
 }
 
-export function ClientBenefitsPage(){
-  const nav=useNavigate();const portal=usePortal<any>('/api/portal?resource=benefits');const [plan,setPlan]=useState<any>(null);const [method,setMethod]=useState('pix');const [saving,setSaving]=useState(false);const [toast,setToast]=useState('')
-  if(portal.loading)return <LoadingState/>;if(!portal.data)return <Notice message={portal.error}/>
-  const request=async()=>{setSaving(true);try{await apiFetch('/api/portal?resource=subscription-request',{method:'POST',body:JSON.stringify({planId:plan.id,method})});await portal.reload();setPlan(null);setToast('Solicitação criada. O plano será ativado após a confirmação do pagamento.')}catch(err){console.error('Plan request error',err);setToast(err instanceof Error?err.message:'Não foi possível contratar o plano.')}finally{setSaving(false);setTimeout(()=>setToast(''),3200)}}
-  const current=portal.data.subscription;return <div><Toast show={!!toast} message={toast}/><PageHeader eyebrow="CLUBE CAROL SOL" title="Benefícios e planos" subtitle="Planos só são ativados após a confirmação manual do pagamento."/><section className="hair-gradient rounded-[28px] p-7 text-white"><div className="flex justify-between"><div><div className="eyebrow">PLANO ATUAL</div><h2 className="mt-2 font-display text-4xl">{current?.name||'Nenhum plano ativo'}</h2></div>{current&&<Badge tone={statusTone(current.status)}>{statusLabel[current.status]||current.status}</Badge>}</div>{current&&<div className="mt-6 grid gap-3 sm:grid-cols-4"><InfoDark label="Início" value={date(current.starts_at)}/><InfoDark label="Vencimento" value={date(current.expires_at||current.renews_at)}/><InfoDark label="Manutenções" value={String(current.remaining_maintenances||0)}/><InfoDark label="Valor" value={brl(current.price)}/></div>}</section><section className="mt-8"><SectionHeading title="Planos disponíveis"/><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{portal.data.plans.map((p:any)=><div key={p.id} className="surface p-6"><h3 className="font-display text-3xl">{p.name}</h3><b className="mt-3 block text-xl">{brl(p.price)}</b><div className="mt-4 space-y-2 text-xs text-stone-500">{(p.benefits||[]).map((b:string)=><div key={b} className="flex gap-2"><Check size={14} className="text-champagne"/>{b}</div>)}</div><button onClick={()=>setPlan(p)} className="btn-primary mt-5 w-full">Solicitar plano</button><button onClick={()=>nav(`/cliente/planos/${p.id}`)} className="mt-3 w-full text-xs font-bold text-champagne">Ver detalhes</button></div>)}</div></section><section className="mt-8"><SectionHeading title="Cupons disponíveis" link="Ver todos" onClick={()=>nav('/cliente/cupons')}/>{portal.data.coupons.length?<div className="grid gap-3 md:grid-cols-2">{portal.data.coupons.map((c:any)=><div key={c.id} className="surface p-5"><Badge tone="gold">{c.code}</Badge><h3 className="mt-3 font-bold">{c.description}</h3><p className="mt-2 text-xs text-stone-400">Válido até {date(c.ends_at)}</p></div>)}</div>:<EmptyState title="Nenhum cupom ativo" text="Novos benefícios aparecerão aqui."/>}</section><Modal open={!!plan} onClose={()=>setPlan(null)} title={`Solicitar ${plan?.name||''}`}><p className="muted">Escolha a forma de pagamento. A assinatura ficará aguardando confirmação.</p><div className="mt-5 space-y-2">{[['pix','Pix'],['card','Cartão'],['local','Pagamento no local']].map(([value,label])=><button key={value} onClick={()=>setMethod(value)} className={`w-full rounded-2xl border p-4 text-left text-xs font-bold ${method===value?'border-champagne bg-champagne/10':'border-black/10'}`}>{label}</button>)}</div><button disabled={saving} onClick={request} className="btn-primary mt-5 w-full">{saving?'Criando solicitação…':'Confirmar solicitação'}</button></Modal></div>
+export function ClientHistoryPage() {
+  const nav = useNavigate();
+  const portal = usePortal<any>("/api/portal?resource=client-history");
+  const appointments = portal.data?.appointments || [];
+  const records = portal.data?.records || [];
+  const photos = portal.data?.photos || [];
+  const summary = portal.data?.summary || {};
+  const completed = useMemo(
+    () => appointments.filter((a: any) => a.status === "completed"),
+    [appointments],
+  );
+  if (portal.loading) return <LoadingState />;
+  if (!portal.data)
+    return (
+      <>
+        <PageHeader title="Histórico" />
+        <Notice message={portal.error} />
+      </>
+    );
+  return (
+    <div className="animate-fade-up">
+      <PageHeader
+        eyebrow="HISTÓRICO DA CLIENTE"
+        title="Histórico de serviços"
+        subtitle="Atendimentos, fichas técnicas, fotos e pagamentos vinculados à sua conta."
+        action={
+          <button
+            onClick={() => nav("/cliente/agendamentos")}
+            className="btn-primary"
+          >
+            <Plus size={16} />
+            Novo agendamento
+          </button>
+        }
+      />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Info
+          label="Atendimentos"
+          value={String(summary.totalAppointments || 0)}
+        />
+        <Info
+          label="Concluídos"
+          value={String(completed.length || summary.completedAppointments || 0)}
+        />
+        <Info label="Fichas técnicas" value={String(records.length)} />
+        <Info label="Fotos enviadas" value={String(photos.length)} />
+      </div>
+      {summary.nextAppointment && (
+        <section className="hair-gradient mt-5 rounded-[28px] p-6 text-white">
+          <div className="eyebrow">PRÓXIMO CUIDADO</div>
+          <h2 className="mt-2 font-display text-3xl">
+            {summary.nextAppointment.service}
+          </h2>
+          <p className="mt-2 text-sm text-white/60">
+            {dateTime(summary.nextAppointment.starts_at)} •{" "}
+            {summary.nextAppointment.professional}
+          </p>
+        </section>
+      )}
+      <section className="surface mt-6 overflow-hidden">
+        <SectionHeading title="Todos os atendimentos" />
+        {appointments.length ? (
+          appointments.map((a: any) => (
+            <button
+              key={a.id}
+              onClick={() => nav(`/cliente/agendamentos/${a.id}`)}
+              className="grid w-full gap-3 border-b border-black/5 p-5 text-left transition hover:bg-warm last:border-0 sm:grid-cols-[1.2fr_.9fr_.8fr_auto]"
+            >
+              <span className="flex min-w-0 items-center gap-3">
+                <Scissors size={18} className="text-champagne" />
+                <span className="min-w-0">
+                  <b className="block truncate text-xs">{a.service}</b>
+                  <small className="text-stone-400">
+                    CS{String(a.id).slice(0, 8).toUpperCase()}
+                  </small>
+                </span>
+              </span>
+              <span className="text-xs">
+                <Clock3 className="mr-1 inline text-champagne" size={14} />
+                {dateTime(a.starts_at)}
+              </span>
+              <span className="text-xs">
+                <MapPin className="mr-1 inline text-champagne" size={14} />
+                {a.location || "Carol Sol"}
+              </span>
+              <Badge tone={statusTone(a.status)}>
+                {statusLabel[a.status] || a.status}
+              </Badge>
+            </button>
+          ))
+        ) : (
+          <EmptyState
+            title="Nenhum atendimento"
+            text="Seus atendimentos aparecerão aqui assim que forem criados."
+          />
+        )}
+      </section>
+      <div className="mt-6 grid gap-5 lg:grid-cols-2">
+        <section className="surface p-6">
+          <SectionHeading title="Fichas técnicas" />
+          {records.length ? (
+            <div className="space-y-3">
+              {records.map((r: any) => (
+                <div
+                  key={r.id}
+                  className="rounded-2xl border border-black/5 p-4"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span>
+                      <b className="text-xs">
+                        {r.method || "Método não informado"}
+                      </b>
+                      <span className="mt-1 block text-[10px] text-stone-400">
+                        {dateTime(r.starts_at || r.created_at)} •{" "}
+                        {r.professional || "Carol Sol"}
+                      </span>
+                    </span>
+                    <FileText className="text-champagne" />
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-[11px]">
+                    <span>
+                      <b className="block">
+                        {r.weight_grams ? `${r.weight_grams}g` : "—"}
+                      </b>
+                      <small className="text-stone-400">Peso</small>
+                    </span>
+                    <span>
+                      <b className="block">
+                        {r.length_cm ? `${r.length_cm} cm` : "—"}
+                      </b>
+                      <small className="text-stone-400">Comprimento</small>
+                    </span>
+                    <span>
+                      <b className="block">
+                        {[r.color, r.shade].filter(Boolean).join(" / ") || "—"}
+                      </b>
+                      <small className="text-stone-400">Cor</small>
+                    </span>
+                    <span>
+                      <b className="block">{date(r.next_maintenance_date)}</b>
+                      <small className="text-stone-400">
+                        Próxima manutenção
+                      </small>
+                    </span>
+                  </div>
+                  {r.recommendations && (
+                    <p className="mt-4 rounded-2xl bg-warm p-3 text-[11px] text-stone-500">
+                      {r.recommendations}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              title="Nenhuma ficha técnica"
+              text="As fichas salvas pela profissional aparecerão aqui."
+            />
+          )}
+        </section>
+        <section className="surface p-6">
+          <SectionHeading title="Fotos e registros" />
+          {photos.length ? (
+            <div className="grid grid-cols-2 gap-3">
+              {photos.slice(0, 8).map((p: any) => (
+                <a
+                  key={p.id}
+                  href={p.storage_path}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="group relative aspect-square overflow-hidden rounded-2xl bg-warm"
+                >
+                  <img
+                    src={p.storage_path}
+                    alt={p.kind}
+                    className="h-full w-full object-cover transition group-hover:scale-105"
+                  />
+                  <span className="absolute bottom-2 left-2 rounded-full bg-white/90 px-2 py-1 text-[9px] font-bold">
+                    {p.kind}
+                  </span>
+                </a>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              title="Nenhuma foto enviada"
+              text="Fotos de avaliação ou antes/depois aparecerão aqui com seu consentimento."
+            />
+          )}
+        </section>
+      </div>
+    </div>
+  );
 }
 
-export function ClientPlanDetailPage(){const id=useLocation().pathname.split('/planos/')[1];const portal=usePortal<any>(`/api/portal?resource=plans&id=${encodeURIComponent(id||'')}`);if(portal.loading)return <LoadingState/>;if(!portal.data)return <Notice message={portal.error}/>;const p=portal.data;return <div><PageHeader eyebrow="DETALHES DO PLANO" title={p.name} subtitle={`${brl(p.price)} por ciclo`}/><section className="surface p-7"><SectionHeading title="Benefícios"/><div className="grid gap-3 sm:grid-cols-2">{(p.benefits||[]).map((b:string)=><div key={b} className="rounded-2xl bg-warm p-4 text-xs font-semibold"><Check className="mr-2 inline text-champagne" size={15}/>{b}</div>)}</div><h3 className="mt-7 font-display text-2xl">Histórico</h3>{p.history?.length?<div className="mt-3 space-y-2">{p.history.map((h:any)=><div key={h.id} className="flex justify-between rounded-2xl border border-black/5 p-4 text-xs"><span>{date(h.starts_at)} • {h.payment_method}</span><Badge tone={statusTone(h.status)}>{statusLabel[h.status]||h.status}</Badge></div>)}</div>:<p className="muted mt-3">Você ainda não solicitou este plano.</p>}</section></div>}
+export function ClientCardsPage() {
+  const portal = usePortal<any[]>("/api/portal?resource=cards");
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({
+    brand: "Visa",
+    lastFour: "",
+    holderName: "",
+    isDefault: true,
+  });
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+  if (portal.loading) return <LoadingState />;
+  const act = async (body: any) => {
+    setSaving(true);
+    try {
+      await apiFetch("/api/portal?resource=cards", {
+        method: body.action ? "PATCH" : "POST",
+        body: JSON.stringify(body),
+      });
+      await portal.reload();
+      setOpen(false);
+      setToast("Alterações salvas com sucesso.");
+    } catch (err) {
+      console.error("Card action error", err);
+      setToast(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível concluir a ação.",
+      );
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2400);
+    }
+  };
+  return (
+    <div>
+      <Toast show={!!toast} message={toast} />
+      <PageHeader
+        eyebrow="PAGAMENTOS"
+        title="Cartões salvos"
+        subtitle="Guardamos somente bandeira e últimos quatro dígitos; nenhum número completo ou CVV."
+        action={
+          <button onClick={() => setOpen(true)} className="btn-primary">
+            <Plus size={16} />
+            Adicionar cartão
+          </button>
+        }
+      />
+      <div className="grid gap-4 md:grid-cols-2">
+        {portal.data?.length ? (
+          portal.data.map((card) => (
+            <div
+              key={card.id}
+              className="hair-gradient rounded-[26px] p-6 text-white"
+            >
+              <CreditCard />
+              <div className="mt-8 font-display text-2xl">
+                •••• •••• •••• {card.last_four}
+              </div>
+              <div className="mt-5 flex justify-between text-xs">
+                <span>{card.holder_name}</span>
+                <b>{card.brand}</b>
+              </div>
+              <div className="mt-5 flex gap-2">
+                {card.is_default ? (
+                  <Badge tone="gold">PRINCIPAL</Badge>
+                ) : (
+                  <button
+                    onClick={() => act({ id: card.id, action: "default" })}
+                    className="text-[10px] font-bold text-champagne"
+                  >
+                    Definir principal
+                  </button>
+                )}
+                <button
+                  onClick={() => act({ id: card.id, action: "remove" })}
+                  className="ml-auto text-white/60"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+          ))
+        ) : (
+          <EmptyState
+            title="Nenhum cartão salvo"
+            text="Adicione somente uma referência segura para uso futuro."
+            action={
+              <button onClick={() => setOpen(true)} className="btn-primary">
+                Adicionar cartão
+              </button>
+            }
+          />
+        )}
+      </div>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Adicionar cartão"
+      >
+        <div className="space-y-4">
+          <Field
+            label="Bandeira"
+            value={form.brand}
+            onChange={(v) => setForm({ ...form, brand: v })}
+          />
+          <Field
+            label="Últimos 4 dígitos"
+            value={form.lastFour}
+            onChange={(v) =>
+              setForm({ ...form, lastFour: v.replace(/\D/g, "").slice(0, 4) })
+            }
+          />
+          <Field
+            label="Nome impresso"
+            value={form.holderName}
+            onChange={(v) => setForm({ ...form, holderName: v })}
+          />
+          <label className="flex gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={form.isDefault}
+              onChange={(e) =>
+                setForm({ ...form, isDefault: e.target.checked })
+              }
+            />
+            Definir como cartão principal
+          </label>
+          <button
+            disabled={saving}
+            onClick={() => act(form)}
+            className="btn-primary w-full"
+          >
+            {saving ? "Salvando…" : "Salvar referência"}
+          </button>
+        </div>
+      </Modal>
+    </div>
+  );
+}
 
-export function ClientCouponsPage(){const portal=usePortal<any>('/api/portal?resource=benefits');const [toast,setToast]=useState('');if(portal.loading)return <LoadingState/>;const coupons=portal.data?.coupons||[];return <div><Toast show={!!toast} message={toast}/><PageHeader eyebrow="BENEFÍCIOS" title="Meus cupons" subtitle="Cupons válidos e histórico de utilização."/><div className="grid gap-4 md:grid-cols-2">{coupons.length?coupons.map((c:any)=><div key={c.id} className="surface p-6"><Badge tone="gold">ATIVO</Badge><h2 className="mt-3 font-display text-3xl">{c.code}</h2><p className="muted mt-2">{c.description}</p><p className="mt-4 text-[10px] text-stone-400">Validade: {date(c.ends_at)}</p><button onClick={async()=>{await navigator.clipboard.writeText(c.code);setToast('Código copiado.');setTimeout(()=>setToast(''),1800)}} className="btn-secondary mt-5"><Copy size={15}/>Copiar código</button></div>):<EmptyState title="Nenhum cupom ativo" text="Seus cupons aparecerão aqui quando forem liberados."/>}</div></div>}
+export function ClientBenefitsPage() {
+  const nav = useNavigate();
+  const portal = usePortal<any>("/api/portal?resource=benefits");
+  const [plan, setPlan] = useState<any>(null);
+  const [method, setMethod] = useState("pix");
+  const [couponCode, setCouponCode] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+  if (portal.loading) return <LoadingState />;
+  if (!portal.data) return <Notice message={portal.error} />;
+  const request = async () => {
+    setSaving(true);
+    try {
+      const result = await apiFetch<{ data: { payment: { id: string } } }>(
+        "/api/portal?resource=subscription-request",
+        {
+          method: "POST",
+          body: JSON.stringify({ planId: plan.id, method, couponCode }),
+        },
+      );
+      await portal.reload();
+      setPlan(null);
+      setCouponCode("");
+      setToast(
+        "Solicitação criada. O plano será ativado após a confirmação do pagamento.",
+      );
+      if (result.data?.payment?.id)
+        nav(`/cliente/pagamentos/${result.data.payment.id}`);
+    } catch (err) {
+      console.error("Plan request error", err);
+      setToast(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível contratar o plano.",
+      );
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 3200);
+    }
+  };
+  const current = portal.data.subscription;
+  return (
+    <div>
+      <Toast show={!!toast} message={toast} />
+      <PageHeader
+        eyebrow="CLUBE CAROL SOL"
+        title="Benefícios e planos"
+        subtitle="Planos só são ativados após a confirmação manual do pagamento."
+      />
+      <section className="hair-gradient rounded-[28px] p-7 text-white">
+        <div className="flex justify-between">
+          <div>
+            <div className="eyebrow">PLANO ATUAL</div>
+            <h2 className="mt-2 font-display text-4xl">
+              {current?.name || "Nenhum plano ativo"}
+            </h2>
+          </div>
+          {current && (
+            <Badge tone={statusTone(current.status)}>
+              {statusLabel[current.status] || current.status}
+            </Badge>
+          )}
+        </div>
+        {current && (
+          <div className="mt-6 grid gap-3 sm:grid-cols-4">
+            <InfoDark label="Início" value={date(current.starts_at)} />
+            <InfoDark
+              label="Vencimento"
+              value={date(current.expires_at || current.renews_at)}
+            />
+            <InfoDark
+              label="Manutenções"
+              value={String(current.remaining_maintenances || 0)}
+            />
+            <InfoDark label="Valor" value={brl(current.price)} />
+          </div>
+        )}
+      </section>
+      <section className="mt-8">
+        <SectionHeading title="Planos disponíveis" />
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {portal.data.plans.map((p: any) => (
+            <div key={p.id} className="surface p-6">
+              <h3 className="font-display text-3xl">{p.name}</h3>
+              <b className="mt-3 block text-xl">{brl(p.price)}</b>
+              <div className="mt-4 space-y-2 text-xs text-stone-500">
+                {(p.benefits || []).map((b: string) => (
+                  <div key={b} className="flex gap-2">
+                    <Check size={14} className="text-champagne" />
+                    {b}
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={() => setPlan(p)}
+                className="btn-primary mt-5 w-full"
+              >
+                Solicitar plano
+              </button>
+              <button
+                onClick={() => nav(`/cliente/planos/${p.id}`)}
+                className="mt-3 w-full text-xs font-bold text-champagne"
+              >
+                Ver detalhes
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="mt-8">
+        <SectionHeading
+          title="Cupons disponíveis"
+          link="Ver todos"
+          onClick={() => nav("/cliente/cupons")}
+        />
+        {portal.data.coupons.length ? (
+          <div className="grid gap-3 md:grid-cols-2">
+            {portal.data.coupons.map((c: any) => (
+              <div key={c.id} className="surface p-5">
+                <Badge tone="gold">{c.code}</Badge>
+                <h3 className="mt-3 font-bold">{c.description}</h3>
+                <p className="mt-2 text-xs text-stone-400">
+                  Válido até {date(c.ends_at)}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            title="Nenhum cupom ativo"
+            text="Novos benefícios aparecerão aqui."
+          />
+        )}
+      </section>
+      <Modal
+        open={!!plan}
+        onClose={() => setPlan(null)}
+        title={`Solicitar ${plan?.name || ""}`}
+      >
+        <p className="muted">
+          Escolha a forma de pagamento. A assinatura ficará aguardando
+          confirmação.
+        </p>
+        <div className="mt-5 space-y-2">
+          {[
+            ["pix", "Pix"],
+            ["card", "Cartão via SumUp"],
+            ["local", "Pagamento no local"],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setMethod(value)}
+              className={`w-full rounded-2xl border p-4 text-left text-xs font-bold ${method === value ? "border-champagne bg-champagne/10" : "border-black/10"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <label className="mt-5 block">
+          <span className="mb-2 block text-xs font-bold">Cupom (opcional)</span>
+          <input
+            className="field"
+            value={couponCode}
+            onChange={(event) =>
+              setCouponCode(event.target.value.toUpperCase())
+            }
+            placeholder="CAROLSOL15"
+          />
+        </label>
+        <button
+          disabled={saving}
+          onClick={request}
+          className="btn-primary mt-5 w-full"
+        >
+          {saving ? "Criando solicitação…" : "Confirmar solicitação"}
+        </button>
+      </Modal>
+    </div>
+  );
+}
 
-export function ClientNotificationsPage(){const portal=usePortal<any>('/api/portal?resource=notifications');const [prefs,setPrefs]=useState<any>(null);const [saving,setSaving]=useState(false);const [toast,setToast]=useState('');useEffect(()=>{if(portal.data?.preferences)setPrefs({inApp:portal.data.preferences.in_app,whatsapp:portal.data.preferences.whatsapp,email:portal.data.preferences.email,reminders:portal.data.preferences.reminders,promotions:portal.data.preferences.promotions})},[portal.data]);if(portal.loading)return <LoadingState/>;const save=async()=>{setSaving(true);try{await apiFetch('/api/portal?resource=notification-preferences',{method:'PATCH',body:JSON.stringify(prefs)});setToast('Alterações salvas com sucesso.')}catch(err){console.error('Notification preferences error',err);setToast('Não foi possível concluir a ação.')}finally{setSaving(false);setTimeout(()=>setToast(''),2200)}};return <div><Toast show={!!toast} message={toast}/><PageHeader eyebrow="COMUNICAÇÃO" title="Notificações" subtitle="Lembretes, pagamentos, planos e mensagens do salão."/><div className="grid gap-5 lg:grid-cols-[1fr_340px]"><section className="surface overflow-hidden">{portal.data?.items?.length?portal.data.items.map((n:any)=><button key={n.id} onClick={async()=>{if(!n.read_at){await apiFetch('/api/portal?resource=notification-read',{method:'PATCH',body:JSON.stringify({id:n.id})});portal.reload()}}} className="flex w-full gap-4 border-b border-black/5 p-5 text-left last:border-0"><span className={`mt-1 h-2 w-2 rounded-full ${n.read_at?'bg-stone-200':'bg-champagne'}`}/><span className="flex-1"><b className="text-xs">{n.title}</b><span className="mt-1 block text-[11px] text-stone-500">{n.body}</span><span className="mt-2 block text-[9px] text-stone-400">{dateTime(n.created_at)}</span></span></button>):<EmptyState title="Nenhuma notificação" text="Suas atualizações aparecerão aqui."/>}</section><aside className="surface self-start p-6"><SectionHeading title="Canais"/>{prefs&&Object.entries({inApp:'No aplicativo',whatsapp:'WhatsApp',email:'E-mail',reminders:'Lembretes',promotions:'Promoções'}).map(([key,label])=><label key={key} className="flex justify-between border-b border-black/5 py-3 text-xs font-semibold"><span>{label}</span><input type="checkbox" checked={Boolean(prefs[key])} onChange={e=>setPrefs({...prefs,[key]:e.target.checked})}/></label>)}<button disabled={saving} onClick={save} className="btn-primary mt-5 w-full">{saving?'Salvando…':'Salvar preferências'}</button></aside></div></div>}
+export function ClientPlanDetailPage() {
+  const id = useLocation().pathname.split("/planos/")[1];
+  const portal = usePortal<any>(
+    `/api/portal?resource=plans&id=${encodeURIComponent(id || "")}`,
+  );
+  if (portal.loading) return <LoadingState />;
+  if (!portal.data) return <Notice message={portal.error} />;
+  const p = portal.data;
+  return (
+    <div>
+      <PageHeader
+        eyebrow="DETALHES DO PLANO"
+        title={p.name}
+        subtitle={`${brl(p.price)} por ciclo`}
+      />
+      <section className="surface p-7">
+        <SectionHeading title="Benefícios" />
+        <div className="grid gap-3 sm:grid-cols-2">
+          {(p.benefits || []).map((b: string) => (
+            <div
+              key={b}
+              className="rounded-2xl bg-warm p-4 text-xs font-semibold"
+            >
+              <Check className="mr-2 inline text-champagne" size={15} />
+              {b}
+            </div>
+          ))}
+        </div>
+        <h3 className="mt-7 font-display text-2xl">Histórico</h3>
+        {p.history?.length ? (
+          <div className="mt-3 space-y-2">
+            {p.history.map((h: any) => (
+              <div
+                key={h.id}
+                className="flex justify-between rounded-2xl border border-black/5 p-4 text-xs"
+              >
+                <span>
+                  {date(h.starts_at)} • {h.payment_method}
+                </span>
+                <Badge tone={statusTone(h.status)}>
+                  {statusLabel[h.status] || h.status}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="muted mt-3">Você ainda não solicitou este plano.</p>
+        )}
+      </section>
+    </div>
+  );
+}
 
-export function ClientPrivacyPage(){const portal=usePortal<any>('/api/portal?resource=privacy');const [toast,setToast]=useState('');const [deletion,setDeletion]=useState(false);if(portal.loading)return <LoadingState/>;const update=async(type:string,accepted:boolean)=>{try{await apiFetch('/api/portal?resource=privacy-consent',{method:'PATCH',body:JSON.stringify({consentType:type,accepted})});await portal.reload();setToast('Consentimento atualizado.')}catch(err){console.error('Consent update error',err);setToast('Não foi possível concluir a ação.')}finally{setTimeout(()=>setToast(''),2200)}};const download=async()=>{try{const result=await apiFetch<PortalResponse<any>>('/api/portal?resource=data-export',{method:'POST'});const blob=new Blob([JSON.stringify(result.data.export,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='dados-carol-sol.json';a.click();URL.revokeObjectURL(url);portal.reload();setToast('Exportação gerada com sucesso.')}catch(err){console.error('Data export error',err);setToast('Não foi possível gerar a exportação.')}};return <div><Toast show={!!toast} message={toast}/><PageHeader eyebrow="LGPD" title="Privacidade e consentimentos" subtitle="Você controla como seus dados e imagens podem ser utilizados."/><section className="surface p-6"><div className="space-y-2">{portal.data?.consents?.map((c:any)=><label key={c.consent_type} className="flex items-center justify-between rounded-2xl bg-warm p-4"><span><b className="block text-xs">{({marketing:'Marketing',whatsapp:'Mensagens por WhatsApp',email:'Mensagens por e-mail',photos:'Uso de fotos antes e depois',referrals:'Programa de indicação'} as any)[c.consent_type]}</b><span className="text-[9px] text-stone-400">Política {c.policy_version}</span></span><input type="checkbox" checked={c.accepted} onChange={e=>update(c.consent_type,e.target.checked)}/></label>)}</div><div className="mt-6 flex flex-wrap gap-3 border-t border-black/5 pt-6"><button onClick={download} className="btn-secondary"><Download size={16}/>Exportar meus dados</button><button onClick={()=>setDeletion(true)} className="btn-secondary text-rose-700"><Trash2 size={16}/>Solicitar exclusão</button></div>{portal.data?.deletion&&<div className="mt-5 rounded-2xl bg-amber-50 p-4 text-xs text-amber-800">Solicitação de exclusão: <b>{statusLabel[portal.data.deletion.status]||portal.data.deletion.status}</b></div>}</section><Modal open={deletion} onClose={()=>setDeletion(false)} title="Solicitar exclusão"><p className="muted">Dados financeiros obrigatórios serão preservados ou anonimizados conforme a legislação.</p><button onClick={async()=>{try{await apiFetch('/api/portal?resource=deletion-request',{method:'POST',body:JSON.stringify({reason:'Solicitação pelo portal'})});await portal.reload();setDeletion(false);setToast('Solicitação enviada para análise.')}catch(err){console.error('Deletion request error',err);setToast(err instanceof Error?err.message:'Não foi possível concluir a ação.')}}} className="btn-primary mt-5 w-full">Confirmar solicitação</button></Modal></div>}
+export function ClientCouponsPage() {
+  const nav = useNavigate();
+  const portal = usePortal<any>("/api/portal?resource=benefits");
+  const [toast, setToast] = useState("");
+  if (portal.loading) return <LoadingState />;
+  const coupons = portal.data?.coupons || [];
+  return (
+    <div>
+      <Toast show={!!toast} message={toast} />
+      <PageHeader
+        eyebrow="BENEFÍCIOS"
+        title="Meus cupons"
+        subtitle="Cupons válidos e histórico de utilização."
+      />
+      <div className="grid gap-4 md:grid-cols-2">
+        {coupons.length ? (
+          coupons.map((c: any) => (
+            <div key={c.id} className="surface p-6">
+              <Badge tone="gold">ATIVO</Badge>
+              <h2 className="mt-3 font-display text-3xl">{c.code}</h2>
+              <p className="muted mt-2">{c.description}</p>
+              <p className="mt-4 text-[10px] text-stone-400">
+                Validade: {date(c.ends_at)}
+              </p>
+              <button
+                onClick={async () => {
+                  await navigator.clipboard.writeText(c.code);
+                  setToast("Código copiado.");
+                  setTimeout(() => setToast(""), 1800);
+                }}
+                className="btn-secondary mt-5"
+              >
+                <Copy size={15} />
+                Copiar código
+              </button>
+              <button
+                onClick={() => nav("/cliente/beneficios")}
+                className="btn-primary ml-2 mt-5"
+              >
+                Usar agora
+              </button>
+            </div>
+          ))
+        ) : (
+          <EmptyState
+            title="Nenhum cupom ativo"
+            text="Seus cupons aparecerão aqui quando forem liberados."
+          />
+        )}
+      </div>
+    </div>
+  );
+}
 
-export function ClientReferralsPage(){const portal=usePortal<any>('/api/portal?resource=referrals');const [form,setForm]=useState({name:'',phone:''});const [saving,setSaving]=useState(false);const [toast,setToast]=useState('');if(portal.loading)return <LoadingState/>;const submit=async(e:FormEvent)=>{e.preventDefault();setSaving(true);try{await apiFetch('/api/portal?resource=referrals',{method:'POST',body:JSON.stringify(form)});await portal.reload();setForm({name:'',phone:''});setToast('Indicação registrada com sucesso.')}catch(err){console.error('Referral error',err);setToast(err instanceof Error?err.message:'Não foi possível concluir a ação.')}finally{setSaving(false);setTimeout(()=>setToast(''),2200)}};return <div><Toast show={!!toast} message={toast}/><PageHeader eyebrow="INDIQUE E GANHE" title="Compartilhe beleza" subtitle="A recompensa é liberada quando a indicação concluir o primeiro atendimento."/><section className="hair-gradient rounded-[28px] p-7 text-white"><div className="eyebrow">SEU CÓDIGO</div><h2 className="mt-2 font-display text-4xl">{portal.data?.code}</h2><button onClick={async()=>{await navigator.clipboard.writeText(portal.data.shareUrl);setToast('Link copiado.');setTimeout(()=>setToast(''),1800)}} className="btn-gold mt-5"><Copy size={15}/>Copiar link</button></section><div className="mt-6 grid gap-5 lg:grid-cols-[380px_1fr]"><form onSubmit={submit} className="surface self-start p-6"><SectionHeading title="Nova indicação"/><Field label="Nome da amiga" value={form.name} onChange={v=>setForm({...form,name:v})}/><div className="mt-4"><Field label="Telefone" value={form.phone} onChange={v=>setForm({...form,phone:v})}/></div><p className="mt-4 text-[10px] text-stone-400">O contato só será usado para esta indicação. Nenhuma agenda de contatos é acessada automaticamente.</p><button disabled={saving} className="btn-primary mt-5 w-full"><UserPlus size={16}/>{saving?'Salvando…':'Registrar indicação'}</button></form><section className="surface overflow-hidden">{portal.data?.referrals?.length?portal.data.referrals.map((r:any)=><div key={r.id} className="flex justify-between border-b border-black/5 p-5"><span><b className="block text-xs">{r.invited_name}</b><span className="text-[10px] text-stone-400">{r.invited_phone} • {date(r.created_at)}</span></span><Badge tone={statusTone(r.status)}>{statusLabel[r.status]||r.status}</Badge></div>):<EmptyState title="Nenhuma indicação" text="Cadastre sua primeira indicação de forma consentida."/>}</section></div></div>}
+export function ClientNotificationsPage() {
+  const nav = useNavigate();
+  const portal = usePortal<any>("/api/portal?resource=notifications");
+  const [prefs, setPrefs] = useState<any>(null);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+  useEffect(() => {
+    if (portal.data?.preferences)
+      setPrefs({
+        inApp: portal.data.preferences.in_app,
+        whatsapp: portal.data.preferences.whatsapp,
+        email: portal.data.preferences.email,
+        reminders: portal.data.preferences.reminders,
+        promotions: portal.data.preferences.promotions,
+      });
+  }, [portal.data]);
+  if (portal.loading) return <LoadingState />;
+  const save = async () => {
+    setSaving(true);
+    try {
+      await apiFetch("/api/portal?resource=notification-preferences", {
+        method: "PATCH",
+        body: JSON.stringify(prefs),
+      });
+      setToast("Alterações salvas com sucesso.");
+    } catch (err) {
+      console.error("Notification preferences error", err);
+      setToast("Não foi possível concluir a ação.");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2200);
+    }
+  };
+  const markAll = async () => {
+    try {
+      await apiFetch("/api/portal?resource=notification-read", {
+        method: "PATCH",
+        body: JSON.stringify({ all: true }),
+      });
+      await portal.reload();
+      setToast("Todas as notificações foram marcadas como lidas.");
+    } catch (error) {
+      console.error("Notification mark-all error", error);
+      setToast("Não foi possível concluir a ação.");
+    } finally {
+      setTimeout(() => setToast(""), 2200);
+    }
+  };
+  return (
+    <div>
+      <Toast show={!!toast} message={toast} />
+      <PageHeader
+        eyebrow="COMUNICAÇÃO"
+        title="Notificações"
+        subtitle="Lembretes, pagamentos, planos e mensagens do salão."
+        action={
+          <button onClick={markAll} className="btn-secondary">
+            Marcar todas como lidas
+          </button>
+        }
+      />
+      <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
+        <section className="surface overflow-hidden">
+          {portal.data?.items?.length ? (
+            portal.data.items.map((n: any) => (
+              <button
+                key={n.id}
+                onClick={async () => {
+                  if (!n.read_at) {
+                    await apiFetch("/api/portal?resource=notification-read", {
+                      method: "PATCH",
+                      body: JSON.stringify({ id: n.id }),
+                    });
+                    await portal.reload();
+                  }
+                  if (n.action_url) nav(n.action_url);
+                }}
+                className="flex w-full gap-4 border-b border-black/5 p-5 text-left last:border-0"
+              >
+                <span
+                  className={`mt-1 h-2 w-2 rounded-full ${n.read_at ? "bg-stone-200" : "bg-champagne"}`}
+                />
+                <span className="flex-1">
+                  <b className="text-xs">{n.title}</b>
+                  <span className="mt-1 block text-[11px] text-stone-500">
+                    {n.body}
+                  </span>
+                  <span className="mt-2 block text-[9px] text-stone-400">
+                    {dateTime(n.created_at)}
+                  </span>
+                </span>
+              </button>
+            ))
+          ) : (
+            <EmptyState
+              title="Nenhuma notificação"
+              text="Suas atualizações aparecerão aqui."
+            />
+          )}
+        </section>
+        <aside className="surface self-start p-6">
+          <SectionHeading title="Canais" />
+          {prefs &&
+            Object.entries({
+              inApp: "No aplicativo",
+              whatsapp: "WhatsApp",
+              email: "E-mail",
+              reminders: "Lembretes",
+              promotions: "Promoções",
+            }).map(([key, label]) => (
+              <label
+                key={key}
+                className="flex justify-between border-b border-black/5 py-3 text-xs font-semibold"
+              >
+                <span>{label}</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(prefs[key])}
+                  onChange={(e) =>
+                    setPrefs({ ...prefs, [key]: e.target.checked })
+                  }
+                />
+              </label>
+            ))}
+          <button
+            disabled={saving}
+            onClick={save}
+            className="btn-primary mt-5 w-full"
+          >
+            {saving ? "Salvando…" : "Salvar preferências"}
+          </button>
+        </aside>
+      </div>
+    </div>
+  );
+}
 
-function Field({label,value,onChange,type='text'}:{label:string;value:string;onChange:(value:string)=>void;type?:string}){return <label className="block"><span className="mb-2 block text-xs font-bold">{label}</span><input className="field" type={type} value={value} onChange={e=>onChange(e.target.value)}/></label>}
-function Info({label,value}:{label:string;value:string}){return <div className="surface p-5"><span className="text-[10px] uppercase tracking-wider text-stone-400">{label}</span><b className="mt-2 block text-sm">{value}</b></div>}
-function InfoDark({label,value}:{label:string;value:string}){return <div className="rounded-2xl bg-white/[.07] p-4"><span className="text-[9px] text-white/40">{label}</span><b className="mt-1 block text-xs">{value}</b></div>}
+export function ClientPrivacyPage() {
+  const portal = usePortal<any>("/api/portal?resource=privacy");
+  const [toast, setToast] = useState("");
+  const [deletion, setDeletion] = useState(false);
+  if (portal.loading) return <LoadingState />;
+  const update = async (type: string, accepted: boolean) => {
+    try {
+      await apiFetch("/api/portal?resource=privacy-consent", {
+        method: "PATCH",
+        body: JSON.stringify({ consentType: type, accepted }),
+      });
+      await portal.reload();
+      setToast("Consentimento atualizado.");
+    } catch (err) {
+      console.error("Consent update error", err);
+      setToast("Não foi possível concluir a ação.");
+    } finally {
+      setTimeout(() => setToast(""), 2200);
+    }
+  };
+  const download = async () => {
+    try {
+      const result = await apiFetch<PortalResponse<any>>(
+        "/api/portal?resource=data-export",
+        { method: "POST" },
+      );
+      const blob = new Blob([JSON.stringify(result.data.export, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "dados-carol-sol.json";
+      a.click();
+      URL.revokeObjectURL(url);
+      portal.reload();
+      setToast("Exportação gerada com sucesso.");
+    } catch (err) {
+      console.error("Data export error", err);
+      setToast("Não foi possível gerar a exportação.");
+    }
+  };
+  return (
+    <div>
+      <Toast show={!!toast} message={toast} />
+      <PageHeader
+        eyebrow="LGPD"
+        title="Privacidade e consentimentos"
+        subtitle="Você controla como seus dados e imagens podem ser utilizados."
+      />
+      <section className="surface p-6">
+        <div className="space-y-2">
+          {portal.data?.consents?.map((c: any) => (
+            <label
+              key={c.consent_type}
+              className="flex items-center justify-between rounded-2xl bg-warm p-4"
+            >
+              <span>
+                <b className="block text-xs">
+                  {
+                    (
+                      {
+                        marketing: "Marketing",
+                        whatsapp: "Mensagens por WhatsApp",
+                        email: "Mensagens por e-mail",
+                        photos: "Uso de fotos antes e depois",
+                        referrals: "Programa de indicação",
+                      } as any
+                    )[c.consent_type]
+                  }
+                </b>
+                <span className="text-[9px] text-stone-400">
+                  Política {c.policy_version}
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={c.accepted}
+                onChange={(e) => update(c.consent_type, e.target.checked)}
+              />
+            </label>
+          ))}
+        </div>
+        <div className="mt-6 flex flex-wrap gap-3 border-t border-black/5 pt-6">
+          <button onClick={download} className="btn-secondary">
+            <Download size={16} />
+            Exportar meus dados
+          </button>
+          <button
+            onClick={() => setDeletion(true)}
+            className="btn-secondary text-rose-700"
+          >
+            <Trash2 size={16} />
+            Solicitar exclusão
+          </button>
+        </div>
+        {portal.data?.deletion && (
+          <div className="mt-5 rounded-2xl bg-amber-50 p-4 text-xs text-amber-800">
+            Solicitação de exclusão:{" "}
+            <b>
+              {statusLabel[portal.data.deletion.status] ||
+                portal.data.deletion.status}
+            </b>
+          </div>
+        )}
+      </section>
+      <Modal
+        open={deletion}
+        onClose={() => setDeletion(false)}
+        title="Solicitar exclusão"
+      >
+        <p className="muted">
+          Dados financeiros obrigatórios serão preservados ou anonimizados
+          conforme a legislação.
+        </p>
+        <button
+          onClick={async () => {
+            try {
+              await apiFetch("/api/portal?resource=deletion-request", {
+                method: "POST",
+                body: JSON.stringify({ reason: "Solicitação pelo portal" }),
+              });
+              await portal.reload();
+              setDeletion(false);
+              setToast("Solicitação enviada para análise.");
+            } catch (err) {
+              console.error("Deletion request error", err);
+              setToast(
+                err instanceof Error
+                  ? err.message
+                  : "Não foi possível concluir a ação.",
+              );
+            }
+          }}
+          className="btn-primary mt-5 w-full"
+        >
+          Confirmar solicitação
+        </button>
+      </Modal>
+    </div>
+  );
+}
+
+export function ClientReferralsPage() {
+  const portal = usePortal<any>("/api/portal?resource=referrals");
+  const [form, setForm] = useState({ name: "", phone: "" });
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+  if (portal.loading) return <LoadingState />;
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await apiFetch("/api/portal?resource=referrals", {
+        method: "POST",
+        body: JSON.stringify(form),
+      });
+      await portal.reload();
+      setForm({ name: "", phone: "" });
+      setToast("Indicação registrada com sucesso.");
+    } catch (err) {
+      console.error("Referral error", err);
+      setToast(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível concluir a ação.",
+      );
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2200);
+    }
+  };
+  return (
+    <div>
+      <Toast show={!!toast} message={toast} />
+      <PageHeader
+        eyebrow="INDIQUE E GANHE"
+        title="Compartilhe beleza"
+        subtitle="A recompensa é liberada quando a indicação concluir o primeiro atendimento."
+      />
+      <section className="hair-gradient rounded-[28px] p-7 text-white">
+        <div className="eyebrow">SEU CÓDIGO</div>
+        <h2 className="mt-2 font-display text-4xl">{portal.data?.code}</h2>
+        <button
+          onClick={async () => {
+            await navigator.clipboard.writeText(portal.data.shareUrl);
+            setToast("Link copiado.");
+            setTimeout(() => setToast(""), 1800);
+          }}
+          className="btn-gold mt-5"
+        >
+          <Copy size={15} />
+          Copiar link
+        </button>
+      </section>
+      <div className="mt-6 grid gap-5 lg:grid-cols-[380px_1fr]">
+        <form onSubmit={submit} className="surface self-start p-6">
+          <SectionHeading title="Nova indicação" />
+          <Field
+            label="Nome da amiga"
+            value={form.name}
+            onChange={(v) => setForm({ ...form, name: v })}
+          />
+          <div className="mt-4">
+            <Field
+              label="Telefone"
+              value={form.phone}
+              onChange={(v) => setForm({ ...form, phone: v })}
+            />
+          </div>
+          <p className="mt-4 text-[10px] text-stone-400">
+            O contato só será usado para esta indicação. Nenhuma agenda de
+            contatos é acessada automaticamente.
+          </p>
+          <button disabled={saving} className="btn-primary mt-5 w-full">
+            <UserPlus size={16} />
+            {saving ? "Salvando…" : "Registrar indicação"}
+          </button>
+        </form>
+        <section className="surface overflow-hidden">
+          {portal.data?.referrals?.length ? (
+            portal.data.referrals.map((r: any) => (
+              <div
+                key={r.id}
+                className="flex justify-between border-b border-black/5 p-5"
+              >
+                <span>
+                  <b className="block text-xs">{r.invited_name}</b>
+                  <span className="text-[10px] text-stone-400">
+                    {r.invited_phone} • {date(r.created_at)}
+                  </span>
+                </span>
+                <Badge tone={statusTone(r.status)}>
+                  {statusLabel[r.status] || r.status}
+                </Badge>
+              </div>
+            ))
+          ) : (
+            <EmptyState
+              title="Nenhuma indicação"
+              text="Cadastre sua primeira indicação de forma consentida."
+            />
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChange,
+  type = "text",
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-xs font-bold">{label}</span>
+      <input
+        className="field"
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </label>
+  );
+}
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="surface p-5">
+      <span className="text-[10px] uppercase tracking-wider text-stone-400">
+        {label}
+      </span>
+      <b className="mt-2 block text-sm">{value}</b>
+    </div>
+  );
+}
+function InfoDark({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl bg-white/[.07] p-4">
+      <span className="text-[9px] text-white/40">{label}</span>
+      <b className="mt-1 block text-xs">{value}</b>
+    </div>
+  );
+}
