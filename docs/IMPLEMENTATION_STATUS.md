@@ -212,8 +212,17 @@ Auditoria pré-implementação do módulo Fichas Técnicas Profissionais em 22/0
 - **Otimização de Performance**: A limpeza de arquivos mortos reduziu o CSS de produção de 43.42 kB para 35.75 kB (uma otimização de 17.6%), acelerando a performance de renderização inicial do PWA.
 - **Integridade da Suíte**: Todos os 25 testes unitários continuam passando com sucesso e o build do Vite executa de forma 100% limpa.
 
-## Próxima etapa recomendada
+## Resultado desta etapa (Módulo 1 - Agendamento e Descobrir)
 
-O backlog principal de estoque transacional, limpeza compensatória no Cloudinary, resumo formatado, saneamento de mocks/protótipos redundantes e conexões da API foi integralmente finalizado e validado. Recomendamos a homologação do sistema em ambiente de staging pelas profissionais e clientes antes do deploy final.
+- **Cupom Interativo no Agendamento**: Implementado o endpoint `/api/data?resource=validate-coupon` no backend que realiza a validação em tempo real de cupons. No frontend, adicionado campo interativo de cupom e botão "Aplicar" na etapa de Revisão (etapa 6) do agendamento, reduzindo os valores totais e do sinal (deposit) instantaneamente e aplicando-o na criação final do agendamento.
+- **Pré-seleção Inteligente de Serviço**: O agendamento pós-descoberta (`origem=descobrir` e rascunho em `sessionStorage`) agora localiza e seleciona automaticamente o serviço de "Avaliação personalizada" no catálogo.
+- **Exibição do Diagnóstico Inteligente (Intake Data)**: Modificada a consulta `client-detail` no backend para entregar o campo `intake_data` às profissionais. Adicionado o componente `IntakeDetailsModal` no frontend profissional. Ao clicar em **[Ver Diagnóstico]** na listagem de atendimentos da Agenda ou na tela de Detalhes da Cliente, a especialista visualiza as respostas completas do quiz capilar e a galeria das 4 fotos enviadas (Frente, Costas, Lateral, Referência).
+- **SumUp Env Setup**: Variáveis de ambiente `SUMUP_API_KEY`, `SUMUP_MERCHANT_CODE`, `SUMUP_ENVIRONMENT`, `SUMUP_RETURN_URL` e `SUMUP_ENABLED` configuradas e migradas no Vercel em todos os ambientes (Development, Preview, Production).
+- **Integridade**: Build (`npm run build`), lint e testes (25/25) executando de forma 100% limpa.
+
+## Próxima etapa recomendada (Módulo 2)
+
+Seguir para o **Módulo 2: Remarcação e agenda profissional** (Cliente solicita reagendamento → profissional recebe notificação → aceitar, recusar ou sugerir novo horário via painel profissional).
+
 
 
