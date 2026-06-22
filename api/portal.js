@@ -297,7 +297,7 @@ async function clientDetail(user, rawId) {
     notes,
   ] = await Promise.all([
     query(
-      `select a.id,a.starts_at,a.ends_at,a.status,a.notes,a.estimated_value,s.name as service,pp.full_name as professional from public.appointments a join public.services s on s.id=a.service_id join public.professionals pr on pr.id=a.professional_id join public.profiles pp on pp.id=pr.profile_id where a.client_id=$1 ${appointmentFilter} order by a.starts_at desc`,
+      `select a.id,a.starts_at,a.ends_at,a.status,a.notes,a.estimated_value,a.intake_data,s.name as service,pp.full_name as professional from public.appointments a join public.services s on s.id=a.service_id join public.professionals pr on pr.id=a.professional_id join public.profiles pp on pp.id=pr.profile_id where a.client_id=$1 ${appointmentFilter} order by a.starts_at desc`,
       appointmentParams,
     ),
     user.role === "admin"

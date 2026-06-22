@@ -414,6 +414,137 @@ export function ProfessionalAvailabilityPage(){const p=useLoad<any>('/api/portal
 
 export function ProfessionalProfilePage(){const{refresh}=useAuth();const p=useLoad<any>('/api/portal?resource=profile');const[form,setForm]=useState<any>({});const[saving,setSaving]=useState(false);const[toast,setToast]=useState('');useEffect(()=>{if(p.data)setForm({fullName:p.data.full_name,email:p.data.email,phone:p.data.phone||'',birthDate:p.data.birth_date?.slice(0,10)||'',instagram:p.data.instagram||'',address:p.data.address||{},avatarUrl:p.data.avatar_url||'',bio:p.data.bio||'',specialties:p.data.specialties||[]})},[p.data]);if(p.loading)return <LoadingState/>;const save=async(e:FormEvent)=>{e.preventDefault();setSaving(true);try{await apiFetch('/api/portal?resource=profile',{method:'PATCH',body:JSON.stringify(form)});await Promise.all([p.reload(),refresh()]);setToast('Alterações salvas com sucesso.')}catch(err){console.error('Professional profile error',err);setToast(err instanceof Error?err.message:'Ocorreu um erro ao salvar os dados.')}finally{setSaving(false);setTimeout(()=>setToast(''),2200)}};return <div><Toast show={!!toast} message={toast}/><PageHeader eyebrow="PERFIL PROFISSIONAL" title={p.data?.full_name||'Perfil'} subtitle="Dados, biografia e especialidades persistidos no Neon."/><form onSubmit={save} className="grid gap-5 lg:grid-cols-[300px_1fr]"><aside className="surface p-7 text-center"><Avatar src={form.avatarUrl} name={form.fullName||''} size="lg"/><h2 className="mt-4 font-display text-3xl">{form.fullName}</h2><p className="muted mt-2">{p.data?.active?'Profissional ativa':'Profissional inativa'}</p></aside><section className="surface p-6"><div className="grid gap-4 sm:grid-cols-2"><Input label="Nome" value={form.fullName||''} set={v=>setForm({...form,fullName:v})}/><Input label="E-mail" type="email" value={form.email||''} set={v=>setForm({...form,email:v})}/><Input label="Telefone" value={form.phone||''} set={v=>setForm({...form,phone:v})}/><Input label="Instagram" value={form.instagram||''} set={v=>setForm({...form,instagram:v})}/></div><label className="mt-4 block"><span className="mb-2 block text-xs font-bold">Biografia</span><textarea className="field min-h-24 py-3" value={form.bio||''} onChange={e=>setForm({...form,bio:e.target.value})}/></label><label className="mt-4 block"><span className="mb-2 block text-xs font-bold">Especialidades, separadas por vírgula</span><input className="field" value={(form.specialties||[]).join(', ')} onChange={e=>setForm({...form,specialties:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)})}/></label><button disabled={saving} className="btn-primary mt-5"><Save size={15}/>{saving?'Salvando…':'Salvar perfil'}</button></section></form></div>}
 
-export function ProfessionalClientDetailPage(){const id=useLocation().pathname.split('/clientes/')[1];const p=useLoad<any>(`/api/portal?resource=client-detail&id=${encodeURIComponent(id||'')}`);const[note,setNote]=useState('');const[toast,setToast]=useState('');if(p.loading)return <LoadingState/>;if(!p.data)return <EmptyState title="Cliente indisponível" text={p.error||'Esta cliente não está vinculada à sua agenda.'}/>;const d=p.data;const add=async()=>{try{await apiFetch('/api/portal?resource=client-note',{method:'POST',body:JSON.stringify({clientId:id,note})});setNote('');await p.reload();setToast('Observação adicionada.')}catch(err){console.error('Professional client note error',err);setToast(err instanceof Error?err.message:'Não foi possível concluir a ação.')}finally{setTimeout(()=>setToast(''),2200)}};return <div><Toast show={!!toast} message={toast}/><PageHeader eyebrow="CLIENTE VINCULADA" title={d.profile.full_name} subtitle={`${d.profile.phone||'Sem telefone'} • histórico limitado aos seus atendimentos`}/><div className="grid gap-5 lg:grid-cols-[320px_1fr]"><aside className="surface p-6 text-center"><Avatar src={d.profile.avatar_url} name={d.profile.full_name} size="lg"/><h2 className="mt-4 font-display text-3xl">{d.profile.full_name}</h2><p className="muted mt-2">Preferências: {Object.values(d.profile.preferences||{}).join(' • ')||'Não informadas'}</p></aside><section className="surface p-6"><SectionHeading title="Atendimentos vinculados"/>{d.appointments.length?d.appointments.map((a:any)=><div key={a.id} className="flex justify-between border-b border-black/5 py-4"><span><b className="block text-xs">{a.service}</b><span className="text-[10px] text-stone-400">{dt(a.starts_at)}</span></span><Badge tone={tone(a.status)}>{label[a.status]||a.status}</Badge></div>):<EmptyState title="Nenhum atendimento" text="Não há histórico permitido."/>}<SectionHeading title="Observações autorizadas"/>{d.notes.map((n:any)=><div key={n.id} className="border-b border-black/5 py-3"><b className="text-xs">{n.author}</b><p className="text-[11px] text-stone-500">{n.note}</p></div>)}<div className="mt-4 flex gap-2"><input className="field" value={note} onChange={e=>setNote(e.target.value)} placeholder="Adicionar observação"/><button disabled={note.trim().length<3} onClick={add} className="btn-primary">Salvar</button></div></section></div></div>}
+export function ProfessionalClientDetailPage(){
+  const id=useLocation().pathname.split('/clientes/')[1];
+  const p=useLoad<any>(`/api/portal?resource=client-detail&id=${encodeURIComponent(id||'')}`);
+  const[note,setNote]=useState('');
+  const[toast,setToast]=useState('');
+  const[selectedIntake,setSelectedIntake]=useState<any>(null);
+
+  if(p.loading)return <LoadingState/>;
+  if(!p.data)return <EmptyState title="Cliente indisponível" text={p.error||'Esta cliente não está vinculada à sua agenda.'}/>;
+  const d=p.data;
+  const add=async()=>{
+    try{
+      await apiFetch('/api/portal?resource=client-note',{method:'POST',body:JSON.stringify({clientId:id,note})});
+      setNote('');
+      await p.reload();
+      setToast('Observação adicionada.')
+    }catch(err){
+      console.error('Professional client note error',err);
+      setToast(err instanceof Error?err.message:'Não foi possível concluir a ação.')
+    }finally{
+      setTimeout(()=>setToast(''),2200)
+    }
+  };
+
+  return <div>
+    <Toast show={!!toast} message={toast}/>
+    <PageHeader eyebrow="CLIENTE VINCULADA" title={d.profile.full_name} subtitle={`${d.profile.phone||'Sem telefone'} • histórico limitado aos seus atendimentos`}/>
+    <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
+      <aside className="surface p-6 text-center">
+        <Avatar src={d.profile.avatar_url} name={d.profile.full_name} size="lg"/>
+        <h2 className="mt-4 font-display text-3xl">{d.profile.full_name}</h2>
+        <p className="muted mt-2">Preferências: {Object.values(d.profile.preferences||{}).join(' • ')||'Não informadas'}</p>
+      </aside>
+      <section className="surface p-6">
+        <SectionHeading title="Atendimentos vinculados"/>
+        {d.appointments.length?d.appointments.map((a:any)=>(
+          <div key={a.id} className="flex justify-between items-center border-b border-black/5 py-4">
+            <span>
+              <b className="block text-xs">{a.service}</b>
+              <span className="text-[10px] text-stone-400">{dt(a.starts_at)}</span>
+              {a.intake_data && a.intake_data.answers && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedIntake(a.intake_data)}
+                  className="mt-1 block text-[10px] font-bold text-champagne hover:underline text-left"
+                >
+                  [Ver Diagnóstico]
+                </button>
+              )}
+            </span>
+            <Badge tone={tone(a.status)}>{label[a.status]||a.status}</Badge>
+          </div>
+        )):<EmptyState title="Nenhum atendimento" text="Não há histórico permitido."/>}
+        <SectionHeading title="Observações autorizadas"/>
+        {d.notes.map((n:any)=><div key={n.id} className="border-b border-black/5 py-3"><b className="text-xs">{n.author}</b><p className="text-[11px] text-stone-500">{n.note}</p></div>)}
+        <div className="mt-4 flex gap-2">
+          <input className="field" value={note} onChange={e=>setNote(e.target.value)} placeholder="Adicionar observação"/>
+          <button disabled={note.trim().length<3} onClick={add} className="btn-primary">Salvar</button>
+        </div>
+      </section>
+    </div>
+    <IntakeDetailsModal
+      open={!!selectedIntake}
+      onClose={() => setSelectedIntake(null)}
+      intakeData={selectedIntake}
+      clientName={d.profile.full_name}
+    />
+  </div>
+}
 
 function Input({label,value,set,type='text'}:{label:string;value:string;set:(v:string)=>void;type?:string}){return <label className="block"><span className="mb-2 block text-xs font-bold">{label}</span><input className="field" required type={type} value={value} onChange={e=>set(e.target.value)}/></label>}
+
+interface IntakeDetailsModalProps {
+  open: boolean;
+  onClose: () => void;
+  intakeData: any;
+  clientName: string;
+}
+
+export function IntakeDetailsModal({ open, onClose, intakeData, clientName }: IntakeDetailsModalProps) {
+  if (!intakeData || !intakeData.answers) return null;
+  const answers = intakeData.answers;
+  const fields = [
+    ["Objetivo", answers.objective],
+    ["Comprimento atual", answers.length],
+    ["Cor atual", answers.color],
+    ["Química nos fios", answers.chemistry],
+    ["Experiência Mega Hair", answers.used],
+    ["Orçamento aproximado", answers.budget],
+    ["Frequência preferida", answers.frequency],
+    ["Método preferido", answers.method],
+  ].filter(x => x[1]);
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Diagnóstico de ${clientName}`}>
+      <div className="space-y-5">
+        <div className="grid gap-3 sm:grid-cols-2">
+          {fields.map(([label, val]) => (
+            <div key={label} className="rounded-2xl bg-warm p-4">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400 block mb-1">
+                {label}
+              </span>
+              <span className="text-xs font-bold block">{val}</span>
+            </div>
+          ))}
+        </div>
+        {intakeData.photos && intakeData.photos.filter(Boolean).length > 0 && (
+          <div>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-stone-400 mb-2">
+              Fotos do cabelo enviadas
+            </h4>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {intakeData.photos.filter(Boolean).map((url: string, idx: number) => (
+                <a
+                  key={idx}
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="relative block aspect-[3/4] rounded-[20px] overflow-hidden border border-black/5"
+                >
+                  <img src={url} alt={`Diagnóstico ${idx + 1}`} className="absolute inset-0 w-full h-full object-cover" />
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+        <button type="button" onClick={onClose} className="btn-primary w-full mt-4">
+          Fechar
+        </button>
+      </div>
+    </Modal>
+  );
+}
+

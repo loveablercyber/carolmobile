@@ -784,7 +784,10 @@ function ClientAgenda() {
     time: "09:00",
     payment: "Pix",
     notes: discoveryNotes,
+    couponCode: "",
   });
+  const [validatingCoupon, setValidatingCoupon] = useState(false);
+  const [couponInfo, setCouponInfo] = useState<{ code: string; discount: number; total: number; error?: string } | null>(null);
   const [success, setSuccess] = useState(false);
   const [createdAppointment, setCreatedAppointment] = useState<Record<
     string,
@@ -841,9 +844,10 @@ function ClientAgenda() {
           services: data.services || [],
           professionals: data.professionals || [],
         });
+        const defaultService = (discoveryDraft && data.services?.find((s: any) => s.name === "Avaliação personalizada")?.name) || data.services?.[0]?.name || "";
         setSelected((current) => ({
           ...current,
-          service: current.service || data.services?.[0]?.name || "",
+          service: current.service || defaultService,
           professional: current.professional || "Primeira disponível",
         }));
       })
@@ -992,6 +996,7 @@ function ClientAgenda() {
             notes: selected.notes,
             paymentMethod,
             intakeData: discoveryDraft || {},
+            couponCode: selected.couponCode || null,
           }),
         },
       );
@@ -1278,6 +1283,10 @@ function ClientAgenda() {
           checkingAvailability={checkingAvailability}
           catalog={catalog}
           dateOptions={dates}
+          couponInfo={couponInfo}
+          setCouponInfo={setCouponInfo}
+          validatingCoupon={validatingCoupon}
+          setValidatingCoupon={setValidatingCoupon}
         />
         {bookingError && (
           <div className="mt-4 rounded-2xl bg-rose-50 p-3 text-xs font-semibold text-rose-700">
@@ -1422,6 +1431,10 @@ function BookingStep({
   checkingAvailability,
   catalog,
   dateOptions,
+  couponInfo,
+  setCouponInfo,
+  validatingCoupon,
+  setValidatingCoupon,
 }: {
   step: number;
   selected: Record<string, string>;
@@ -1433,6 +1446,10 @@ function BookingStep({
     professionals: Array<Record<string, any>>;
   };
   dateOptions: string[];
+  couponInfo: { code: string; discount: number; total: number; error?: string } | null;
+  setCouponInfo: (x: { code: string; discount: number; total: number; error?: string } | null) => void;
+  validatingCoupon: boolean;
+  setValidatingCoupon: (x: boolean) => void;
 }) {
   const choose = (k: string, v: string) => setSelected({ ...selected, [k]: v });
   const service = catalog.services.find((s) => s.name === selected.service);
@@ -1512,7 +1529,13 @@ function BookingStep({
         />
       </div>
     );
-  if (step === 6)
+  if (step === 6) {
+    const servicePrice = service ? Number(service.base_price || 0) : 0;
+    const discount = couponInfo?.code === selected.couponCode ? couponInfo.discount : 0;
+    const finalPrice = Math.max(0, servicePrice - discount);
+    const depositAmount = service ? Number(service.deposit_amount || 0) : 0;
+    const finalDeposit = Math.min(depositAmount, finalPrice);
+
     return (
       <div className="mt-5">
         <h3 className="font-display text-2xl font-semibold">
@@ -1525,28 +1548,94 @@ function BookingStep({
             ["Profissional", selected.professional],
             ["Data e hora", `${selected.date} às ${selected.time}`],
             [
-              "Estimativa",
-              `${service?.duration_minutes || "—"}min • ${service ? money(Number(service.base_price || 0)) : "A confirmar"}`,
+              "Estimativa original",
+              service ? money(servicePrice) : "A confirmar",
+            ],
+            discount > 0 ? ["Desconto", `- ${money(discount)}`] : null,
+            [
+              "Estimativa final",
+              service ? money(finalPrice) : "A confirmar",
             ],
             [
               "Sinal",
-              service
-                ? money(Number(service.deposit_amount || 0))
-                : "A confirmar",
+              service ? money(finalDeposit) : "A confirmar",
             ],
-          ].map((x) => (
-            <div key={x[0]} className="flex justify-between gap-4">
-              <span className="text-stone-500">{x[0]}</span>
-              <b className="text-right">{x[1]}</b>
+          ].filter(Boolean).map((x) => (
+            <div key={x![0]} className="flex justify-between gap-4">
+              <span className="text-stone-500">{x![0]}</span>
+              <b className="text-right">{x![1]}</b>
             </div>
           ))}
         </div>
+
+        <div className="mt-4 flex gap-2">
+          <input
+            value={selected.couponCode || ""}
+            onChange={(e) => choose("couponCode", e.target.value.toUpperCase())}
+            placeholder="Cupom de desconto"
+            className="field flex-1"
+          />
+          <button
+            type="button"
+            onClick={async () => {
+              if (!selected.couponCode) return;
+              setValidatingCoupon(true);
+              try {
+                const res = await apiFetch<{ valid: boolean; discount: number; total: number; error?: string }>(
+                  `/api/data?resource=validate-coupon&code=${encodeURIComponent(selected.couponCode)}&serviceId=${service?.id}&amount=${service?.base_price}`
+                );
+                if (res.valid) {
+                  setCouponInfo({ code: selected.couponCode, discount: res.discount, total: res.total });
+                } else {
+                  setCouponInfo({
+                    code: selected.couponCode,
+                    discount: 0,
+                    total: service?.base_price || 0,
+                    error: res.error || "Cupom inválido.",
+                  });
+                }
+              } catch (err) {
+                setCouponInfo({
+                  code: selected.couponCode,
+                  discount: 0,
+                  total: service?.base_price || 0,
+                  error: "Erro ao validar cupom.",
+                });
+              } finally {
+                setValidatingCoupon(false);
+              }
+            }}
+            disabled={validatingCoupon || !selected.couponCode}
+            className="btn-secondary !min-h-12 !px-4"
+          >
+            {validatingCoupon ? "Validando..." : "Aplicar"}
+          </button>
+        </div>
+        {couponInfo?.code === selected.couponCode && (
+          <div className="mt-2 text-xs">
+            {couponInfo.error ? (
+              <span className="text-rose-600 font-semibold">{couponInfo.error}</span>
+            ) : (
+              <span className="text-emerald-600 font-semibold">
+                Cupom aplicado! Desconto: {money(couponInfo.discount)} (Preço final: {money(couponInfo.total)})
+              </span>
+            )}
+          </div>
+        )}
+
         <p className="mt-4 text-[10px] leading-relaxed text-stone-400">
           Ao confirmar, você concorda com a política de cancelamento e
           reagendamento.
         </p>
       </div>
     );
+  }
+  const servicePrice = service ? Number(service.base_price || 0) : 0;
+  const discount = couponInfo?.code === selected.couponCode ? couponInfo.discount : 0;
+  const finalPrice = Math.max(0, servicePrice - discount);
+  const depositAmount = service ? Number(service.deposit_amount || 0) : 0;
+  const finalDeposit = Math.min(depositAmount, finalPrice);
+
   const paymentOptions: Array<{
     name: string;
     icon: React.ComponentType<{ size?: string | number }>;
@@ -1562,7 +1651,7 @@ function BookingStep({
       </h3>
       <p className="muted mt-2">
         Valor do sinal:{" "}
-        {service ? money(Number(service.deposit_amount || 0)) : "a confirmar"}.
+        {service ? money(finalDeposit) : "a confirmar"}.
         O restante é pago no atendimento.
       </p>
       <div className="mt-4 space-y-2">

@@ -205,6 +205,40 @@ async function getResource(req, res, user, resource) {
     return send(res, 200, firstCandidate);
   }
 
+  if (resource === "validate-coupon") {
+    const code = String(req.query.code || "").trim();
+    const serviceId = String(req.query.serviceId || "");
+    const amount = Number(req.query.amount || 0);
+    const { rows } = await query(
+      "select id from public.clients where profile_id=$1",
+      [user.id],
+    );
+    const clientId = rows[0]?.id;
+    if (!clientId) throw appError("Cliente não encontrado.");
+
+    try {
+      const result = await validateCoupon({ query }, {
+        code,
+        clientId,
+        amount,
+        serviceId,
+      });
+      return send(res, 200, {
+        valid: true,
+        couponId: result.coupon?.id || null,
+        discount: result.discount,
+        total: result.total,
+      });
+    } catch (err) {
+      return send(res, 200, {
+        valid: false,
+        discount: 0,
+        total: amount,
+        error: err.message,
+      });
+    }
+  }
+
   if (resource === "clients") {
     await requireUser(req, ["professional", "admin"]);
     const clientParams = [];

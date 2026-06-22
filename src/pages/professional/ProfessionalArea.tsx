@@ -42,6 +42,7 @@ import {
   ProfessionalProfilePage,
   ProfessionalRecordsPage,
   ProfessionalServicesPage,
+  IntakeDetailsModal,
 } from "./ProfessionalPortal";
 
 export function ProfessionalArea() {
@@ -197,6 +198,8 @@ function ProfessionalAgenda() {
   const [remote, setRemote] = useState<Array<Record<string, any>>>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [selectedIntake, setSelectedIntake] = useState<any>(null);
+  const [selectedIntakeClient, setSelectedIntakeClient] = useState("");
   const labelMap: Record<string, string> = {
     requested: "Solicitado",
     awaiting_payment: "Aguardando pagamento",
@@ -379,6 +382,18 @@ function ProfessionalAgenda() {
                     <div className="mt-1 text-[10px] text-stone-400">
                       {a.service} • {a.duration} • {a.value}
                     </div>
+                    {a.intake_data && a.intake_data.answers && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedIntake(a.intake_data);
+                          setSelectedIntakeClient(a.client);
+                        }}
+                        className="mt-1 block text-[10px] font-bold text-champagne hover:underline text-left"
+                      >
+                        [Ver Diagnóstico]
+                      </button>
+                    )}
                   </div>
                   <Status value={s} />
                   <select
@@ -449,6 +464,15 @@ function ProfessionalAgenda() {
           </div>
         )}
       </section>
+      <IntakeDetailsModal
+        open={!!selectedIntake}
+        onClose={() => {
+          setSelectedIntake(null);
+          setSelectedIntakeClient("");
+        }}
+        intakeData={selectedIntake}
+        clientName={selectedIntakeClient}
+      />
     </div>
   );
 }
