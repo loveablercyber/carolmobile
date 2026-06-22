@@ -8,7 +8,10 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
   })
   const data = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(data.error || 'Não foi possível concluir a operação.')
+  if (!response.ok) {
+    console.error('API request failed', { path, status: response.status, error: data.error })
+    throw new Error(data.error || 'Não foi possível concluir a operação.')
+  }
   return data as T
 }
 

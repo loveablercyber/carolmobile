@@ -1,35 +1,37 @@
-import { ReactNode, useMemo, useState } from 'react'
+import { ReactNode, useEffect, useMemo, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
-  Award, BarChart3, Bell, Boxes, BriefcaseBusiness, CalendarDays, ChevronDown, CircleUserRound,
+  Award, BarChart3, Bell, Boxes, BriefcaseBusiness, CalendarDays, ChevronDown, CircleUserRound, Clock3,
   ClipboardList, CreditCard, Gift, Heart, Home, LayoutDashboard, LogOut, Megaphone, Menu, PackageOpen,
-  Scissors, Search, Settings, Sparkles, Star, Tags, UserRound, Users, WalletCards, X
+  Scissors, Search, Settings, ShieldCheck, Sparkles, Star, Tags, UserRound, Users, WalletCards, X
 } from 'lucide-react'
-import { notifications } from '../data/mock'
 import { Avatar, Badge, Logo } from './ui'
 import { useAuth } from '../context/AuthContext'
+import { apiFetch } from '../lib/api'
 
 export type Role = 'cliente' | 'profissional' | 'admin'
 
 const roleNav = {
   cliente: [
     { label: 'Início', path: '/cliente/inicio', icon: Home }, { label: 'Descobrir', path: '/cliente/descobrir', icon: Sparkles },
-    { label: 'Agenda', path: '/cliente/agenda', icon: CalendarDays }, { label: 'Benefícios', path: '/cliente/beneficios', icon: Gift },
-    { label: 'Perfil', path: '/cliente/perfil', icon: CircleUserRound }
+    { label: 'Agenda', path: '/cliente/agendamentos', icon: CalendarDays }, { label: 'Histórico', path: '/cliente/historico', icon: ClipboardList }, { label: 'Benefícios', path: '/cliente/beneficios', icon: Gift },
+    { label: 'Pagamentos', path: '/cliente/pagamentos', icon: CreditCard }, { label: 'Cupons', path: '/cliente/cupons', icon: Tags },
+    { label: 'Notificações', path: '/cliente/notificacoes', icon: Bell }, { label: 'Privacidade', path: '/cliente/privacidade', icon: ShieldCheck },
+    { label: 'Indique e ganhe', path: '/cliente/indique-e-ganhe', icon: Users }, { label: 'Perfil', path: '/cliente/perfil', icon: CircleUserRound }
   ],
   profissional: [
-    { label: 'Hoje', path: '/profissional/hoje', icon: Home }, { label: 'Agenda', path: '/profissional/agenda', icon: CalendarDays },
+    { label: 'Dashboard', path: '/profissional/dashboard', icon: Home }, { label: 'Agenda', path: '/profissional/agenda', icon: CalendarDays },
     { label: 'Clientes', path: '/profissional/clientes', icon: Users }, { label: 'Fichas técnicas', path: '/profissional/fichas', icon: ClipboardList },
-    { label: 'Serviços', path: '/profissional/servicos', icon: Scissors }, { label: 'Comissão', path: '/profissional/comissao', icon: WalletCards },
-    { label: 'Desempenho', path: '/profissional/desempenho', icon: BarChart3 }, { label: 'Perfil', path: '/profissional/perfil', icon: UserRound }
+    { label: 'Serviços', path: '/profissional/servicos', icon: Scissors }, { label: 'Comissões', path: '/profissional/comissoes', icon: WalletCards },
+    { label: 'Disponibilidade', path: '/profissional/disponibilidade', icon: Clock3 }, { label: 'Perfil', path: '/profissional/perfil', icon: UserRound }
   ],
   admin: [
-    { label: 'Dashboard', path: '/admin/dashboard', icon: LayoutDashboard }, { label: 'Agenda', path: '/admin/agenda', icon: CalendarDays },
+    { label: 'Dashboard', path: '/admin/dashboard', icon: LayoutDashboard }, { label: 'Agenda', path: '/admin/agendamentos', icon: CalendarDays },
     { label: 'Clientes', path: '/admin/clientes', icon: Users }, { label: 'Profissionais', path: '/admin/profissionais', icon: BriefcaseBusiness },
     { label: 'Serviços e métodos', path: '/admin/servicos', icon: Scissors }, { label: 'Estoque', path: '/admin/estoque', icon: Boxes },
-    { label: 'Financeiro', path: '/admin/financeiro', icon: CreditCard }, { label: 'Comissões', path: '/admin/comissoes', icon: WalletCards },
-    { label: 'Marketing', path: '/admin/marketing', icon: Megaphone }, { label: 'Promoções', path: '/admin/promocoes', icon: Tags },
-    { label: 'Fidelidade', path: '/admin/fidelidade', icon: Award }, { label: 'Relatórios', path: '/admin/relatorios', icon: BarChart3 },
+    { label: 'Pagamentos', path: '/admin/pagamentos', icon: CreditCard }, { label: 'Planos', path: '/admin/planos', icon: Gift },
+    { label: 'Cupons', path: '/admin/cupons', icon: Tags }, { label: 'Comissões', path: '/admin/comissoes', icon: WalletCards },
+    { label: 'Notificações', path: '/admin/notificacoes', icon: Bell }, { label: 'Relatórios', path: '/admin/relatorios', icon: BarChart3 },
     { label: 'Configurações', path: '/admin/configuracoes', icon: Settings }
   ]
 }
@@ -43,10 +45,12 @@ const identities = {
 export function AppShell({ role, children }: { role: Role; children: ReactNode }) {
   const [mobileMenu, setMobileMenu] = useState(false)
   const [alerts, setAlerts] = useState(false)
+  const [alertItems,setAlertItems]=useState<Array<Record<string,any>>>([])
   const navigate = useNavigate(); const location = useLocation()
   const { logout, user } = useAuth()
   const nav = roleNav[role]; const identity = identities[role]
-  const mobileNav = role === 'admin' ? nav.slice(0, 5) : role === 'profissional' ? nav.slice(0, 5) : nav
+  useEffect(()=>{if(user)apiFetch<{data:{items:Array<Record<string,any>>}}>('/api/portal?resource=notifications').then(result=>setAlertItems(result.data.items)).catch(error=>console.error('Notification menu error',error))},[user?.id])
+  const mobileNav = nav.slice(0, 5)
   const title = useMemo(() => nav.find(n => location.pathname.startsWith(n.path))?.label ?? 'Carol Sol', [location.pathname, nav])
 
   const sidebar = (
@@ -69,9 +73,9 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
         <div className="ml-auto flex items-center gap-2">
           <button className="hidden h-10 items-center gap-2 rounded-xl border border-black/[.06] bg-white px-3 text-xs text-stone-500 sm:flex"><Search size={16} />Buscar <kbd className="ml-4 rounded bg-stone-100 px-1.5 py-0.5 text-[9px]">⌘K</kbd></button>
           <div className="relative"><button onClick={() => setAlerts(!alerts)} aria-label="Notificações" className="relative grid h-10 w-10 place-items-center rounded-xl border border-black/[.06] bg-white"><Bell size={18} /><span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-champagne ring-2 ring-white" /></button>
-            {alerts && <div className="absolute right-0 top-12 w-[min(350px,calc(100vw-24px))] rounded-[24px] border border-black/[.06] bg-white p-4 shadow-2xl"><div className="mb-3 flex items-center justify-between"><h3 className="font-display text-xl font-semibold">Notificações</h3><Badge tone="gold">2 novas</Badge></div>{notifications.map((n, i) => <div key={i} className="flex gap-3 border-t border-black/[.05] py-3 first:border-0"><span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${n.unread ? 'bg-champagne' : 'bg-stone-200'}`} /><div><div className="text-xs font-bold">{n.title}</div><div className="mt-1 text-[11px] leading-relaxed text-stone-500">{n.text}</div></div><span className="ml-auto shrink-0 text-[9px] text-stone-400">{n.time}</span></div>)}</div>}
+            {alerts && <div className="absolute right-0 top-12 w-[min(350px,calc(100vw-24px))] rounded-[24px] border border-black/[.06] bg-white p-4 shadow-2xl"><div className="mb-3 flex items-center justify-between"><h3 className="font-display text-xl font-semibold">Notificações</h3><Badge tone="gold">{alertItems.filter(n=>!n.read_at).length} novas</Badge></div>{alertItems.length?alertItems.slice(0,5).map(n => <button onClick={async()=>{if(!n.read_at){try{await apiFetch('/api/portal?resource=notification-read',{method:'PATCH',body:JSON.stringify({id:n.id})});setAlertItems(current=>current.map(item=>item.id===n.id?{...item,read_at:new Date().toISOString()}:item))}catch(error){console.error('Notification read error',error)}}}} key={n.id} className="flex w-full gap-3 border-t border-black/[.05] py-3 text-left first:border-0"><span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${!n.read_at ? 'bg-champagne' : 'bg-stone-200'}`} /><span><span className="text-xs font-bold">{n.title}</span><span className="mt-1 block text-[11px] leading-relaxed text-stone-500">{n.body}</span></span><span className="ml-auto shrink-0 text-[9px] text-stone-400">{new Date(n.created_at).toLocaleDateString('pt-BR')}</span></button>):<div className="py-6 text-center text-xs text-stone-400">Nenhuma notificação.</div>}</div>}
           </div>
-          <button onClick={() => navigate(`/${role}/perfil`)} className="hidden items-center gap-2 rounded-xl bg-white py-1.5 pl-1.5 pr-3 sm:flex"><Avatar src={user?.avatar_url || identity.image} name={user?.full_name || identity.name} size="sm" /><span className="text-left"><span className="block text-[11px] font-bold">{user?.full_name || identity.name}</span><span className="block text-[9px] text-stone-400">{identity.detail}</span></span><ChevronDown size={14} /></button>
+          <button onClick={() => navigate(role==='admin'?'/admin/configuracoes':`/${role}/perfil`)} className="hidden items-center gap-2 rounded-xl bg-white py-1.5 pl-1.5 pr-3 sm:flex"><Avatar src={user?.avatar_url || identity.image} name={user?.full_name || identity.name} size="sm" /><span className="text-left"><span className="block text-[11px] font-bold">{user?.full_name || identity.name}</span><span className="block text-[9px] text-stone-400">{identity.detail}</span></span><ChevronDown size={14} /></button>
         </div>
       </header>
       <main className="safe-bottom mx-auto max-w-[1500px] p-4 sm:p-7 lg:p-10">{children}</main>

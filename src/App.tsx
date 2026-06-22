@@ -31,6 +31,6 @@ function Protected({role,children}:{role:'client'|'professional'|'admin';childre
   const {user,loading}=useAuth()
   if(loading)return <div className="fixed inset-0 grid place-items-center bg-cream"><Logo/></div>
   if(!user)return <Navigate to="/entrar" replace/>
-  if(user.role!==role){const destination=user.role==='client'?'/cliente/inicio':user.role==='professional'?'/profissional/hoje':'/admin/dashboard';return <Navigate to={destination} replace/>}
+  if(user.role!==role){const destination=user.role==='client'?'/cliente/inicio':user.role==='professional'?'/profissional/dashboard':'/admin/dashboard';return <Navigate to={destination} replace/>}
   return children
 }

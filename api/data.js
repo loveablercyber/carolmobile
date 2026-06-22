@@ -68,7 +68,11 @@ async function getResource(req, res, user, resource) {
     for (const time of slots) {
       const startsAt = new Date(`${date}T${time}:00-03:00`)
       const endsAt = new Date(startsAt.getTime() + services[0].duration_minutes * 60_000)
-      const { rowCount } = await query(`select 1 from public.appointments where professional_id=$1 and status not in ('cancelled','no_show') and tstzrange(starts_at,ends_at,'[)') && tstzrange($2,$3,'[)') limit 1`, [professionals[0].id, startsAt.toISOString(), endsAt.toISOString()])
+      const { rowCount } = await query(`select 1 from (
+        select 1 from public.appointments where professional_id=$1 and status not in ('cancelled','no_show') and tstzrange(starts_at,ends_at,'[)') && tstzrange($2,$3,'[)')
+        union all
+        select 1 from public.blocked_schedule where professional_id=$1 and tstzrange(starts_at,ends_at,'[)') && tstzrange($2,$3,'[)')
+      ) conflicts limit 1`, [professionals[0].id, startsAt.toISOString(), endsAt.toISOString()])
       result.push({ time, available: rowCount === 0 })
     }
     return send(res, 200, { professional: professionals[0], slots: result })
@@ -76,13 +80,19 @@ async function getResource(req, res, user, resource) {
 
   if (resource === 'clients') {
     await requireUser(req, ['professional', 'admin'])
+    const clientParams = []
+    let clientWhere = ''
+    if (user.role === 'professional') {
+      clientParams.push(user.id)
+      clientWhere = `where exists(select 1 from public.appointments a join public.professionals pr on pr.id=a.professional_id where a.client_id=c.id and pr.profile_id=$1)`
+    }
     const { rows } = await query(`
       select c.id, p.full_name as name, p.phone, p.avatar_url as photo, c.lifetime_value,
         coalesce((select to_char(max(a.starts_at),'DD/MM/YYYY') from public.appointments a where a.client_id=c.id and a.status='completed'),'—') as last,
         coalesce((select to_char(min(a.starts_at),'DD/MM/YYYY') from public.appointments a where a.client_id=c.id and a.starts_at>now() and a.status in ('confirmed','pending_deposit')),'—') as next,
         coalesce((select sum(points) from public.loyalty_points lp where lp.client_id=c.id),0)::int as points
-      from public.clients c join public.profiles p on p.id=c.profile_id order by p.full_name
-    `)
+      from public.clients c join public.profiles p on p.id=c.profile_id ${clientWhere} order by p.full_name
+    `, clientParams)
     return send(res, 200, { clients: rows.map(row => ({ ...row, ticket: Number(row.lifetime_value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }), tag: Number(row.lifetime_value) > 10000 ? 'VIP' : 'Recorrente' })) })
   }
 
@@ -132,7 +142,11 @@ async function createAppointment(req, res, user, body) {
     if (!professional) throw appError('Profissional não encontrada.')
     await client.query('select pg_advisory_xact_lock(hashtext($1))', [professional.id])
     const endsAt = new Date(startsAt.getTime() + service.duration_minutes * 60_000)
-    const conflict = await client.query(`select 1 from public.appointments where professional_id=$1 and status not in ('cancelled','no_show') and tstzrange(starts_at,ends_at,'[)') && tstzrange($2,$3,'[)') limit 1`, [professional.id, startsAt.toISOString(), endsAt.toISOString()])
+    const conflict = await client.query(`select 1 from (
+      select 1 from public.appointments where professional_id=$1 and status not in ('cancelled','no_show') and tstzrange(starts_at,ends_at,'[)') && tstzrange($2,$3,'[)')
+      union all
+      select 1 from public.blocked_schedule where professional_id=$1 and tstzrange(starts_at,ends_at,'[)') && tstzrange($2,$3,'[)')
+    ) conflicts limit 1`, [professional.id, startsAt.toISOString(), endsAt.toISOString()])
     if (conflict.rowCount) throw appError('Este horário acabou de ficar indisponível. Escolha outro.', 409)
     const location = await client.query('select id from public.salon_locations where active order by name limit 1')
     const { rows } = await client.query(`insert into public.appointments(client_id,professional_id,service_id,location_id,starts_at,ends_at,status,notes,estimated_value,created_by) values($1,$2,$3,$4,$5,$6,'pending_deposit',$7,$8,$9) returning id`, [clientId, professional.id, service.id, location.rows[0]?.id || null, startsAt.toISOString(), endsAt.toISOString(), body.notes || null, service.base_price, user.id])
@@ -151,6 +165,7 @@ async function updateAppointment(req, res, user, body) {
   if (!body.id) throw appError('Agendamento não informado.')
   const allowed = ['pending_deposit','confirmed','in_service','completed','cancelled','no_show','rescheduled']
   if (!allowed.includes(body.status)) throw appError('Status inválido.')
+  if (user.role === 'client' && !['cancelled','rescheduled'].includes(body.status)) throw appError('A cliente só pode cancelar ou solicitar reagendamento.', 403)
   const params = [body.status, body.id]
   let scopeSql = 'true'
   if (user.role === 'client') {
@@ -160,9 +175,18 @@ async function updateAppointment(req, res, user, body) {
     params.push(user.id)
     scopeSql = 'a.professional_id in (select id from public.professionals where profile_id=$3)'
   }
-  const { rows } = await query(`update public.appointments a set status=$1 where a.id=$2 and ${scopeSql} returning id`, params)
-  if (!rows[0]) throw appError('Agendamento não encontrado.', 404)
-  await query(`insert into public.appointment_status_history(appointment_id,to_status,changed_by,note) values($1,$2,$3,$4)`, [body.id, body.status, user.id, body.note || 'Atualizado pelo aplicativo'])
+  const updated = await transaction(async client => {
+    const previousSql = user.role === 'admin'
+      ? 'select a.status from public.appointments a where a.id=$1 for update'
+      : `select a.status from public.appointments a where a.id=$1 and ${scopeSql.replace('$3','$2')} for update`
+    const previous = await client.query(previousSql, user.role === 'admin' ? [body.id] : [body.id,user.id])
+    if (!previous.rows[0]) throw appError('Agendamento não encontrado.', 404)
+    await client.query('update public.appointments set status=$1 where id=$2', params.slice(0,2))
+    await client.query(`insert into public.appointment_status_history(appointment_id,from_status,to_status,changed_by,note) values($1,$2,$3,$4,$5)`, [body.id, previous.rows[0].status, body.status, user.id, body.note || 'Atualizado pelo aplicativo'])
+    await client.query(`insert into public.audit_logs(actor_id,action,entity_type,entity_id,previous_data,new_data) values($1,'status_change','appointment',$2,$3,$4)`, [user.id, body.id, JSON.stringify({ status: previous.rows[0].status }), JSON.stringify({ status: body.status })])
+    return true
+  })
+  if (!updated) throw appError('Não foi possível atualizar o agendamento.')
   return send(res, 200, { ok: true })
 }
 

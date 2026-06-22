@@ -48,6 +48,8 @@ async function setup() {
   const seed = await readFile(resolve('database/neon-seed.sql'), 'utf8')
   const brandMigration = await readFile(resolve('database/neon-brand-carol-sol.sql'), 'utf8')
   const operationalMigration = await readFile(resolve('database/neon-operational.sql'), 'utf8')
+  const completePortalMigration = await readFile(resolve('database/neon-complete-portal.sql'), 'utf8')
+  const portalFixesMigration = await readFile(resolve('database/neon-portal-fixes.sql'), 'utf8')
 
   await client.query('begin')
   try {
@@ -83,6 +85,16 @@ async function setup() {
         '00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000010',
         '00000000-0000-0000-0000-000000000011') and encrypted_password is null`, [passwordHash])
       await client.query("insert into public._luxe_migrations(version, description) values ('004_operational_api', 'Autenticação e índices da API operacional')")
+    }
+    const { rowCount: completePortalApplied } = await client.query("select 1 from public._luxe_migrations where version = '005_complete_portal'")
+    if (!completePortalApplied) {
+      await client.query(completePortalMigration)
+      await client.query("insert into public._luxe_migrations(version, description) values ('005_complete_portal', 'Portal funcional, pagamentos manuais e LGPD')")
+    }
+    const { rowCount: portalFixesApplied } = await client.query("select 1 from public._luxe_migrations where version = '006_portal_fixes'")
+    if (!portalFixesApplied) {
+      await client.query(portalFixesMigration)
+      await client.query("insert into public._luxe_migrations(version, description) values ('006_portal_fixes', 'Persistência da agenda, indicadores e disponibilidade')")
     }
     await client.query('commit')
   } catch (error) {

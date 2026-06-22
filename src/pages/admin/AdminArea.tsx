@@ -10,13 +10,16 @@ import { AppShell } from '../../components/AppShell'
 import { Avatar, Badge, Modal, PageHeader, SectionHeading, StatCard, Toast } from '../../components/ui'
 import { appointments, clients, images, inventory, professionals, services } from '../../data/mock'
 import { apiFetch } from '../../lib/api'
+import { AdminAppointmentsPage, AdminClientDetailPage, AdminClientsPage, AdminCommissionsPage, AdminCouponsPage, AdminDashboardPage, AdminInventoryPage, AdminPaymentsPage, AdminPlansPage, AdminProfessionalsPage, AdminReportsPage, AdminServicesPage, AdminSettingsPage } from './AdminPortal'
+import { ClientNotificationsPage } from '../client/ClientPortal'
 
 export function AdminArea(){
-  const path=useLocation().pathname; let page=<AdminDashboard/>
-  if(path.includes('/agenda'))page=<GlobalAgenda/>; else if(path.includes('/clientes'))page=<CRM/>; else if(path.includes('/profissionais'))page=<Professionals/>
-  else if(path.includes('/servicos'))page=<Catalog/>; else if(path.includes('/estoque'))page=<Inventory/>; else if(path.includes('/financeiro'))page=<Finance/>
-  else if(path.includes('/comissoes'))page=<Commissions/>; else if(path.includes('/marketing')||path.includes('/promocoes'))page=<Marketing/>; else if(path.includes('/fidelidade'))page=<Loyalty/>
-  else if(path.includes('/relatorios'))page=<Reports/>; else if(path.includes('/configuracoes'))page=<AdminSettings/>
+  const path=useLocation().pathname; let page=<AdminDashboardPage/>
+  if(path.match(/\/clientes\/[^/]+$/))page=<AdminClientDetailPage/>; else if(path.includes('/clientes'))page=<AdminClientsPage/>; else if(path.includes('/agenda')||path.includes('/agendamentos'))page=<AdminAppointmentsPage/>; else if(path.includes('/pagamentos')||path.includes('/financeiro'))page=<AdminPaymentsPage/>; else if(path.includes('/planos'))page=<AdminPlansPage/>; else if(path.includes('/cupons')||path.includes('/promocoes'))page=<AdminCouponsPage/>; else if(path.includes('/profissionais'))page=<AdminProfessionalsPage/>
+  else if(path.includes('/servicos'))page=<AdminServicesPage/>; else if(path.includes('/estoque'))page=<AdminInventoryPage/>
+  else if(path.includes('/notificacoes'))page=<ClientNotificationsPage/>
+  else if(path.includes('/comissoes'))page=<AdminCommissionsPage/>
+  else if(path.includes('/relatorios'))page=<AdminReportsPage/>; else if(path.includes('/configuracoes')||path.includes('/perfil'))page=<AdminSettingsPage/>
   return <AppShell role="admin">{page}</AppShell>
 }
 
