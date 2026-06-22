@@ -20,7 +20,11 @@ function hashIndex(value, length) {
 export function cloudinaryProviders() {
   let parsed
   try { parsed = JSON.parse(process.env.CLOUDINARY_PROVIDERS_JSON || '[]') } catch { parsed = [] }
-  const source = Array.isArray(parsed) ? parsed : Array.isArray(parsed.providers) ? parsed.providers : Object.entries(parsed).map(([name, config]) => ({ name, ...config }))
+  for (let i = 0; i < 2 && typeof parsed === 'string'; i++) {
+    try { parsed = JSON.parse(parsed) } catch { break }
+  }
+  if (!parsed || typeof parsed !== 'object') parsed = []
+  const source = Array.isArray(parsed) ? parsed : Array.isArray(parsed.providers) ? parsed.providers : Object.entries(parsed).map(([name, config]) => ({ name, ...(typeof config === 'object' && config ? config : {}) }))
   return source.map(provider => ({
     name: provider.name || provider.label || provider.cloud_name || provider.cloudName,
     cloudName: provider.cloud_name || provider.cloudName || provider.cloud,
