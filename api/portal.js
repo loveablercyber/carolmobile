@@ -2,6 +2,10 @@ import { query, transaction } from "../server/lib/db.js";
 import { requireUser } from "../server/lib/auth.js";
 import { sendEmail } from "../server/lib/integrations.js";
 import {
+  periodFitsSchedule,
+  schedulePeriod,
+} from "../server/lib/availability-rules.js";
+import {
   appError,
   getBody,
   handleError,
@@ -494,16 +498,54 @@ async function professionalServices(user) {
 async function professionalRecords(user) {
   requireRole(user, ["professional"]);
   const id = await professionalIdFor(user);
-  const { rows } = await query(
-    `select tr.id,tr.appointment_id,tr.client_id,tr.strands_count,tr.weight_grams,tr.color,tr.shade,tr.length_cm,
-    tr.texture,tr.hair_lot,tr.products_used,tr.recommendations,tr.next_maintenance_date,tr.final_value,tr.payment_status,tr.created_at,
-    p.full_name as client,p.avatar_url,hm.name as method,a.starts_at
-    from public.technical_records tr join public.clients c on c.id=tr.client_id join public.profiles p on p.id=c.profile_id
-    left join public.hair_methods hm on hm.id=tr.hair_method_id left join public.appointments a on a.id=tr.appointment_id
-    where tr.professional_id=$1 order by tr.created_at desc`,
-    [id],
-  );
-  return rows;
+  const [records, appointments, methods, hairInventory, products] = await Promise.all([
+    query(
+      `select tr.id,tr.appointment_id,tr.client_id,tr.hair_method_id,tr.strands_count,tr.weight_grams,tr.color,tr.shade,tr.length_cm,
+       tr.texture,tr.hair_lot,tr.products_used,tr.recommendations,tr.internal_notes,tr.next_maintenance_date,tr.final_value,tr.payment_status,tr.created_at,
+       p.full_name as client,p.avatar_url,hm.name as method,a.starts_at,s.name as service,
+       (select count(*)::int from public.client_photos ph where ph.appointment_id=tr.appointment_id) as photo_count,
+       (select inventory_id from public.inventory_movements mv where mv.technical_record_id=tr.id and mv.kind='consume' limit 1) as hair_inventory_id,
+       (select quantity from public.inventory_movements mv where mv.technical_record_id=tr.id and mv.kind='consume' limit 1) as hair_inventory_qty
+       from public.technical_records tr
+       join public.clients c on c.id=tr.client_id
+       join public.profiles p on p.id=c.profile_id
+       join public.appointments a on a.id=tr.appointment_id
+       join public.services s on s.id=a.service_id
+       left join public.hair_methods hm on hm.id=tr.hair_method_id
+       where tr.professional_id=$1 order by coalesce(a.starts_at,tr.created_at) desc`,
+      [id],
+    ),
+    query(
+      `select a.id,a.client_id,a.starts_at,a.status,s.name as service,s.hair_method_id,
+       cp.full_name as client,cp.avatar_url,hm.name as method,tr.id as record_id,
+       exists(select 1 from public.privacy_consents pc where pc.profile_id=c.profile_id and pc.consent_type='photos' and pc.accepted and pc.revoked_at is null) as photos_allowed
+       from public.appointments a
+       join public.clients c on c.id=a.client_id
+       join public.profiles cp on cp.id=c.profile_id
+       join public.services s on s.id=a.service_id
+       left join public.hair_methods hm on hm.id=s.hair_method_id
+       left join public.technical_records tr on tr.appointment_id=a.id
+       where a.professional_id=$1 and a.status in ('confirmed','in_service','completed')
+       order by a.starts_at desc limit 100`,
+      [id],
+    ),
+    query(
+      "select id,name from public.hair_methods where active order by name",
+    ),
+    query(
+      "select id, code, supplier, category, color, shade, length_cm, texture, weight_grams, lot, quantity, unit_cost from public.hair_inventory where status='active' order by lot",
+    ),
+    query(
+      "select id, sku, name, category, cost, price, stock_quantity from public.products where active=true order by name",
+    ),
+  ]);
+  return {
+    records: records.rows,
+    appointments: appointments.rows,
+    methods: methods.rows,
+    inventory: hairInventory.rows,
+    products: products.rows,
+  };
 }
 
 async function adminDashboard(user) {
@@ -654,8 +696,9 @@ async function updateProfile(user, body) {
         user.id,
       ],
     );
-    if (user.role === "client")
-      await client.query(
+    if (!rows[0]) throw appError("Perfil não encontrado.", 404);
+    if (user.role === "client") {
+      const clientProfile = await client.query(
         "update public.clients set preferences=$1,personal_notes=$2 where profile_id=$3",
         [
           JSON.stringify(body.preferences || {}),
@@ -663,8 +706,11 @@ async function updateProfile(user, body) {
           user.id,
         ],
       );
-    if (user.role === "professional")
-      await client.query(
+      if (!clientProfile.rowCount)
+        throw appError("Perfil de cliente não encontrado.", 404);
+    }
+    if (user.role === "professional") {
+      const professionalProfile = await client.query(
         "update public.professionals set bio=$1,specialties=$2 where profile_id=$3",
         [
           clean(body.bio) || null,
@@ -674,6 +720,9 @@ async function updateProfile(user, body) {
           user.id,
         ],
       );
+      if (!professionalProfile.rowCount)
+        throw appError("Perfil profissional não encontrado.", 404);
+    }
     await client.query(
       `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data) values($1,'update','profile',$1,$2)`,
       [user.id, JSON.stringify({ fullName, phone, email })],
@@ -1209,24 +1258,46 @@ async function saveCoupon(user, body) {
 async function blockSchedule(user, body) {
   requireRole(user, ["professional"]);
   const professionalId = await professionalIdFor(user);
-  const starts = new Date(body.startsAt);
-  const ends = new Date(body.endsAt);
-  if (
-    Number.isNaN(starts.getTime()) ||
-    Number.isNaN(ends.getTime()) ||
-    ends <= starts
-  )
-    throw appError("Período inválido.");
-  const { rows } = await query(
-    "insert into public.blocked_schedule(professional_id,starts_at,ends_at,reason) values($1,$2,$3,$4) returning *",
-    [
+  const { period, error } = schedulePeriod(body.startsAt, body.endsAt);
+  if (error) throw appError(error);
+  return transaction(async (client) => {
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [
       professionalId,
-      starts.toISOString(),
-      ends.toISOString(),
-      clean(body.reason) || null,
-    ],
-  );
-  return rows[0];
+    ]);
+    const schedule = await client.query(
+      `select starts_at,ends_at,active
+       from public.professional_availability
+       where professional_id=$1 and weekday=$2 and active`,
+      [professionalId, period.weekday],
+    );
+    if (!periodFitsSchedule(period, schedule.rows))
+      throw appError("O período deve estar dentro da sua jornada configurada.");
+    const conflicts = await client.query(
+      `select 1 from (
+         select 1 from public.appointments
+         where professional_id=$1 and status not in ('cancelled','no_show')
+           and tstzrange(starts_at,ends_at,'[)') && tstzrange($2,$3,'[)')
+         union all
+         select 1 from public.blocked_schedule
+         where professional_id=$1
+           and tstzrange(starts_at,ends_at,'[)') && tstzrange($2,$3,'[)')
+       ) conflicts limit 1`,
+      [professionalId, period.starts.toISOString(), period.ends.toISOString()],
+    );
+    if (conflicts.rowCount)
+      throw appError("Já existe atendimento ou bloqueio neste período.", 409);
+    const { rows } = await client.query(
+      `insert into public.blocked_schedule(professional_id,starts_at,ends_at,reason)
+       values($1,$2,$3,$4) returning *`,
+      [
+        professionalId,
+        period.starts.toISOString(),
+        period.ends.toISOString(),
+        clean(body.reason) || null,
+      ],
+    );
+    return rows[0];
+  });
 }
 
 async function saveAdminSettings(user, body) {

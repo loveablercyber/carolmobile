@@ -27,7 +27,14 @@ export function getCookie(req, name) {
 
 export function handleError(res, error) {
   const status = error.status || 500
-  if (status >= 500) console.error('API error:', error.message)
+  if (status >= 500) {
+    console.error('API error', {
+      status,
+      message: error.message,
+      code: error.code || null,
+      stack: process.env.NODE_ENV === 'production' ? undefined : error.stack
+    })
+  }
   return send(res, status, { error: status >= 500 ? 'Não foi possível concluir a operação.' : error.message })
 }
 

@@ -1,6 +1,25 @@
 import { query, transaction } from "../server/lib/db.js";
 import { requireUser } from "../server/lib/auth.js";
 import {
+  appointmentRange,
+  appointmentStatuses,
+  canUpdateAppointmentStatus,
+} from "../server/lib/appointment-rules.js";
+import {
+  isAvailabilityDate,
+  periodFitsSchedule,
+  schedulePeriod,
+  scheduleSlots,
+  slotsWithConflicts,
+  weekdayForDate,
+} from "../server/lib/availability-rules.js";
+import {
+  calculateInventoryChanges,
+  technicalRecordAppointmentStatuses,
+  technicalRecordInput,
+} from "../server/lib/technical-record-rules.js";
+import {
+  deleteFromCloudinary,
   notifyAppointment,
   sendEmail,
   sendWhatsApp,
@@ -22,8 +41,10 @@ const appointmentSelect = `
     to_char(a.starts_at at time zone 'America/Sao_Paulo','DD/MM/YYYY') as date,
     to_char(a.starts_at at time zone 'America/Sao_Paulo','HH24:MI') as time,
     s.id as service_id, s.name as service, s.duration_minutes,
-    p.id as professional_id, pp.full_name as professional,
+    p.id as professional_id, pp.full_name as professional, pp.phone as professional_phone,
+    pp.avatar_url as professional_avatar_url,
     c.id as client_id, cp.full_name as client, cp.phone as client_phone,
+    cp.avatar_url as client_avatar_url,
     l.name as location
   from public.appointments a
   join public.services s on s.id = a.service_id
@@ -69,7 +90,7 @@ async function getResource(req, res, user, resource) {
         `select id, name, description, duration_minutes, base_price, deposit_amount from public.services where active order by base_price`,
       ),
       query(
-        `select p.id, pp.full_name as name, p.specialties, coalesce(round(avg(r.rating)::numeric,1),5) as rating from public.professionals p join public.profiles pp on pp.id=p.profile_id left join public.reviews r on r.professional_id=p.id where p.active group by p.id,pp.full_name order by pp.full_name`,
+        `select p.id, pp.full_name as name, pp.avatar_url as photo, p.specialties, coalesce(round(avg(r.rating)::numeric,1),5) as rating from public.professionals p join public.profiles pp on pp.id=p.profile_id left join public.reviews r on r.professional_id=p.id where p.active group by p.id,pp.full_name,pp.avatar_url order by pp.full_name`,
       ),
       query(
         `select id,name,address from public.salon_locations where active order by name`,
@@ -91,67 +112,97 @@ async function getResource(req, res, user, resource) {
 
   if (resource === "appointments") {
     const scope = await appointmentScope(user);
+    const { range, error } = appointmentRange(req.query);
+    if (error) throw appError(error);
+    const params = [...scope.params];
+    const filters = [scope.sql];
+    if (range) {
+      params.push(range.dateFrom);
+      const fromParam = params.length;
+      params.push(range.dateTo);
+      const toParam = params.length;
+      filters.push(
+        `a.starts_at >= ($${fromParam}::date::timestamp at time zone 'America/Sao_Paulo')`,
+        `a.starts_at < ($${toParam}::date::timestamp at time zone 'America/Sao_Paulo')`,
+      );
+    }
     const { rows } = await query(
-      `${appointmentSelect} where ${scope.sql} order by a.starts_at desc limit 100`,
-      scope.params,
+      `${appointmentSelect} where ${filters.join(" and ")} order by a.starts_at ${range ? "asc" : "desc"} limit ${range ? 500 : 100}`,
+      params,
     );
-    return send(res, 200, { appointments: rows.map(formatAppointment) });
+    return send(res, 200, {
+      appointments: rows.map(formatAppointment),
+      range,
+    });
   }
 
   if (resource === "availability") {
     const date = String(req.query?.date || "");
     const serviceId = String(req.query?.serviceId || "");
-    const serviceName = String(req.query?.serviceName || "");
     const professionalId = String(req.query?.professionalId || "");
-    const requestedProfessional = String(req.query?.professionalName || "");
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw appError("Data inválida.");
-    if (serviceId && !uuidPattern.test(serviceId))
-      throw appError("Serviço inválido.");
+    const firstAvailable = String(req.query?.firstAvailable || "") === "true";
+    if (!isAvailabilityDate(date)) throw appError("Data inválida.");
+    if (!uuidPattern.test(serviceId)) throw appError("Serviço inválido.");
     if (professionalId && !uuidPattern.test(professionalId))
       throw appError("Profissional inválida.");
-    const { rows: services } = serviceId
-      ? await query(
-          "select id,duration_minutes from public.services where id=$1 and active limit 1",
-          [serviceId],
-        )
-      : await query(
-          "select id,duration_minutes from public.services where lower(name)=lower($1) and active limit 1",
-          [serviceName],
-        );
-    if (!services[0]) throw appError("Serviço não encontrado.");
-    const professionalSql = professionalId
-      ? `select p.id,pp.full_name from public.professionals p join public.profiles pp on pp.id=p.profile_id where p.id=$1 and p.active limit 1`
-      : requestedProfessional === "Primeira disponível"
-        ? `select p.id,pp.full_name from public.professionals p join public.profiles pp on pp.id=p.profile_id where p.active order by pp.full_name limit 1`
-        : `select p.id,pp.full_name from public.professionals p join public.profiles pp on pp.id=p.profile_id where p.active and lower(pp.full_name)=lower($1) limit 1`;
-    const professionalParams = professionalId
-      ? [professionalId]
-      : requestedProfessional === "Primeira disponível"
-        ? []
-        : [requestedProfessional];
-    const { rows: professionals } = await query(
-      professionalSql,
-      professionalParams,
+    if ((!professionalId && !firstAvailable) || (professionalId && firstAvailable))
+      throw appError("Informe uma profissional ou solicite a primeira disponível.");
+    const { rows: services } = await query(
+      "select id,duration_minutes from public.services where id=$1 and active limit 1",
+      [serviceId],
     );
-    if (!professionals[0]) throw appError("Profissional não encontrada.");
-    const slots = ["09:00", "10:30", "14:00", "16:00"];
-    const result = [];
-    for (const time of slots) {
-      const startsAt = new Date(`${date}T${time}:00-03:00`);
-      const endsAt = new Date(
-        startsAt.getTime() + services[0].duration_minutes * 60_000,
+    if (!services[0]) throw appError("Serviço não encontrado.");
+    const { rows: professionals } = await query(
+      `select p.id,pp.full_name
+       from public.professionals p
+       join public.profiles pp on pp.id=p.profile_id
+       join public.professional_services ps on ps.professional_id=p.id and ps.service_id=$1
+       where p.active and ($2::uuid is null or p.id=$2)
+       order by pp.full_name`,
+      [serviceId, professionalId || null],
+    );
+    if (!professionals.length)
+      throw appError("Nenhuma profissional realiza este serviço.", 404);
+
+    const weekday = weekdayForDate(date);
+    let firstCandidate = null;
+    for (const professional of professionals) {
+      const [availability, conflicts] = await Promise.all([
+        query(
+          `select starts_at,ends_at,active from public.professional_availability
+           where professional_id=$1 and weekday=$2 and active order by starts_at`,
+          [professional.id, weekday],
+        ),
+        query(
+          `select starts_at,ends_at from public.appointments
+           where professional_id=$1 and status not in ('cancelled','no_show')
+             and starts_at < (($2::date + interval '1 day')::timestamp at time zone 'America/Sao_Paulo')
+             and ends_at > ($2::date::timestamp at time zone 'America/Sao_Paulo')
+           union all
+           select starts_at,ends_at from public.blocked_schedule
+           where professional_id=$1
+             and starts_at < (($2::date + interval '1 day')::timestamp at time zone 'America/Sao_Paulo')
+             and ends_at > ($2::date::timestamp at time zone 'America/Sao_Paulo')`,
+          [professional.id, date],
+        ),
+      ]);
+      const times = scheduleSlots(
+        availability.rows,
+        services[0].duration_minutes,
       );
-      const { rowCount } = await query(
-        `select 1 from (
-        select 1 from public.appointments where professional_id=$1 and status not in ('cancelled','no_show') and tstzrange(starts_at,ends_at,'[)') && tstzrange($2,$3,'[)')
-        union all
-        select 1 from public.blocked_schedule where professional_id=$1 and tstzrange(starts_at,ends_at,'[)') && tstzrange($2,$3,'[)')
-      ) conflicts limit 1`,
-        [professionals[0].id, startsAt.toISOString(), endsAt.toISOString()],
+      const slots = slotsWithConflicts(
+        date,
+        times,
+        services[0].duration_minutes,
+        conflicts.rows,
       );
-      result.push({ time, available: rowCount === 0 });
+      const candidate = { professional, slots };
+      if (!firstCandidate) firstCandidate = candidate;
+      if (!firstAvailable || slots.some((slot) => slot.available)) {
+        return send(res, 200, candidate);
+      }
     }
-    return send(res, 200, { professional: professionals[0], slots: result });
+    return send(res, 200, firstCandidate);
   }
 
   if (resource === "clients") {
@@ -319,6 +370,10 @@ async function createAppointment(req, res, user, body) {
   const startsAt = new Date(body.startsAt);
   if (Number.isNaN(startsAt.getTime()))
     throw appError("Data e horário inválidos.");
+  if (!uuidPattern.test(String(body.serviceId || "")))
+    throw appError("Serviço inválido.");
+  if (!uuidPattern.test(String(body.professionalId || "")))
+    throw appError("Profissional inválida.");
   const appointment = await transaction(async (client) => {
     let clientId = body.clientId;
     if (user.role === "client") {
@@ -329,44 +384,23 @@ async function createAppointment(req, res, user, body) {
       clientId = rows[0]?.id;
     }
     if (!clientId) throw appError("Cliente não encontrado.");
-    let service;
-    if (body.serviceId)
-      ({
-        rows: [service],
-      } = await client.query(
-        "select * from public.services where id=$1 and active",
-        [body.serviceId],
-      ));
-    else
-      ({
-        rows: [service],
-      } = await client.query(
-        "select * from public.services where lower(name)=lower($1) and active limit 1",
-        [body.serviceName],
-      ));
+    if (!uuidPattern.test(String(clientId))) throw appError("Cliente inválida.");
+    const {
+      rows: [service],
+    } = await client.query(
+      "select * from public.services where id=$1 and active",
+      [body.serviceId],
+    );
     if (!service) throw appError("Serviço não encontrado.");
-    let professional;
     const professionalSelect = `select p.id,p.profile_id,pp.full_name,pp.phone,u.email from public.professionals p join public.profiles pp on pp.id=p.profile_id left join auth.users u on u.id=pp.id`;
-    if (body.professionalId)
-      ({
-        rows: [professional],
-      } = await client.query(
-        `${professionalSelect} where p.id=$1 and p.active`,
-        [body.professionalId],
-      ));
-    else if (body.professionalName === "Primeira disponível")
-      ({
-        rows: [professional],
-      } = await client.query(
-        `${professionalSelect} where p.active order by pp.full_name limit 1`,
-      ));
-    else
-      ({
-        rows: [professional],
-      } = await client.query(
-        `${professionalSelect} where lower(pp.full_name)=lower($1) and p.active limit 1`,
-        [body.professionalName],
-      ));
+    const {
+      rows: [professional],
+    } = await client.query(
+      `${professionalSelect}
+       join public.professional_services ps on ps.professional_id=p.id and ps.service_id=$2
+       where p.id=$1 and p.active`,
+      [body.professionalId, body.serviceId],
+    );
     if (!professional) throw appError("Profissional não encontrada.");
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [
       professional.id,
@@ -374,6 +408,15 @@ async function createAppointment(req, res, user, body) {
     const endsAt = new Date(
       startsAt.getTime() + service.duration_minutes * 60_000,
     );
+    const { period, error: periodError } = schedulePeriod(startsAt, endsAt);
+    if (periodError) throw appError(periodError);
+    const schedule = await client.query(
+      `select starts_at,ends_at,active from public.professional_availability
+       where professional_id=$1 and weekday=$2 and active`,
+      [professional.id, period.weekday],
+    );
+    if (!periodFitsSchedule(period, schedule.rows))
+      throw appError("O horário escolhido está fora da jornada da profissional.");
     const conflict = await client.query(
       `select 1 from (
       select 1 from public.appointments where professional_id=$1 and status not in ('cancelled','no_show') and tstzrange(starts_at,ends_at,'[)') && tstzrange($2,$3,'[)')
@@ -520,23 +563,9 @@ async function createAppointment(req, res, user, body) {
 
 async function updateAppointment(req, res, user, body) {
   if (!body.id) throw appError("Agendamento não informado.");
-  const allowed = [
-    "requested",
-    "awaiting_payment",
-    "pending_deposit",
-    "confirmed",
-    "in_service",
-    "completed",
-    "cancelled",
-    "no_show",
-    "rescheduled",
-    "reschedule_requested",
-  ];
-  if (!allowed.includes(body.status)) throw appError("Status inválido.");
-  if (
-    user.role === "client" &&
-    !["cancelled", "rescheduled"].includes(body.status)
-  )
+  if (!appointmentStatuses.includes(body.status))
+    throw appError("Status inválido.");
+  if (!canUpdateAppointmentStatus(user.role, body.status))
     throw appError(
       "A cliente só pode cancelar ou solicitar reagendamento.",
       403,
@@ -562,8 +591,8 @@ async function updateAppointment(req, res, user, body) {
       user.role === "admin" ? [body.id] : [body.id, user.id],
     );
     if (!previous.rows[0]) throw appError("Agendamento não encontrado.", 404);
-    await client.query(
-      "update public.appointments set status=$1,updated_at=now() where id=$2",
+    const changed = await client.query(
+      "update public.appointments set status=$1,updated_at=now() where id=$2 returning id,status,updated_at",
       params.slice(0, 2),
     );
     await client.query(
@@ -610,10 +639,10 @@ async function updateAppointment(req, res, user, body) {
           [item.coupon_id, item.client_id, body.id, item.discount_amount || 0],
         );
     }
-    return true;
+    return changed.rows[0];
   });
   if (!updated) throw appError("Não foi possível atualizar o agendamento.");
-  return send(res, 200, { ok: true });
+  return send(res, 200, { appointment: updated });
 }
 
 async function requestReschedule(res, user, body) {
@@ -909,35 +938,321 @@ async function createInventory(req, res, user, body) {
 
 async function createTechnicalRecord(req, res, user, body) {
   await requireUser(req, ["professional", "admin"]);
-  const professional =
-    user.role === "professional"
-      ? await query("select id from public.professionals where profile_id=$1", [
-          user.id,
-        ])
-      : { rows: [{ id: body.professionalId }] };
-  const { rows } = await query(
-    `insert into public.technical_records(appointment_id,client_id,professional_id,hair_method_id,strands_count,weight_grams,color,shade,length_cm,texture,hair_lot,products_used,recommendations,internal_notes,next_maintenance_date,final_value,payment_status) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) on conflict(appointment_id) do update set strands_count=excluded.strands_count,weight_grams=excluded.weight_grams,color=excluded.color,shade=excluded.shade,length_cm=excluded.length_cm,texture=excluded.texture,hair_lot=excluded.hair_lot,products_used=excluded.products_used,recommendations=excluded.recommendations,internal_notes=excluded.internal_notes,next_maintenance_date=excluded.next_maintenance_date,final_value=excluded.final_value,payment_status=excluded.payment_status returning *`,
-    [
-      body.appointmentId,
-      body.clientId,
-      professional.rows[0]?.id,
-      body.hairMethodId || null,
-      body.strandsCount || null,
-      body.weightGrams || null,
-      body.color || null,
-      body.shade || null,
-      body.lengthCm || null,
-      body.texture || null,
-      body.hairLot || null,
-      JSON.stringify(body.productsUsed || []),
-      body.recommendations || null,
-      body.internalNotes || null,
-      body.nextMaintenanceDate || null,
-      body.finalValue || null,
-      body.paymentStatus || "pending",
-    ],
-  );
-  return send(res, 201, { record: rows[0] });
+  const { value, error } = technicalRecordInput(body);
+  if (error) throw appError(error);
+  const result = await transaction(async (client) => {
+    const params = [value.appointmentId];
+    let scope = "";
+    if (user.role === "professional") {
+      params.push(user.id);
+      scope = "and pr.profile_id=$2";
+    }
+    const appointment = await client.query(
+      `select a.id,a.client_id,a.professional_id,a.status,s.hair_method_id,c.profile_id as client_profile_id
+       from public.appointments a
+       join public.professionals pr on pr.id=a.professional_id
+       join public.clients c on c.id=a.client_id
+       join public.services s on s.id=a.service_id
+       where a.id=$1 ${scope}
+       for update of a`,
+      params,
+    );
+    const linked = appointment.rows[0];
+    if (!linked)
+      throw appError(
+        user.role === "professional"
+          ? "Atendimento não vinculado à profissional."
+          : "Atendimento não encontrado.",
+        user.role === "professional" ? 403 : 404,
+      );
+    if (!technicalRecordAppointmentStatuses.has(linked.status))
+      throw appError(
+        "A ficha só pode ser preenchida em atendimento confirmado, em andamento ou concluído.",
+      );
+    if (value.photos.length) {
+      const consent = await client.query(
+        `select 1 from public.privacy_consents
+         where profile_id=$1 and consent_type='photos' and accepted and revoked_at is null`,
+        [linked.client_profile_id],
+      );
+      if (!consent.rowCount)
+        throw appError("A cliente não autorizou o uso de fotos técnicas.", 403);
+    }
+    const hairMethodId = linked.hair_method_id || value.hairMethodId;
+    if (hairMethodId) {
+      const method = await client.query(
+        "select 1 from public.hair_methods where id=$1 and active",
+        [hairMethodId],
+      );
+      if (!method.rowCount) throw appError("Método capilar não encontrado.");
+    }
+    const existing = await client.query(
+      "select id,payment_status from public.technical_records where appointment_id=$1",
+      [linked.id],
+    );
+    const paymentStatus =
+      user.role === "admin"
+        ? value.paymentStatus
+        : existing.rows[0]?.payment_status || "pending";
+
+    let oldRecord = null;
+    let existingRecordId = null;
+    if (existing.rowCount > 0) {
+      existingRecordId = existing.rows[0].id;
+      
+      const oldMovements = await client.query(
+        "select inventory_id, quantity from public.inventory_movements where technical_record_id=$1 and kind='consume'",
+        [existingRecordId]
+      );
+      const oldHairUsage = oldMovements.rows[0];
+
+      const oldRecordQuery = await client.query(
+        "select products_used from public.technical_records where id=$1",
+        [existingRecordId]
+      );
+      const rawProductsUsed = oldRecordQuery.rows[0]?.products_used;
+      
+      const oldProducts = [];
+      if (Array.isArray(rawProductsUsed)) {
+        for (const item of rawProductsUsed) {
+          if (typeof item === 'object' && item !== null && item.productId) {
+            oldProducts.push({ productId: item.productId, quantity: Number(item.quantity) });
+          }
+        }
+      }
+
+      oldRecord = {
+        hairInventoryId: oldHairUsage?.inventory_id || null,
+        hairInventoryQty: Number(oldHairUsage?.quantity || 0),
+        productConsumptions: oldProducts
+      };
+    }
+
+    const hairLotIdsToLock = [];
+    if (oldRecord?.hairInventoryId) hairLotIdsToLock.push(oldRecord.hairInventoryId);
+    if (value.hairInventoryId) hairLotIdsToLock.push(value.hairInventoryId);
+
+    const productIdsToLock = [];
+    if (oldRecord?.productConsumptions) {
+      for (const p of oldRecord.productConsumptions) {
+        productIdsToLock.push(p.productId);
+      }
+    }
+    if (value.productConsumptions) {
+      for (const p of value.productConsumptions) {
+        productIdsToLock.push(p.productId);
+      }
+    }
+
+    const uniqueHairLotIds = [...new Set(hairLotIdsToLock)];
+    const uniqueProductIds = [...new Set(productIdsToLock)];
+
+    let hairInventoryData = [];
+    if (uniqueHairLotIds.length > 0) {
+      const hairResult = await client.query(
+        "select id, quantity, lot, color, shade, length_cm, texture, unit_cost from public.hair_inventory where id = any($1) for update",
+        [uniqueHairLotIds]
+      );
+      hairInventoryData = hairResult.rows;
+    }
+
+    let productsData = [];
+    if (uniqueProductIds.length > 0) {
+      const productsResult = await client.query(
+        "select id, name, stock_quantity from public.products where id = any($1) for update",
+        [uniqueProductIds]
+      );
+      productsData = productsResult.rows;
+    }
+
+    if (value.hairInventoryId && !hairInventoryData.some(h => h.id === value.hairInventoryId)) {
+      throw appError("Lote de estoque selecionado não existe.");
+    }
+    for (const pc of value.productConsumptions) {
+      if (!productsData.some(p => p.id === pc.productId)) {
+        throw appError("Produto selecionado não existe.");
+      }
+    }
+
+    const changes = calculateInventoryChanges({
+      oldRecord,
+      newRecord: {
+        hairInventoryId: value.hairInventoryId,
+        hairInventoryQty: value.hairInventoryQty,
+        productConsumptions: value.productConsumptions
+      },
+      hairInventory: hairInventoryData,
+      products: productsData
+    });
+
+    if (changes.error) {
+      throw appError(changes.error);
+    }
+
+    for (const update of changes.hairUpdates) {
+      await client.query(
+        "update public.hair_inventory set quantity = quantity + $1 where id = $2",
+        [update.delta, update.id]
+      );
+    }
+
+    for (const update of changes.productUpdates) {
+      await client.query(
+        "update public.products set stock_quantity = stock_quantity + $1 where id = $2",
+        [update.delta, update.id]
+      );
+    }
+
+    let hairLotCode = value.hairLot;
+    let hairColor = value.color;
+    let hairShade = value.shade;
+    let hairLengthCm = value.lengthCm;
+    let hairTexture = value.texture;
+
+    if (value.hairInventoryId) {
+      const selectedLot = hairInventoryData.find(h => h.id === value.hairInventoryId);
+      if (selectedLot) {
+        hairLotCode = selectedLot.lot || null;
+        hairColor = selectedLot.color || null;
+        hairShade = selectedLot.shade || null;
+        hairLengthCm = selectedLot.length_cm || null;
+        hairTexture = selectedLot.texture || null;
+      }
+    }
+
+    const productsUsedToSave = [];
+    for (const pc of value.productConsumptions) {
+      const dbProduct = productsData.find(p => p.id === pc.productId);
+      productsUsedToSave.push({
+        productId: pc.productId,
+        name: dbProduct?.name || "Produto Desconhecido",
+        quantity: pc.quantity
+      });
+    }
+
+    const { rows } = await client.query(
+      `insert into public.technical_records(
+         appointment_id,client_id,professional_id,hair_method_id,strands_count,
+         weight_grams,color,shade,length_cm,texture,hair_lot,products_used,
+         recommendations,internal_notes,next_maintenance_date,final_value,payment_status
+       ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       on conflict(appointment_id) do update set
+         hair_method_id=excluded.hair_method_id,
+         strands_count=excluded.strands_count,
+         weight_grams=excluded.weight_grams,
+         color=excluded.color,
+         shade=excluded.shade,
+         length_cm=excluded.length_cm,
+         texture=excluded.texture,
+         hair_lot=excluded.hair_lot,
+         products_used=excluded.products_used,
+         recommendations=excluded.recommendations,
+         internal_notes=excluded.internal_notes,
+         next_maintenance_date=excluded.next_maintenance_date,
+         final_value=excluded.final_value,
+         payment_status=excluded.payment_status
+       where technical_records.professional_id=excluded.professional_id
+       returning *`,
+      [
+        linked.id,
+        linked.client_id,
+        linked.professional_id,
+        hairMethodId,
+        value.strandsCount,
+        value.weightGrams,
+        hairColor,
+        hairShade,
+        hairLengthCm,
+        hairTexture,
+        hairLotCode,
+        JSON.stringify(productsUsedToSave),
+        value.recommendations,
+        value.internalNotes,
+        value.nextMaintenanceDate,
+        value.finalValue,
+        paymentStatus,
+      ],
+    );
+    if (!rows[0])
+      throw appError("A ficha existente pertence a outra profissional.", 409);
+
+    const technicalRecordId = rows[0].id;
+
+    for (const mov of changes.movements) {
+      const selectedLot = hairInventoryData.find(h => h.id === mov.inventory_id);
+      await client.query(
+        `insert into public.inventory_movements(
+           inventory_id, technical_record_id, kind, quantity, unit_cost, note, created_by
+         ) values($1,$2,$3,$4,$5,$6,$7)`,
+        [
+          mov.inventory_id,
+          technicalRecordId,
+          mov.kind,
+          mov.quantity,
+          selectedLot?.unit_cost || 0,
+          `Movimentação referente ao atendimento ${linked.id}`,
+          user.id
+        ]
+      );
+    }
+
+    const urlsToDelete = [];
+    if (value.deletedPhotoIds.length > 0) {
+      const photosToDeleteResult = await client.query(
+        "select id, storage_path from public.client_photos where id = any($1) and appointment_id = $2",
+        [value.deletedPhotoIds, linked.id]
+      );
+      
+      for (const ph of photosToDeleteResult.rows) {
+        urlsToDelete.push(ph.storage_path);
+      }
+
+      if (photosToDeleteResult.rowCount > 0) {
+        const deletedIds = photosToDeleteResult.rows.map(ph => ph.id);
+        await client.query(
+          "delete from public.client_photos where id = any($1)",
+          [deletedIds]
+        );
+      }
+    }
+
+    const photos = [];
+    for (const photo of value.photos) {
+      const inserted = await client.query(
+        `insert into public.client_photos(client_id,appointment_id,kind,storage_path)
+         select $1,$2,$3,$4
+         where not exists (
+           select 1 from public.client_photos
+           where appointment_id=$2 and kind=$3 and storage_path=$4
+         )
+         returning id,appointment_id,kind,storage_path`,
+        [linked.client_id, linked.id, photo.kind, photo.url],
+      );
+      if (inserted.rows[0]) photos.push(inserted.rows[0]);
+    }
+    return { record: rows[0], photos, created: !existing.rowCount, urlsToDelete };
+  });
+
+  if (result.urlsToDelete && result.urlsToDelete.length > 0) {
+    Promise.allSettled(result.urlsToDelete.map(url => deleteFromCloudinary(url)))
+      .then(results => {
+        results.forEach((res, idx) => {
+          if (res.status === "rejected" || (res.value && !res.value.success)) {
+            console.error(`Falha ao remover imagem do Cloudinary: ${result.urlsToDelete[idx]}`, res.reason || (res.value && res.value.error));
+          } else {
+            console.log(`Imagem removida do Cloudinary com sucesso: ${result.urlsToDelete[idx]}`);
+          }
+        });
+      })
+      .catch(err => {
+        console.error("Erro ao executar limpeza compensatória no Cloudinary", err);
+      });
+  }
+
+  return send(res, result.created ? 201 : 200, {
+    record: result.record,
+    photos: result.photos,
+  });
 }
 
 export default async function handler(req, res) {

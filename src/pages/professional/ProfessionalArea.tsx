@@ -1,45 +1,37 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-  ArrowRight,
   BadgeDollarSign,
   BarChart3,
   CalendarDays,
-  Camera,
   Check,
   ChevronDown,
-  CircleDollarSign,
   ClipboardCheck,
   Clock3,
   Download,
-  Eye,
   ImagePlus,
   MessageCircle,
-  MoreHorizontal,
   Package,
   Pencil,
-  Plus,
   Search,
   Sparkles,
   Star,
-  Target,
   TrendingUp,
   UserCheck,
   Users,
-  WalletCards,
   X,
 } from "lucide-react";
 import { AppShell } from "../../components/AppShell";
 import {
   Avatar,
   Badge,
-  Modal,
+  EmptyState,
   PageHeader,
   SectionHeading,
   StatCard,
   Toast,
 } from "../../components/ui";
-import { appointments, clients, images } from "../../data/mock";
+import { clients, images } from "../../data/mock";
 import { apiFetch } from "../../lib/api";
 import { WhatsAppIntegrationPage } from "../WhatsAppIntegration";
 import {
@@ -54,8 +46,11 @@ import {
 
 export function ProfessionalArea() {
   const path = useLocation().pathname;
-  let page = <ProfessionalDashboardPage />;
-  if (path.includes("/agenda")) page = <ProfessionalAgenda />;
+  const navigate = useNavigate();
+  let page;
+  if (["/profissional", "/profissional/", "/profissional/dashboard", "/profissional/hoje"].includes(path))
+    page = <ProfessionalDashboardPage />;
+  else if (path.includes("/agenda")) page = <ProfessionalAgenda />;
   else if (path.match(/\/clientes\/[^/]+$/))
     page = <ProfessionalClientDetailPage />;
   else if (path.includes("/clientes")) page = <ProfessionalClients />;
@@ -71,156 +66,22 @@ export function ProfessionalArea() {
     page = <ProfessionalAvailabilityPage />;
   else if (path.includes("/whatsapp")) page = <WhatsAppIntegrationPage />;
   else if (path.includes("/perfil")) page = <ProfessionalProfilePage />;
+  else
+    page = (
+      <EmptyState
+        title="Página não encontrada"
+        text="Este endereço não existe na área profissional."
+        action={
+          <button
+            onClick={() => navigate("/profissional/dashboard")}
+            className="btn-primary"
+          >
+            Voltar ao dashboard
+          </button>
+        }
+      />
+    );
   return <AppShell role="profissional">{page}</AppShell>;
-}
-
-function ProfessionalHome() {
-  const [active, setActive] = useState(false);
-  const [toast, setToast] = useState(false);
-  return (
-    <div className="animate-fade-up">
-      <Toast show={toast} message="Atendimento iniciado" />
-      <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <div className="text-sm text-stone-500">Domingo, 21 de junho</div>
-          <h1 className="font-display text-4xl font-semibold">
-            Bom dia, Juliana.
-          </h1>
-          <p className="muted mt-2">
-            Sua agenda está com 82% de ocupação hoje.
-          </p>
-        </div>
-        <button
-          onClick={() => {
-            setActive(true);
-            setToast(true);
-            setTimeout(() => setToast(false), 2200);
-          }}
-          className="btn-primary"
-        >
-          <Sparkles size={17} />
-          Iniciar próximo atendimento
-        </button>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          label="Atendimentos hoje"
-          value="4"
-          trend="1 finalizado • 3 próximos"
-          icon={<CalendarDays size={20} />}
-        />
-        <StatCard
-          label="Faturamento estimado"
-          value="R$ 2.360"
-          trend="+18% vs. último domingo"
-          icon={<CircleDollarSign size={20} />}
-        />
-        <StatCard
-          label="Comissão estimada"
-          value="R$ 708"
-          trend="30% sobre serviços"
-          icon={<WalletCards size={20} />}
-          tone="dark"
-        />
-        <StatCard
-          label="Meta mensal"
-          value="74%"
-          trend="R$ 18.420 de R$ 25.000"
-          icon={<Target size={20} />}
-        />
-      </div>
-      <div className="mt-6 grid gap-5 xl:grid-cols-[1.2fr_.8fr]">
-        <section className="surface p-5 sm:p-6">
-          <SectionHeading title="Agenda de hoje" link="Ver agenda completa" />
-          <div className="space-y-2">
-            {appointments.map((a, i) => (
-              <div
-                key={a.time}
-                className={`grid grid-cols-[54px_1fr_auto] items-center gap-3 rounded-2xl border p-3 sm:grid-cols-[64px_1fr_auto_auto] ${i === 2 ? "border-champagne/50 bg-champagne/[.05]" : "border-black/[.05]"}`}
-              >
-                <div className="text-center">
-                  <b className="block text-sm">{a.time}</b>
-                  <span className="text-[9px] text-stone-400">
-                    {a.duration}
-                  </span>
-                </div>
-                <div className="flex min-w-0 items-center gap-3">
-                  <Avatar src={a.photo} name={a.client} />
-                  <div className="min-w-0">
-                    <div className="truncate text-xs font-bold">{a.client}</div>
-                    <div className="mt-1 truncate text-[10px] text-stone-400">
-                      {a.service}
-                    </div>
-                  </div>
-                </div>
-                <span className="hidden sm:block">
-                  <Status value={a.status} />
-                </span>
-                <button className="grid h-9 w-9 place-items-center rounded-xl bg-warm">
-                  <MoreHorizontal size={16} />
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-        <div className="space-y-5">
-          <section className="hair-gradient rounded-[26px] p-6 text-white">
-            <div className="flex items-center justify-between">
-              <div className="eyebrow">PRÓXIMA CLIENTE</div>
-              <Badge tone="green">Confirmada</Badge>
-            </div>
-            <div className="mt-5 flex items-center gap-4">
-              <Avatar src={images.client1} name="Camila Ferreira" size="lg" />
-              <div>
-                <h3 className="font-display text-2xl font-semibold">
-                  Camila Ferreira
-                </h3>
-                <p className="text-[11px] text-white/45">
-                  14:30 • Aplicação Microlink
-                </p>
-              </div>
-            </div>
-            <div className="mt-5 grid grid-cols-2 gap-3 text-[11px]">
-              <div className="rounded-xl bg-white/[.06] p-3">
-                <span className="text-white/40">Último serviço</span>
-                <b className="mt-1 block">Avaliação • 12/06</b>
-              </div>
-              <div className="rounded-xl bg-white/[.06] p-3">
-                <span className="text-white/40">Observação</span>
-                <b className="mt-1 block">Sensível na nuca</b>
-              </div>
-            </div>
-            <button
-              onClick={() => setActive(true)}
-              className="btn-gold mt-5 w-full"
-            >
-              Abrir ficha técnica <ArrowRight size={16} />
-            </button>
-          </section>
-          <section className="surface p-6">
-            <SectionHeading title="Seu desempenho" />
-            <div className="grid grid-cols-3 text-center">
-              <div>
-                <div className="font-display text-2xl font-semibold">4,9</div>
-                <div className="mt-1 text-[9px] text-stone-400">Avaliação</div>
-              </div>
-              <div className="border-x border-black/[.06]">
-                <div className="font-display text-2xl font-semibold">68%</div>
-                <div className="mt-1 text-[9px] text-stone-400">
-                  Recorrência
-                </div>
-              </div>
-              <div>
-                <div className="font-display text-2xl font-semibold">#2</div>
-                <div className="mt-1 text-[9px] text-stone-400">Ranking</div>
-              </div>
-            </div>
-          </section>
-        </div>
-      </div>
-      <TechnicalModal open={active} onClose={() => setActive(false)} />
-    </div>
-  );
 }
 
 function Status({ value }: { value: string }) {
@@ -329,19 +190,13 @@ function ProfessionalRescheduleRequests() {
 
 function ProfessionalAgenda() {
   const [view, setView] = useState("Dia");
-  const [status, setStatus] = useState<Record<string, string>>({});
+  const [anchorDate, setAnchorDate] = useState(() => new Date());
   const [updating, setUpdating] = useState<Record<string, boolean>>({});
-  const [block, setBlock] = useState(false);
   const [toast, setToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("Agenda atualizada");
   const [remote, setRemote] = useState<Array<Record<string, any>>>([]);
-  useEffect(() => {
-    apiFetch<{ appointments: Array<Record<string, any>> }>(
-      "/api/data?resource=appointments",
-    )
-      .then((data) => setRemote(data.appointments))
-      .catch((error) => console.error("Professional agenda error", error));
-  }, []);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const labelMap: Record<string, string> = {
     requested: "Solicitado",
     awaiting_payment: "Aguardando pagamento",
@@ -357,17 +212,94 @@ function ProfessionalAgenda() {
   const apiMap: Record<string, string> = Object.fromEntries(
     Object.entries(labelMap).map(([key, value]) => [value, key]),
   );
-  const agendaItems: Array<Record<string, any>> = remote.length
-    ? remote.map((a) => ({
+  const period = useMemo(() => {
+    const start = new Date(anchorDate);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    if (view === "Semana") {
+      start.setDate(start.getDate() - start.getDay());
+      end.setTime(start.getTime());
+      end.setDate(end.getDate() + 7);
+    } else if (view === "Mês") {
+      start.setDate(1);
+      end.setFullYear(start.getFullYear(), start.getMonth() + 1, 1);
+    } else {
+      end.setDate(end.getDate() + 1);
+    }
+    return { start, end };
+  }, [anchorDate, view]);
+  const periodUrl = useMemo(() => {
+    const dateKey = (value: Date) =>
+      [
+        value.getFullYear(),
+        String(value.getMonth() + 1).padStart(2, "0"),
+        String(value.getDate()).padStart(2, "0"),
+      ].join("-");
+    const params = new URLSearchParams({
+      resource: "appointments",
+      dateFrom: dateKey(period.start),
+      dateTo: dateKey(period.end),
+    });
+    return `/api/data?${params}`;
+  }, [period]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setLoadError("");
+    apiFetch<{ appointments: Array<Record<string, any>> }>(periodUrl, {
+      signal: controller.signal,
+    })
+      .then((data) => setRemote(data.appointments || []))
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        console.error("Professional agenda error", error);
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : "Não foi possível carregar a agenda.",
+        );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [periodUrl]);
+  const agendaItems: Array<Record<string, any>> = remote
+    .sort(
+      (left, right) =>
+        new Date(String(left.starts_at)).getTime() -
+        new Date(String(right.starts_at)).getTime(),
+    )
+    .map((a) => ({
         ...a,
         client: a.client,
         service: a.service,
         duration: a.duration,
         status: labelMap[a.status] || a.status,
         value: a.value,
-        photo: images.client1,
-      }))
-    : [];
+        photo: a.client_avatar_url,
+      }));
+  const periodLabel =
+    view === "Mês"
+      ? anchorDate.toLocaleDateString("pt-BR", {
+          month: "long",
+          year: "numeric",
+        })
+      : view === "Semana"
+        ? `${period.start.toLocaleDateString("pt-BR")} – ${new Date(period.end.getTime() - 1).toLocaleDateString("pt-BR")}`
+        : anchorDate.toLocaleDateString("pt-BR", {
+            day: "2-digit",
+            month: "long",
+            year: "numeric",
+          });
+  const movePeriod = (direction: -1 | 1) => {
+    setAnchorDate((current) => {
+      const next = new Date(current);
+      if (view === "Mês") next.setMonth(next.getMonth() + direction);
+      else next.setDate(next.getDate() + direction * (view === "Semana" ? 7 : 1));
+      return next;
+    });
+  };
   return (
     <div className="animate-fade-up">
       <Toast show={toast} message={toastMessage} />
@@ -396,9 +328,23 @@ function ProfessionalAgenda() {
           ))}
         </div>
         <div className="flex items-center gap-3">
-          <button className="btn-secondary !min-h-10 !px-3">‹</button>
-          <div className="text-sm font-bold">21 de junho de 2026</div>
-          <button className="btn-secondary !min-h-10 !px-3">›</button>
+          <button
+            type="button"
+            aria-label="Período anterior"
+            onClick={() => movePeriod(-1)}
+            className="btn-secondary !min-h-10 !px-3"
+          >
+            ‹
+          </button>
+          <div className="text-sm font-bold capitalize">{periodLabel}</div>
+          <button
+            type="button"
+            aria-label="Próximo período"
+            onClick={() => movePeriod(1)}
+            className="btn-secondary !min-h-10 !px-3"
+          >
+            ›
+          </button>
         </div>
       </div>
       <section className="surface overflow-hidden">
@@ -406,10 +352,18 @@ function ProfessionalAgenda() {
           <span>Hora</span>
           <span>Atendimento</span>
         </div>
-        {agendaItems.length ? (
+        {loading ? (
+          <div className="p-10 text-center text-xs text-stone-400">
+            Carregando agenda…
+          </div>
+        ) : loadError ? (
+          <div className="p-10 text-center text-xs font-semibold text-rose-700">
+            {loadError}
+          </div>
+        ) : agendaItems.length ? (
           agendaItems.map((a, i) => {
             const statusKey = String(a.id || i);
-            const s = status[statusKey] || a.status;
+            const s = a.status;
             return (
               <div
                 key={statusKey}
@@ -437,30 +391,31 @@ function ProfessionalAgenda() {
                         [statusKey]: true,
                       }));
                       try {
-                        if (a.id)
-                          await apiFetch("/api/data?resource=appointments", {
+                        if (a.id) {
+                          const result = await apiFetch<{
+                            appointment: { id: string; status: string };
+                          }>("/api/data?resource=appointments", {
                             method: "PATCH",
                             body: JSON.stringify({
                               id: a.id,
                               status: apiMap[next],
                             }),
                           });
-                        setRemote((current) =>
-                          current.map((item) =>
-                            item.id === a.id
-                              ? { ...item, status: apiMap[next] }
-                              : item,
-                          ),
-                        );
-                        setStatus((current) => ({
-                          ...current,
-                          [statusKey]: next,
-                        }));
+                          setRemote((current) =>
+                            current.map((item) =>
+                              item.id === result.appointment.id
+                                ? { ...item, status: result.appointment.status }
+                                : item,
+                            ),
+                          );
+                        }
                         setToastMessage("Agendamento atualizado com sucesso.");
                       } catch (error) {
                         console.error("Appointment status error", error);
                         setToastMessage(
-                          "Não foi possível atualizar o status. Verifique sua conexão ou tente novamente.",
+                          error instanceof Error
+                            ? error.message
+                            : "Não foi possível atualizar o status.",
                         );
                       } finally {
                         setUpdating((current) => ({
@@ -490,7 +445,7 @@ function ProfessionalAgenda() {
           })
         ) : (
           <div className="p-10 text-center text-xs text-stone-400">
-            Nenhum agendamento encontrado.
+            Nenhum agendamento encontrado neste período.
           </div>
         )}
       </section>
@@ -613,167 +568,6 @@ function ProfessionalClients() {
         </div>
       )}
     </div>
-  );
-}
-
-function TechnicalRecords() {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="animate-fade-up">
-      <PageHeader
-        eyebrow="HISTÓRICO TÉCNICO"
-        title="Fichas técnicas"
-        subtitle="Registre cada detalhe para preservar o resultado e a saúde dos fios."
-        action={
-          <button onClick={() => setOpen(true)} className="btn-primary">
-            <Plus size={16} />
-            Nova ficha
-          </button>
-        }
-      />
-      <section className="surface overflow-hidden">
-        <div className="grid grid-cols-[1fr_auto] gap-4 border-b border-black/[.05] p-5 sm:grid-cols-[1fr_170px_160px_150px_auto]">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400">
-            Cliente
-          </span>
-          <span className="hidden text-[10px] font-bold uppercase tracking-wider text-stone-400 sm:block">
-            Método
-          </span>
-          <span className="hidden text-[10px] font-bold uppercase tracking-wider text-stone-400 sm:block">
-            Última aplicação
-          </span>
-          <span className="hidden text-[10px] font-bold uppercase tracking-wider text-stone-400 sm:block">
-            Retorno
-          </span>
-          <span />
-        </div>
-        {clients.map((c, i) => (
-          <div
-            key={c.name}
-            className="grid grid-cols-[1fr_auto] items-center gap-4 border-b border-black/[.05] p-5 last:border-0 sm:grid-cols-[1fr_170px_160px_150px_auto]"
-          >
-            <div className="flex items-center gap-3">
-              <Avatar src={c.photo} name={c.name} />
-              <div>
-                <b className="text-xs">{c.name}</b>
-                <span className="mt-1 block text-[9px] text-stone-400">
-                  Ficha CS-{2600 + i}
-                </span>
-              </div>
-            </div>
-            <span className="hidden text-xs sm:block">
-              {i % 2 ? "Microlink" : "Fita Adesiva"}
-            </span>
-            <span className="hidden text-xs sm:block">{c.last}</span>
-            <span className="hidden sm:block">
-              <Badge tone={c.next === "—" ? "amber" : "green"}>{c.next}</Badge>
-            </span>
-            <button
-              onClick={() => setOpen(true)}
-              className="grid h-9 w-9 place-items-center rounded-xl bg-warm"
-            >
-              <Eye size={15} />
-            </button>
-          </div>
-        ))}
-      </section>
-      <TechnicalModal open={open} onClose={() => setOpen(false)} />
-    </div>
-  );
-}
-
-function TechnicalModal({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
-  const [saved, setSaved] = useState(false);
-  return (
-    <Modal open={open} onClose={onClose} title="Ficha técnica — Camila">
-      <div className="flex items-center gap-3 rounded-2xl bg-warm p-4">
-        <Avatar src={images.client1} name="Camila Ferreira" />
-        <div>
-          <div className="text-xs font-bold">Camila Ferreira</div>
-          <div className="text-[10px] text-stone-400">
-            Aplicação Microlink • 21/06/2026
-          </div>
-        </div>
-        <Badge tone="gold">Em atendimento</Badge>
-      </div>
-      <div className="mt-5 grid grid-cols-2 gap-3">
-        <Field label="Método" value="Microlink Premium" />
-        <Field label="Quantidade" value="120 mechas" />
-        <Field label="Peso" value="140g" />
-        <Field label="Comprimento" value="60 cm" />
-        <Field label="Cor / tonalidade" value="Castanho 4/6" />
-        <Field label="Lote" value="CS2605" />
-      </div>
-      <label className="mt-4 block">
-        <span className="mb-2 block text-xs font-bold">
-          Produtos utilizados
-        </span>
-        <input
-          className="field"
-          defaultValue="Protetor térmico Carol Sol, sérum reconstrutor"
-        />
-      </label>
-      <label className="mt-4 block">
-        <span className="mb-2 block text-xs font-bold">
-          Cuidados e observações
-        </span>
-        <textarea
-          className="field min-h-24 py-3"
-          defaultValue="Cliente com sensibilidade na nuca. Evitar tensão nas duas primeiras fileiras."
-        />
-      </label>
-      <div className="mt-4 grid grid-cols-3 gap-2">
-        {["Antes", "Durante", "Depois"].map((x) => (
-          <label
-            key={x}
-            className="grid aspect-square cursor-pointer place-items-center rounded-2xl border border-dashed border-champagne/50 bg-warm text-center"
-          >
-            <div>
-              <Camera className="mx-auto text-champagne" size={19} />
-              <span className="mt-1 block text-[9px] font-bold">{x}</span>
-            </div>
-            <input type="file" className="hidden" accept="image/*" />
-          </label>
-        ))}
-      </div>
-      <div className="mt-5 grid grid-cols-2 gap-3">
-        <button onClick={() => setSaved(true)} className="btn-secondary">
-          <Download size={16} />
-          Gerar resumo
-        </button>
-        <button
-          onClick={() => {
-            setSaved(true);
-            setTimeout(onClose, 900);
-          }}
-          className="btn-primary"
-        >
-          <Check size={16} />
-          Salvar ficha
-        </button>
-      </div>
-      {saved && (
-        <div className="mt-3 rounded-xl bg-emerald-50 p-3 text-center text-[11px] font-bold text-emerald-700">
-          Ficha salva e resumo preparado para a cliente.
-        </div>
-      )}
-    </Modal>
-  );
-}
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <label>
-      <span className="mb-2 block text-[10px] font-bold text-stone-500">
-        {label}
-      </span>
-      <input className="field !min-h-10 !text-xs" defaultValue={value} />
-    </label>
   );
 }
 

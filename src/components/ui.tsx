@@ -27,9 +27,11 @@ export function Badge({ children, tone = 'neutral' }: { children: ReactNode; ton
   return <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${tones[tone]}`}>{children}</span>
 }
 
-export function Avatar({ src, name, size = 'md' }: { src?: string; name: string; size?: 'sm' | 'md' | 'lg' }) {
+export function Avatar({ src, name = '', size = 'md' }: { src?: string; name?: string; size?: 'sm' | 'md' | 'lg' }) {
   const sizes = { sm: 'h-9 w-9 text-xs', md: 'h-11 w-11 text-sm', lg: 'h-16 w-16 text-lg' }
-  return src ? <img src={src} alt={name} className={`${sizes[size]} shrink-0 rounded-full object-cover ring-2 ring-white`} /> : <div className={`${sizes[size]} grid shrink-0 place-items-center rounded-full bg-warm font-bold text-champagne`}>{name.split(' ').map(n => n[0]).slice(0, 2).join('')}</div>
+  const safeName = String(name || '').trim()
+  const initials = safeName ? safeName.split(/\s+/).map(n => n[0]).slice(0, 2).join('') : 'CS'
+  return src ? <img src={src} alt={safeName || 'Avatar'} className={`${sizes[size]} shrink-0 rounded-full object-cover ring-2 ring-white`} /> : <div className={`${sizes[size]} grid shrink-0 place-items-center rounded-full bg-warm font-bold text-champagne`}>{initials}</div>
 }
 
 export function StatCard({ label, value, trend, icon, tone = 'light' }: { label: string; value: string; trend?: string; icon?: ReactNode; tone?: 'light' | 'dark' | 'gold' }) {
@@ -38,7 +40,7 @@ export function StatCard({ label, value, trend, icon, tone = 'light' }: { label:
 }
 
 export function SectionHeading({ title, link, onClick }: { title: string; link?: string; onClick?: () => void }) {
-  return <div className="mb-4 flex items-center justify-between"><h2 className="font-display text-2xl font-semibold text-ink">{title}</h2>{link && <button onClick={onClick} className="flex items-center gap-1 text-xs font-bold text-champagne">{link}<ChevronRight size={14} /></button>}</div>
+  return <div className="mb-4 flex items-center justify-between"><h2 className="font-display text-2xl font-semibold text-ink">{title}</h2>{link && onClick && <button type="button" onClick={onClick} className="flex items-center gap-1 text-xs font-bold text-champagne">{link}<ChevronRight size={14} /></button>}</div>
 }
 
 export function Modal({ open, onClose, children, title }: { open: boolean; onClose: () => void; children: ReactNode; title?: string }) {

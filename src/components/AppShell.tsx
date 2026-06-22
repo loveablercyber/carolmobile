@@ -21,7 +21,6 @@ import {
   Menu,
   PackageOpen,
   Scissors,
-  Search,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -226,13 +225,6 @@ export function AppShell({
             <span className="text-xs font-bold">{title}</span>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <button className="hidden h-10 items-center gap-2 rounded-xl border border-black/[.06] bg-white px-3 text-xs text-stone-500 sm:flex">
-              <Search size={16} />
-              Buscar{" "}
-              <kbd className="ml-4 rounded bg-stone-100 px-1.5 py-0.5 text-[9px]">
-                ⌘K
-              </kbd>
-            </button>
             <div className="relative">
               <button
                 onClick={() => setAlerts(!alerts)}

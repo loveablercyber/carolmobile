@@ -186,3 +186,64 @@ export async function notifyAppointment({
       : Promise.resolve({ skipped: true }),
   ]);
 }
+
+export function extractPublicId(url) {
+  if (!url) return null;
+  const uploadIndex = url.indexOf("/upload/");
+  if (uploadIndex === -1) return null;
+  const pathAfterUpload = url.substring(uploadIndex + 8);
+  const parts = pathAfterUpload.split("/");
+  let startIdx = 0;
+  if (parts[0].startsWith("v") && /^\d+$/.test(parts[0].substring(1))) {
+    startIdx = 1;
+  }
+  const publicIdWithPath = parts.slice(startIdx).join("/");
+  const dotIdx = publicIdWithPath.lastIndexOf(".");
+  if (dotIdx === -1) return publicIdWithPath;
+  return publicIdWithPath.substring(0, dotIdx);
+}
+
+export async function deleteFromCloudinary(url) {
+  try {
+    const publicId = extractPublicId(url);
+    if (!publicId) return { skipped: true, reason: "URL inválida ou sem upload" };
+    const providers = cloudinaryProviders();
+    if (!providers.length) return { skipped: true, reason: "Cloudinary não configurado" };
+
+    let cloudNameFromUrl = "";
+    try {
+      const urlObj = new URL(url);
+      cloudNameFromUrl = urlObj.pathname.split("/")[1] || "";
+    } catch {}
+
+    const provider = providers.find(p => p.cloudName === cloudNameFromUrl) || providers[0];
+    const timestamp = Math.floor(Date.now() / 1000);
+    const apiSecret = provider.apiSecret;
+    const signatureStr = `public_id=${publicId}&timestamp=${timestamp}${apiSecret}`;
+    const signature = createHash("sha1").update(signatureStr).digest("hex");
+
+    const bodyObj = {
+      public_id: publicId,
+      timestamp,
+      api_key: provider.apiKey,
+      signature
+    };
+
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${provider.cloudName}/image/destroy`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bodyObj)
+    });
+
+    if (!response.ok) {
+      console.error(`Cloudinary destroy failed: status ${response.status}`);
+      return { success: false, status: response.status };
+    }
+
+    const result = await response.json();
+    return { success: true, result };
+  } catch (err) {
+    console.error("Cloudinary delete error", err);
+    return { success: false, error: err.message };
+  }
+}

@@ -268,7 +268,17 @@ export function ClientProfilePage() {
   const { refresh } = useAuth();
   const portal = usePortal<any>("/api/portal?resource=profile");
   const history = usePortal<any>("/api/portal?resource=client-history");
-  const [form, setForm] = useState<any>({});
+  const [form, setForm] = useState<any>({
+    fullName: "",
+    email: "",
+    phone: "",
+    birthDate: "",
+    instagram: "",
+    address: {},
+    preferences: {},
+    personalNotes: "",
+    avatarUrl: "",
+  });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -321,7 +331,22 @@ export function ClientProfilePage() {
     setUploading(true);
     try {
       const uploaded = await uploadImage(file, "profile-photo");
-      setForm((current: any) => ({ ...current, avatarUrl: uploaded.url }));
+      await apiFetch("/api/portal?resource=profile", {
+        method: "PATCH",
+        body: JSON.stringify({
+          fullName: portal.data.full_name || "",
+          email: portal.data.email || "",
+          phone: portal.data.phone || "",
+          birthDate: portal.data.birth_date?.slice(0, 10) || "",
+          instagram: portal.data.instagram || "",
+          address: portal.data.address || {},
+          preferences: portal.data.preferences || {},
+          personalNotes: portal.data.personal_notes || "",
+          avatarUrl: uploaded.url,
+        }),
+      });
+      await Promise.all([portal.reload(), refresh()]);
+      setToast("Foto atualizada com sucesso.");
     } catch (err) {
       console.error("Profile photo error", err);
       setToast(
@@ -329,6 +354,7 @@ export function ClientProfilePage() {
       );
     } finally {
       setUploading(false);
+      setTimeout(() => setToast(""), 2600);
     }
   };
   const recent = history.data?.appointments?.slice(0, 3) || [];

@@ -40,12 +40,12 @@ import { AppShell } from "../../components/AppShell";
 import {
   Avatar,
   Badge,
+  EmptyState,
   Modal,
   PageHeader,
   SectionHeading,
   Toast,
 } from "../../components/ui";
-import { images, professionals, services } from "../../data/mock";
 import { apiFetch, uploadImage } from "../../lib/api";
 import {
   ClientAppointmentDetailPage,
@@ -66,10 +66,19 @@ import {
 const money = (n: number) =>
   n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
+const whatsappUrl = (phone: unknown) => {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return "";
+  return `https://wa.me/${digits.startsWith("55") ? digits : `55${digits}`}`;
+};
+
 export function ClientArea() {
   const location = useLocation();
-  let page = <ClientHomePage />;
-  if (location.pathname.includes("/agendamentos/"))
+  const navigate = useNavigate();
+  let page;
+  if (["/cliente", "/cliente/", "/cliente/inicio"].includes(location.pathname))
+    page = <ClientHomePage />;
+  else if (location.pathname.includes("/agendamentos/"))
     page = <ClientAppointmentDetailPage />;
   else if (location.pathname.includes("/pagamento/retorno"))
     page = <ClientPaymentReturnPage />;
@@ -97,305 +106,22 @@ export function ClientArea() {
     page = <ClientBenefitsPage />;
   else if (location.pathname.includes("/perfil")) page = <ClientProfilePage />;
   else if (location.pathname.includes("/servicos")) page = <ServicesPage />;
+  else
+    page = (
+      <EmptyState
+        title="Página não encontrada"
+        text="Este endereço não existe na área da cliente."
+        action={
+          <button onClick={() => navigate("/cliente/inicio")} className="btn-primary">
+            Voltar ao início
+          </button>
+        }
+      />
+    );
   return <AppShell role="cliente">{page}</AppShell>;
 }
 
-function ClientHome() {
-  const navigate = useNavigate();
-  return (
-    <div className="animate-fade-up">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <div className="text-sm text-stone-500">Domingo, 21 de junho</div>
-          <h1 className="font-display text-3xl font-semibold">
-            Olá, Juliana.{" "}
-            <span className="inline-block origin-bottom-right animate-[wave_1s_ease_1]">
-              👋
-            </span>
-          </h1>
-        </div>
-        <Badge tone="gold">Nível Gold</Badge>
-      </div>
-      <section className="relative min-h-[500px] overflow-hidden rounded-[30px] bg-ink shadow-premium lg:min-h-[560px]">
-        <img
-          src={images.hero}
-          alt="Mulher com cabelo longo e volumoso"
-          className="absolute inset-0 h-full w-full object-cover object-[center_25%] opacity-90"
-        />
-        <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/30 to-transparent" />
-        <div className="relative z-10 flex min-h-[500px] max-w-xl flex-col justify-end p-7 text-white sm:p-10 lg:min-h-[560px] lg:justify-center lg:p-16">
-          <div className="eyebrow mb-4">SUA MELHOR VERSÃO</div>
-          <h2 className="font-display text-5xl font-semibold leading-[.88] sm:text-6xl lg:text-7xl">
-            Transforme
-            <br />
-            seu visual.
-          </h2>
-          <p className="mt-5 max-w-sm text-sm leading-relaxed text-white/70">
-            Mega Hair Premium com resultado natural, técnica impecável e cuidado
-            contínuo.
-          </p>
-          <div className="mt-7 flex flex-wrap gap-3">
-            <button
-              onClick={() => navigate("/cliente/agenda")}
-              className="btn-gold"
-            >
-              <CalendarDays size={17} />
-              Agendar avaliação
-            </button>
-            <button
-              onClick={() => navigate("/cliente/descobrir")}
-              className="inline-flex min-h-12 items-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-5 text-sm font-bold backdrop-blur"
-            >
-              Descobrir meu método <ArrowRight size={17} />
-            </button>
-          </div>
-        </div>
-        <div className="absolute bottom-7 right-7 hidden rounded-2xl border border-white/15 bg-white/10 p-4 text-white backdrop-blur-xl sm:block">
-          <div className="flex items-center gap-2 text-xs font-semibold">
-            <Play size={15} fill="white" />
-            Conheça nossa experiência
-          </div>
-        </div>
-      </section>
-      <div className="mt-5 grid gap-4 sm:grid-cols-3">
-        <button
-          onClick={() => navigate("/cliente/agenda")}
-          className="surface flex items-center gap-4 p-5 text-left transition hover:-translate-y-1"
-        >
-          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-champagne/15 text-champagne">
-            <CalendarDays />
-          </div>
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-stone-400">
-              Próxima manutenção
-            </div>
-            <div className="mt-1 text-sm font-bold">24/06 às 14:00</div>
-            <div className="mt-1 text-[11px] text-stone-500">Faltam 3 dias</div>
-          </div>
-          <ChevronRight className="ml-auto text-stone-300" size={18} />
-        </button>
-        <button
-          onClick={() => navigate("/cliente/beneficios")}
-          className="surface flex items-center gap-4 p-5 text-left transition hover:-translate-y-1"
-        >
-          <div className="progress-ring grid h-12 w-12 shrink-0 place-items-center rounded-full">
-            <div className="grid h-9 w-9 place-items-center rounded-full bg-white text-xs font-bold">
-              74%
-            </div>
-          </div>
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-stone-400">
-              Clube Carol Sol
-            </div>
-            <div className="mt-1 text-sm font-bold">850 pontos</div>
-            <div className="mt-1 text-[11px] text-stone-500">
-              +150 para nova recompensa
-            </div>
-          </div>
-        </button>
-        <button
-          onClick={() => navigate("/cliente/descobrir")}
-          className="hair-gradient flex items-center gap-4 rounded-[24px] p-5 text-left text-white shadow-card transition hover:-translate-y-1"
-        >
-          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white/10 text-champagne">
-            <Camera />
-          </div>
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-white/45">
-              Avaliação online
-            </div>
-            <div className="mt-1 text-sm font-bold">Envie suas fotos</div>
-            <div className="mt-1 text-[11px] text-white/50">
-              Receba uma análise inicial
-            </div>
-          </div>
-          <ArrowRight className="ml-auto text-champagne" size={18} />
-        </button>
-      </div>
 
-      <section className="mt-10">
-        <SectionHeading
-          title="Mais procurados"
-          link="Ver todos"
-          onClick={() => navigate("/cliente/servicos")}
-        />
-        <div className="no-scrollbar -mx-4 flex snap-x gap-4 overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0">
-          {services.slice(0, 4).map((s) => (
-            <article
-              key={s.id}
-              className="surface min-w-[260px] snap-start overflow-hidden sm:min-w-[300px]"
-            >
-              <div className="relative h-48">
-                <img
-                  src={s.image}
-                  alt={s.name}
-                  className="h-full w-full object-cover"
-                />
-                {s.tag && (
-                  <span className="absolute left-4 top-4">
-                    <Badge tone="black">{s.tag}</Badge>
-                  </span>
-                )}
-                <button className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full bg-white/85">
-                  <Heart size={16} />
-                </button>
-              </div>
-              <div className="p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="font-display text-2xl font-semibold">
-                      {s.name}
-                    </h3>
-                    <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-stone-500">
-                      {s.description}
-                    </p>
-                  </div>
-                  <span className="shrink-0 text-xs font-bold text-champagne">
-                    a partir de
-                    <br />
-                    {money(s.price)}
-                  </span>
-                </div>
-                <div className="mt-4 flex items-center justify-between border-t border-black/[.05] pt-4 text-[11px] text-stone-500">
-                  <span className="flex items-center gap-1">
-                    <Clock3 size={13} />
-                    {s.duration}
-                  </span>
-                  <button
-                    onClick={() => navigate("/cliente/agenda")}
-                    className="font-bold text-ink"
-                  >
-                    Agendar <ArrowRight className="inline" size={13} />
-                  </button>
-                </div>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="mt-10 grid gap-5 lg:grid-cols-[1.25fr_.75fr]">
-        <div>
-          <SectionHeading title="Transformações reais" link="Ver galeria" />
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Transformation
-              image={images.brunette}
-              label="Fita Adesiva • 60 cm"
-            />
-            <Transformation image={images.blonde} label="Microlink • 55 cm" />
-          </div>
-        </div>
-        <div>
-          <SectionHeading title="Sua especialista favorita" />
-          <div className="hair-gradient relative h-[338px] overflow-hidden rounded-[28px] p-6 text-white">
-            <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black to-transparent" />
-            <img
-              src={professionals[0].photo}
-              alt={professionals[0].name}
-              className="absolute inset-0 h-full w-full object-cover opacity-70"
-            />
-            <div className="absolute bottom-6 left-6 right-6">
-              <Badge tone="gold">★ 4,9 • 284 avaliações</Badge>
-              <h3 className="mt-3 font-display text-3xl font-semibold">
-                Juliana Almeida
-              </h3>
-              <p className="mt-1 text-xs text-white/65">
-                Especialista em Fita Adesiva e Microlink
-              </p>
-              <button
-                onClick={() => navigate("/cliente/agenda")}
-                className="mt-4 text-xs font-bold text-champagne"
-              >
-                Ver agenda <ArrowRight className="inline" size={14} />
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="mt-10 grid gap-5 lg:grid-cols-2">
-        <div className="relative overflow-hidden rounded-[28px] bg-[#e9ddc7] p-7 sm:p-9">
-          <div className="relative z-10 max-w-xs">
-            <Badge tone="black">EXCLUSIVO PARA VOCÊ</Badge>
-            <h3 className="mt-4 font-display text-4xl font-semibold leading-none">
-              Seu brilho merece cuidado.
-            </h3>
-            <p className="muted mt-3">
-              15% OFF no Kit Home Care Carol Sol para prolongar seu resultado.
-            </p>
-            <button className="btn-primary mt-5">Usar cupom CAROLSOL15</button>
-          </div>
-          <Package className="absolute -bottom-7 right-2 h-48 w-48 text-champagne/30" />
-        </div>
-        <div className="surface p-7 sm:p-9">
-          <div className="flex items-center gap-3">
-            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-50 text-emerald-700">
-              <Sparkles />
-            </div>
-            <div>
-              <div className="eyebrow">CUIDADO DA SEMANA</div>
-              <h3 className="font-display text-2xl font-semibold">
-                Proteja a fixação
-              </h3>
-            </div>
-          </div>
-          <p className="muted mt-4">
-            Seque completamente a raiz antes de dormir e evite aplicar óleos
-            diretamente nos pontos de fixação.
-          </p>
-          <button className="mt-5 text-xs font-bold text-champagne">
-            Ver todos os cuidados <ArrowRight className="inline" size={14} />
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function Transformation({ image, label }: { image: string; label: string }) {
-  const [position, setPosition] = useState(52);
-  return (
-    <div className="relative h-[338px] overflow-hidden rounded-[28px] bg-stone-200">
-      <img
-        src={image}
-        alt={`Resultado ${label}`}
-        className="absolute inset-0 h-full w-full object-cover"
-      />
-      <div
-        className="absolute inset-y-0 left-0 overflow-hidden grayscale"
-        style={{ width: `${position}%` }}
-      >
-        <img
-          src={image}
-          alt="Antes"
-          className="h-full max-w-none object-cover opacity-75"
-          style={{ width: "500px" }}
-        />
-      </div>
-      <div
-        className="absolute inset-y-0 w-0.5 bg-white shadow"
-        style={{ left: `${position}%` }}
-      >
-        <div className="absolute left-1/2 top-1/2 grid h-9 w-9 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-white text-champagne shadow-lg">
-          ↔
-        </div>
-      </div>
-      <input
-        aria-label="Comparar antes e depois"
-        type="range"
-        min="15"
-        max="85"
-        value={position}
-        onChange={(e) => setPosition(+e.target.value)}
-        className="absolute inset-0 h-full w-full cursor-ew-resize opacity-0"
-      />
-      <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
-        <Badge tone="black">{label}</Badge>
-        <Badge tone="gold">Antes & depois</Badge>
-      </div>
-    </div>
-  );
-}
 
 function ServicesPage() {
   const navigate = useNavigate();
@@ -521,7 +247,23 @@ function Discover() {
   const [answer, setAnswer] = useState<Record<string, string>>({});
   const [files, setFiles] = useState<string[]>([]);
   const [uploading, setUploading] = useState<number | null>(null);
+  const [specialist, setSpecialist] = useState<{ name: string; photo: string } | null>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    apiFetch<{ professionals: Array<Record<string, any>> }>("/api/data?resource=bootstrap")
+      .then((data) => {
+        if (data.professionals && data.professionals.length > 0) {
+          const p = data.professionals[0];
+          setSpecialist({
+            name: p.name || "Especialista",
+            photo: p.photo || "",
+          });
+        }
+      })
+      .catch((error) => console.error("Discover specialist load error", error));
+  }, []);
+
   const next = () => setStep(Math.min(4, step + 1));
   const prev = () => setStep(Math.max(0, step - 1));
   const addFiles = async (
@@ -796,6 +538,7 @@ function Discover() {
         </div>
       ) : (
         <Recommendation
+          specialist={specialist}
           onSchedule={() => {
             sessionStorage.setItem(
               "carol_sol_discovery",
@@ -923,7 +666,13 @@ function OptionGroup({
     </div>
   );
 }
-function Recommendation({ onSchedule }: { onSchedule: () => void }) {
+function Recommendation({
+  onSchedule,
+  specialist,
+}: {
+  onSchedule: () => void;
+  specialist: { name: string; photo: string } | null;
+}) {
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
       <div className="surface overflow-hidden">
@@ -956,12 +705,12 @@ function Recommendation({ onSchedule }: { onSchedule: () => void }) {
       </div>
       <aside className="surface self-start p-6">
         <Avatar
-          src={professionals[0].photo}
-          name={professionals[0].name}
+          src={specialist?.photo || ""}
+          name={specialist?.name || "Especialista"}
           size="lg"
         />
         <h3 className="mt-4 font-display text-2xl font-semibold">
-          Converse com uma especialista
+          Converse com {specialist?.name ? specialist.name.split(" ")[0] : "uma especialista"}
         </h3>
         <p className="muted mt-2">
           A avaliação presencial confirma cor, peso, textura e quantidade ideal
@@ -1049,6 +798,7 @@ function ClientAgenda() {
     Array<Record<string, any>>
   >([]);
   const [availability, setAvailability] = useState<Record<string, boolean>>({});
+  const [resolvedProfessionalId, setResolvedProfessionalId] = useState("");
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [catalog, setCatalog] = useState<{
     services: Array<Record<string, any>>;
@@ -1072,7 +822,14 @@ function ClientAgenda() {
       return data.appointments;
     });
   useEffect(() => {
-    refreshAppointments().catch(() => {});
+    refreshAppointments().catch((error) => {
+      console.error("Client appointments load error", error);
+      setBookingError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível carregar seus agendamentos.",
+      );
+    });
   }, []);
   useEffect(() => {
     apiFetch<{
@@ -1103,8 +860,15 @@ function ClientAgenda() {
     const professional = catalog.professionals.find(
       (item) => item.name === selected.professional,
     );
-    if (!year || !service?.id || !selected.professional) return;
+    if (!year || !service?.id || !selected.professional) {
+      setAvailability({});
+      setResolvedProfessionalId("");
+      return;
+    }
+    const controller = new AbortController();
     setCheckingAvailability(true);
+    setAvailability({});
+    setResolvedProfessionalId("");
     const queryString = new URLSearchParams({
       resource: "availability",
       date: `${year}-${month}-${day}`,
@@ -1112,26 +876,37 @@ function ClientAgenda() {
     });
     if (professional?.id)
       queryString.set("professionalId", String(professional.id));
-    else queryString.set("professionalName", selected.professional);
-    apiFetch<{ slots: Array<{ time: string; available: boolean }> }>(
+    else queryString.set("firstAvailable", "true");
+    apiFetch<{
+      professional: { id: string };
+      slots: Array<{ time: string; available: boolean }>;
+    }>(
       `/api/data?${queryString}`,
+      { signal: controller.signal },
     )
       .then((data) => {
         const nextAvailability = Object.fromEntries(
           data.slots.map((slot) => [slot.time, slot.available]),
         );
         setAvailability(nextAvailability);
-        if (nextAvailability[selected.time] === false) {
-          const first = data.slots.find((slot) => slot.available);
-          if (first)
-            setSelected((current) => ({ ...current, time: first.time }));
-        }
+        setResolvedProfessionalId(data.professional.id);
+        const first = data.slots.find((slot) => slot.available);
+        setSelected((current) =>
+          nextAvailability[current.time] === true
+            ? current
+            : { ...current, time: first?.time || "" },
+        );
       })
       .catch((error) => {
+        if (controller.signal.aborted) return;
         console.error("Availability error", error);
         setAvailability({});
+        setResolvedProfessionalId("");
       })
-      .finally(() => setCheckingAvailability(false));
+      .finally(() => {
+        if (!controller.signal.aborted) setCheckingAvailability(false);
+      });
+    return () => controller.abort();
   }, [
     catalog.professionals,
     catalog.services,
@@ -1140,7 +915,14 @@ function ClientAgenda() {
     selected.service,
   ]);
   useEffect(() => {
-    if (!reschedule || !rescheduleDate) return;
+    if (!reschedule || !rescheduleDate) {
+      setRescheduleSlots({});
+      setRescheduleTime("");
+      return;
+    }
+    const controller = new AbortController();
+    setRescheduleSlots({});
+    setRescheduleTime("");
     const params = new URLSearchParams({
       resource: "availability",
       date: rescheduleDate,
@@ -1149,6 +931,7 @@ function ClientAgenda() {
     });
     apiFetch<{ slots: Array<{ time: string; available: boolean }> }>(
       `/api/data?${params}`,
+      { signal: controller.signal },
     )
       .then((data) => {
         const slots = Object.fromEntries(
@@ -1156,12 +939,15 @@ function ClientAgenda() {
         );
         setRescheduleSlots(slots);
         const first = data.slots.find((x) => x.available);
-        if (first) setRescheduleTime(first.time);
+        setRescheduleTime(first?.time || "");
       })
       .catch((error) => {
+        if (controller.signal.aborted) return;
         console.error("Reschedule availability error", error);
         setRescheduleSlots({});
+        setRescheduleTime("");
       });
+    return () => controller.abort();
   }, [reschedule, rescheduleDate]);
   const next = async () => {
     if (step < 7) {
@@ -1183,6 +969,11 @@ function ClientAgenda() {
         throw new Error(
           "Serviço inválido. Atualize a página e tente novamente.",
         );
+      const professionalId = professional?.id || resolvedProfessionalId;
+      if (!professionalId)
+        throw new Error("Nenhuma profissional disponível foi encontrada.");
+      if (!selected.time || availability[selected.time] !== true)
+        throw new Error("Escolha um horário disponível.");
       const [day, month, year] = selected.date.split("/");
       const paymentMethod =
         selected.payment === "Cartão de crédito"
@@ -1196,8 +987,7 @@ function ClientAgenda() {
           method: "POST",
           body: JSON.stringify({
             serviceId: service.id,
-            professionalId: professional?.id,
-            professionalName: selected.professional,
+            professionalId,
             startsAt: `${year}-${month}-${day}T${selected.time}:00-03:00`,
             notes: selected.notes,
             paymentMethod,
@@ -1338,11 +1128,7 @@ function ClientAgenda() {
                   </div>
                   <div className="mt-6 flex items-center gap-3">
                     <Avatar
-                      src={
-                        professionals.find(
-                          (p) => p.name === appointment.professional,
-                        )?.photo || professionals[0].photo
-                      }
+                      src={appointment.professional_avatar_url}
                       name={appointment.professional}
                     />
                     <div>
@@ -1383,15 +1169,24 @@ function ClientAgenda() {
                       ? "Aguardando resposta"
                       : "Remarcar"}
                   </button>
-                  <a
-                    href="https://wa.me/"
-                    target="_blank"
-                    rel="noreferrer"
-                    className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border px-4 text-xs font-bold ${index === 0 ? "border-white/15 bg-white/5" : "border-black/10 bg-warm"}`}
-                  >
-                    <MessageCircle size={16} />
-                    Falar no WhatsApp
-                  </a>
+                  {whatsappUrl(appointment.professional_phone) ? (
+                    <a
+                      href={whatsappUrl(appointment.professional_phone)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border px-4 text-xs font-bold ${index === 0 ? "border-white/15 bg-white/5" : "border-black/10 bg-warm"}`}
+                    >
+                      <MessageCircle size={16} />
+                      Falar no WhatsApp
+                    </a>
+                  ) : (
+                    <span
+                      className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border px-4 text-xs font-bold opacity-60 ${index === 0 ? "border-white/15 bg-white/5" : "border-black/10 bg-warm"}`}
+                    >
+                      <MessageCircle size={16} />
+                      WhatsApp indisponível
+                    </span>
+                  )}
                 </div>
               </div>
             </section>
@@ -1553,6 +1348,11 @@ function ClientAgenda() {
             </button>
           ))}
         </div>
+        {rescheduleDate && !Object.keys(rescheduleSlots).length && (
+          <p className="mt-4 rounded-2xl bg-rose-50 p-4 text-xs font-semibold text-rose-700">
+            Nenhum horário disponível nessa data.
+          </p>
+        )}
         <label className="mt-4 block text-xs font-bold">
           Motivo ou observação
           <textarea
@@ -1636,9 +1436,7 @@ function BookingStep({
 }) {
   const choose = (k: string, v: string) => setSelected({ ...selected, [k]: v });
   const service = catalog.services.find((s) => s.name === selected.service);
-  const slots = Object.keys(availability).length
-    ? Object.keys(availability)
-    : ["09:00", "10:30", "14:00", "16:00"];
+  const slots = Object.keys(availability);
   const configs: { title: string; key: string; options: string[] }[] = [
     {
       title: "Qual serviço você procura?",
@@ -1785,418 +1583,8 @@ function BookingStep({
     </div>
   );
 }
+
 function WalletIcon({ size = 18 }: { size?: string | number }) {
   return <CreditCard size={size} />;
 }
 
-function Benefits() {
-  const [plan, setPlan] = useState("Completo");
-  const [modal, setModal] = useState(false);
-  const plans = [
-    ["Essencial", "R$ 349", "1 manutenção", "5% em produtos"],
-    ["Completo", "R$ 599", "2 manutenções", "10% em produtos"],
-    ["VIP", "R$ 899", "3 manutenções", "15% + prioridade"],
-    ["Premium Gold", "R$ 1.299", "4 manutenções", "20% + concierge"],
-  ];
-  return (
-    <div className="animate-fade-up">
-      <PageHeader
-        eyebrow="CLUBE CAROL SOL"
-        title="Cuidado que recompensa"
-        subtitle="Acumule pontos, desbloqueie experiências e mantenha seu Mega Hair sempre impecável."
-      />
-      <section className="hair-gradient relative overflow-hidden rounded-[30px] p-7 text-white shadow-premium sm:p-10">
-        <div className="absolute right-[-40px] top-[-60px] h-64 w-64 rounded-full bg-champagne/15 blur-3xl" />
-        <div className="relative grid gap-7 lg:grid-cols-[1fr_auto]">
-          <div>
-            <div className="flex items-center gap-2">
-              <Badge tone="gold">GOLD</Badge>
-              <span className="text-[10px] text-white/40">
-                desde março de 2026
-              </span>
-            </div>
-            <h2 className="mt-4 font-display text-5xl font-semibold">
-              850 <span className="text-2xl text-champagne">pontos</span>
-            </h2>
-            <p className="mt-2 text-sm text-white/50">
-              Faltam 150 pontos para ganhar R$ 100 em serviços.
-            </p>
-            <div className="mt-6 h-2 max-w-lg overflow-hidden rounded-full bg-white/10">
-              <div className="h-full w-[85%] rounded-full bg-champagne" />
-            </div>
-            <div className="mt-2 flex max-w-lg justify-between text-[9px] text-white/35">
-              <span>Gold</span>
-              <span>1.000 pts</span>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3 lg:min-w-[320px]">
-            <MiniBenefit icon={<Gift />} value="2" label="Cupons ativos" />
-            <MiniBenefit
-              icon={<Share2 />}
-              value="R$ 50"
-              label="Indique e ganhe"
-            />
-            <MiniBenefit icon={<Zap />} value="5%" label="Cashback" />
-            <MiniBenefit icon={<Star />} value="Gold" label="Seu nível" />
-          </div>
-        </div>
-      </section>
-      <section className="mt-10">
-        <SectionHeading title="Planos de cuidado" link="Comparar benefícios" />
-        <div className="no-scrollbar -mx-4 flex gap-4 overflow-x-auto px-4 pb-4 sm:mx-0 sm:grid sm:grid-cols-2 sm:px-0 xl:grid-cols-4">
-          {plans.map((p, i) => (
-            <button
-              key={p[0]}
-              onClick={() => setPlan(p[0])}
-              className={`relative min-w-[270px] rounded-[26px] border p-6 text-left transition sm:min-w-0 ${plan === p[0] ? "border-champagne bg-white shadow-premium" : "border-black/[.06] bg-white shadow-card"}`}
-            >
-              {i === 1 && (
-                <span className="absolute right-4 top-4">
-                  <Badge tone="gold">MAIS ESCOLHIDO</Badge>
-                </span>
-              )}
-              <div className="eyebrow">PLANO</div>
-              <h3 className="mt-2 font-display text-3xl font-semibold">
-                {p[0]}
-              </h3>
-              <div className="mt-4 text-2xl font-bold">
-                {p[1]}{" "}
-                <span className="text-[10px] font-normal text-stone-400">
-                  / ciclo
-                </span>
-              </div>
-              <div className="mt-5 space-y-3 border-t border-black/[.06] pt-5 text-xs">
-                {[
-                  p[2],
-                  p[3],
-                  "Prioridade na agenda",
-                  "Pix ou 6x sem juros",
-                ].map((x) => (
-                  <div key={x} className="flex gap-2">
-                    <Check className="text-champagne" size={15} />
-                    {x}
-                  </div>
-                ))}
-              </div>
-              <span
-                onClick={() => setModal(true)}
-                className={`mt-6 flex min-h-11 items-center justify-center rounded-xl text-xs font-bold ${plan === p[0] ? "bg-ink text-white" : "bg-warm"}`}
-              >
-                Assinar plano
-              </span>
-            </button>
-          ))}
-        </div>
-      </section>
-      <div className="mt-8 grid gap-5 lg:grid-cols-3">
-        <div className="surface p-6">
-          <Badge tone="gold">CUPOM ATIVO</Badge>
-          <h3 className="mt-4 font-display text-3xl font-semibold">
-            CAROLSOL15
-          </h3>
-          <p className="muted mt-2">15% OFF no Kit Home Care Carol Sol.</p>
-          <div className="mt-5 text-[10px] text-stone-400">
-            Válido até 30/06/2026
-          </div>
-        </div>
-        <div className="surface p-6">
-          <Badge tone="green">INDIQUE & GANHE</Badge>
-          <h3 className="mt-4 font-display text-3xl font-semibold">
-            R$ 50 para cada uma
-          </h3>
-          <p className="muted mt-2">
-            Você e sua amiga ganham crédito após o primeiro atendimento.
-          </p>
-          <button className="mt-5 text-xs font-bold text-champagne">
-            Convidar uma amiga
-          </button>
-        </div>
-        <div className="surface p-6">
-          <Badge tone="black">GIFT CARD</Badge>
-          <h3 className="mt-4 font-display text-3xl font-semibold">
-            Presenteie beleza
-          </h3>
-          <p className="muted mt-2">
-            Escolha um valor e envie uma experiência inesquecível.
-          </p>
-          <button className="mt-5 text-xs font-bold text-champagne">
-            Criar gift card
-          </button>
-        </div>
-      </div>
-      <Modal
-        open={modal}
-        onClose={() => setModal(false)}
-        title={`Assinar plano ${plan}`}
-      >
-        <div className="rounded-2xl bg-warm p-5">
-          <div className="flex justify-between text-sm">
-            <span>Plano selecionado</span>
-            <b>{plan}</b>
-          </div>
-          <div className="mt-3 flex justify-between text-sm">
-            <span>Forma de pagamento</span>
-            <b>Pix ou cartão</b>
-          </div>
-        </div>
-        <label className="mt-5 flex gap-3 text-[11px] leading-relaxed text-stone-500">
-          <input type="checkbox" defaultChecked />
-          Li os benefícios, regras de uso e renovação do plano.
-        </label>
-        <button className="btn-primary mt-5 w-full">
-          Continuar para pagamento
-        </button>
-      </Modal>
-    </div>
-  );
-}
-function MiniBenefit({
-  icon,
-  value,
-  label,
-}: {
-  icon: React.ReactNode;
-  value: string;
-  label: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/[.06] p-4">
-      <div className="text-champagne">{icon}</div>
-      <div className="mt-3 text-sm font-bold">{value}</div>
-      <div className="mt-1 text-[9px] text-white/40">{label}</div>
-    </div>
-  );
-}
-
-function ClientProfile() {
-  const [importOpen, setImportOpen] = useState(false);
-  const [edit, setEdit] = useState(false);
-  const [toast, setToast] = useState(false);
-  return (
-    <div className="animate-fade-up">
-      <Toast show={toast} message="Dados atualizados" />
-      <PageHeader
-        eyebrow="MINHA CONTA"
-        title="Perfil e preferências"
-        subtitle="Cuide dos seus dados, privacidade e histórico técnico."
-        action={
-          <button onClick={() => setEdit(true)} className="btn-secondary">
-            <Pencil size={16} />
-            Editar dados
-          </button>
-        }
-      />
-      <div className="grid gap-5 lg:grid-cols-[340px_1fr]">
-        <aside className="surface self-start overflow-hidden">
-          <div className="h-24 bg-gradient-to-r from-ink to-[#4a392b]" />
-          <div className="px-6 pb-6">
-            <div className="-mt-9">
-              <Avatar src={images.client1} name="Juliana Mendes" size="lg" />
-            </div>
-            <h2 className="mt-4 font-display text-3xl font-semibold">
-              Juliana Mendes
-            </h2>
-            <p className="text-xs text-stone-500">Cliente Gold • desde 2025</p>
-            <div className="mt-5 grid grid-cols-3 rounded-2xl bg-warm p-4 text-center">
-              <div>
-                <b className="block text-sm">850</b>
-                <span className="text-[9px] text-stone-400">Pontos</span>
-              </div>
-              <div className="border-x border-black/[.07]">
-                <b className="block text-sm">12</b>
-                <span className="text-[9px] text-stone-400">Visitas</span>
-              </div>
-              <div>
-                <b className="block text-sm">Gold</b>
-                <span className="text-[9px] text-stone-400">Nível</span>
-              </div>
-            </div>
-            <div className="mt-5 space-y-3 text-xs text-stone-500">
-              <div className="flex gap-3">
-                <Phone size={15} className="text-champagne" />
-                (11) 99845-2201
-              </div>
-              <div className="flex gap-3">
-                <UserRound size={15} className="text-champagne" />
-                juliana@email.com
-              </div>
-              <div className="flex gap-3">
-                <CalendarDays size={15} className="text-champagne" />
-                14/09/1991
-              </div>
-            </div>
-          </div>
-        </aside>
-        <div className="space-y-5">
-          <section className="surface p-6">
-            <SectionHeading title="Próxima manutenção" />
-            <div className="grid gap-4 sm:grid-cols-3">
-              <InfoBox label="Data" value="24/06/2026 às 14:00" />
-              <InfoBox label="Profissional" value="Juliana Almeida" />
-              <InfoBox label="Método" value="Fita Adesiva • 60 cm" />
-            </div>
-          </section>
-          <section className="surface p-6">
-            <SectionHeading
-              title="Histórico técnico"
-              link="Ver ficha completa"
-            />
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="rounded-2xl bg-warm p-5">
-                <div className="eyebrow">APLICAÇÃO ATUAL</div>
-                <h3 className="mt-2 text-sm font-bold">Fita Adesiva Premium</h3>
-                <div className="mt-4 grid grid-cols-2 gap-3 text-[11px]">
-                  <span>
-                    <b className="block">120g</b>
-                    <span className="text-stone-400">Peso utilizado</span>
-                  </span>
-                  <span>
-                    <b className="block">60 cm</b>
-                    <span className="text-stone-400">Comprimento</span>
-                  </span>
-                  <span>
-                    <b className="block">Castanho 4/6</b>
-                    <span className="text-stone-400">Cor / tonalidade</span>
-                  </span>
-                  <span>
-                    <b className="block">CS2604</b>
-                    <span className="text-stone-400">Lote</span>
-                  </span>
-                </div>
-              </div>
-              <div className="rounded-2xl border border-black/[.06] p-5">
-                <div className="eyebrow">CUIDADOS RECOMENDADOS</div>
-                <ul className="mt-3 space-y-2 text-[11px] leading-relaxed text-stone-500">
-                  <li>• Secar completamente a raiz antes de dormir.</li>
-                  <li>• Usar escova própria para extensões.</li>
-                  <li>• Evitar óleos nos pontos de fixação.</li>
-                  <li>• Manutenção em 45 a 60 dias.</li>
-                </ul>
-              </div>
-            </div>
-          </section>
-          <section className="surface overflow-hidden">
-            <ProfileRow
-              icon={<CreditCard />}
-              title="Pagamentos"
-              text="Cartões salvos e histórico de pagamentos"
-            />
-            <ProfileRow
-              icon={<BellIcon />}
-              title="Notificações"
-              text="Lembretes, ofertas e canais de contato"
-            />
-            <ProfileRow
-              icon={<ShieldCheck />}
-              title="Privacidade e LGPD"
-              text="Consentimentos, exportação e exclusão de dados"
-            />
-            <ProfileRow
-              icon={<Users />}
-              title="Indique uma amiga"
-              text="Importe contatos somente com autorização"
-              onClick={() => setImportOpen(true)}
-            />
-            <ProfileRow
-              icon={<Gift />}
-              title="Cupons e planos"
-              text="1 cupom ativo • Plano Completo"
-            />
-          </section>
-        </div>
-      </div>
-      <Modal
-        open={importOpen}
-        onClose={() => setImportOpen(false)}
-        title="Convidar amigas"
-      >
-        <div className="rounded-2xl bg-amber-50 p-4 text-[11px] leading-relaxed text-amber-800">
-          <b>Você está no controle.</b> Nunca importamos contatos
-          automaticamente. Selecione manualmente quem deseja convidar e revise
-          antes de compartilhar.
-        </div>
-        <div className="mt-5 grid gap-3 sm:grid-cols-2">
-          <button className="btn-secondary">
-            <Users size={17} />
-            Selecionar contatos
-          </button>
-          <label className="btn-secondary cursor-pointer">
-            <Upload size={17} />
-            Importar CSV/VCF
-            <input className="hidden" type="file" accept=".csv,.vcf" />
-          </label>
-        </div>
-        <p className="mt-4 text-[10px] leading-relaxed text-stone-400">
-          O convite não será enviado sem sua confirmação final. Ao continuar,
-          aplicam-se nossa Política de Privacidade e a LGPD.
-        </p>
-      </Modal>
-      <Modal open={edit} onClose={() => setEdit(false)} title="Editar dados">
-        <div className="space-y-4">
-          <label className="block">
-            <span className="mb-2 block text-xs font-bold">Nome completo</span>
-            <input className="field" defaultValue="Juliana Mendes" />
-          </label>
-          <label className="block">
-            <span className="mb-2 block text-xs font-bold">Telefone</span>
-            <input className="field" defaultValue="(11) 99845-2201" />
-          </label>
-          <label className="block">
-            <span className="mb-2 block text-xs font-bold">E-mail</span>
-            <input className="field" defaultValue="juliana@email.com" />
-          </label>
-          <button
-            onClick={() => {
-              setEdit(false);
-              setToast(true);
-              setTimeout(() => setToast(false), 2200);
-            }}
-            className="btn-primary w-full"
-          >
-            Salvar alterações
-          </button>
-        </div>
-      </Modal>
-    </div>
-  );
-}
-function InfoBox({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl bg-warm p-4">
-      <div className="text-[9px] font-bold uppercase tracking-wider text-stone-400">
-        {label}
-      </div>
-      <div className="mt-1.5 text-xs font-bold">{value}</div>
-    </div>
-  );
-}
-function ProfileRow({
-  icon,
-  title,
-  text,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  text: string;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex w-full items-center gap-4 border-b border-black/[.05] p-5 text-left last:border-0 hover:bg-warm/50"
-    >
-      <span className="grid h-11 w-11 place-items-center rounded-xl bg-warm text-champagne">
-        {icon}
-      </span>
-      <span className="flex-1">
-        <b className="block text-xs">{title}</b>
-        <span className="mt-1 block text-[10px] text-stone-400">{text}</span>
-      </span>
-      <ChevronRight size={17} className="text-stone-300" />
-    </button>
-  );
-}
-function BellIcon() {
-  return <Sparkles />;
-}
