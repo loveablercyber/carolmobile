@@ -20,6 +20,7 @@ import {
 } from "../server/lib/technical-record-rules.js";
 import {
   deleteFromCloudinary,
+  isConfiguredCloudinaryUrl,
   notifyAppointment,
   sendEmail,
   sendWhatsApp,
@@ -595,6 +596,60 @@ async function createAppointment(req, res, user, body) {
   return send(res, 201, { appointment: formatAppointment(appointment) });
 }
 
+export async function processReferralReward(client, clientId, appointmentId) {
+  const referralResult = await client.query(
+    `select id,referrer_client_id from public.referrals
+     where referred_client_id=$1 and status='registered'
+     order by created_at asc limit 1 for update`,
+    [clientId],
+  );
+  const referral = referralResult.rows[0];
+  if (!referral) return null;
+
+  const completed = await client.query(
+    `select count(*)::int as count from public.appointments
+     where client_id=$1 and status='completed' and id<>$2`,
+    [clientId, appointmentId],
+  );
+  if (Number(completed.rows[0]?.count || 0) > 0) return null;
+
+  const transitioned = await client.query(
+    `update public.referrals set status='completed',reward_amount=50.00
+     where id=$1 and status='registered' returning id`,
+    [referral.id],
+  );
+  if (!transitioned.rowCount) return null;
+  const reward = await client.query(
+    `insert into public.referral_rewards(
+       referral_id,client_id,kind,amount,status,granted_at
+     ) values($1,$2,'discount',50.00,'active',now()) returning id`,
+    [referral.id, referral.referrer_client_id],
+  );
+  await client.query(
+    `insert into public.loyalty_points(client_id,points,reason,expires_at)
+     values($1,100,$2,(now()+interval '1 year')::date)`,
+    [
+      referral.referrer_client_id,
+      `Indicação concluída — ${referral.id}`,
+    ],
+  );
+  const notificationData = JSON.stringify({
+    referral_id: referral.id,
+    appointment_id: appointmentId,
+    reward_amount: 50,
+    points: 100,
+  });
+  await client.query(
+    `insert into public.notifications(profile_id,kind,title,body,data,action_url)
+     select c.profile_id,'referral_completed','Indicação concluída!',
+       'Sua amiga concluiu o primeiro atendimento. Sua recompensa de R$ 50,00 e 100 pontos já está ativa!',
+       $2,'/cliente/indique-e-ganhe'
+     from public.clients c where c.id=$1`,
+    [referral.referrer_client_id, notificationData],
+  );
+  return { referralId: referral.id, rewardId: reward.rows[0]?.id || null };
+}
+
 async function updateAppointment(req, res, user, body) {
   if (!body.id) throw appError("Agendamento não informado.");
   if (!appointmentStatuses.includes(body.status))
@@ -672,6 +727,11 @@ async function updateAppointment(req, res, user, body) {
           `insert into public.coupon_usage(coupon_id,client_id,appointment_id,discount_amount,status) select $1,$2,$3,$4,'used' where not exists(select 1 from public.coupon_usage where coupon_id=$1 and appointment_id=$3 and status='used')`,
           [item.coupon_id, item.client_id, body.id, item.discount_amount || 0],
         );
+      if (
+        body.status === "completed" &&
+        previous.rows[0].status !== "completed"
+      )
+        await processReferralReward(client, item.client_id, body.id);
     }
     return changed.rows[0];
   });
@@ -794,11 +854,8 @@ async function requestReschedule(res, user, body) {
 }
 
 async function respondReschedule(res, user, body) {
-  if (!["professional", "admin"].includes(user.role))
-    throw appError(
-      "Somente a profissional ou administradora pode responder.",
-      403,
-    );
+  if (!["client", "professional", "admin"].includes(user.role))
+    throw appError("Acesso negado.", 403);
   if (!body.id || !["accept", "reject", "suggest"].includes(body.action))
     throw appError("Resposta de reagendamento inválida.");
   const result = await transaction(async (client) => {
@@ -807,13 +864,18 @@ async function respondReschedule(res, user, body) {
     if (user.role === "professional") {
       params.push(user.id);
       scope = "pr.profile_id=$2";
+    } else if (user.role === "client") {
+      params.push(user.id);
+      scope = "c.profile_id=$2";
     }
     const record = await client.query(
       `
       select rr.*,a.professional_id,a.client_id,a.service_id,s.name as service,cp.id as client_profile_id,
-        cp.full_name as client,cp.phone as client_phone,u.email as client_email
+        cp.full_name as client,cp.phone as client_phone,u.email as client_email,
+        pp.id as professional_profile_id, pp.full_name as professional, pp.phone as professional_phone, pu.email as professional_email
       from public.reschedule_requests rr join public.appointments a on a.id=rr.appointment_id
       join public.services s on s.id=a.service_id join public.professionals pr on pr.id=a.professional_id
+      join public.profiles pp on pp.id=pr.profile_id left join auth.users pu on pu.id=pp.id
       join public.clients c on c.id=a.client_id join public.profiles cp on cp.id=c.profile_id left join auth.users u on u.id=cp.id
       where rr.id=$1 and rr.status in ('pending','suggested') and ${scope} for update of rr
     `,
@@ -822,13 +884,16 @@ async function respondReschedule(res, user, body) {
     const request = record.rows[0];
     if (!request)
       throw appError("Solicitação não encontrada ou já respondida.", 404);
+    if (user.role === "client" && request.status !== "suggested") {
+      throw appError("Esta solicitação ainda está pendente de resposta da profissional.", 403);
+    }
     let newStatus = request.previous_status;
     let startsAt = request.old_starts_at;
     let endsAt = request.old_ends_at;
     let requestStatus = "rejected";
     if (body.action === "accept") {
-      startsAt = request.requested_starts_at;
-      endsAt = request.requested_ends_at;
+      startsAt = user.role === "client" ? request.suggested_starts_at : request.requested_starts_at;
+      endsAt = user.role === "client" ? request.suggested_ends_at : request.requested_ends_at;
       newStatus = "confirmed";
       requestStatus = "accepted";
       const conflict = await client.query(
@@ -839,9 +904,11 @@ async function respondReschedule(res, user, body) {
         [request.professional_id, startsAt, endsAt, request.appointment_id],
       );
       if (conflict.rowCount)
-        throw appError("O horário solicitado não está mais disponível.", 409);
+        throw appError("O horário selecionado não está mais disponível.", 409);
     }
     if (body.action === "suggest") {
+      if (user.role === "client")
+        throw appError("A cliente não pode sugerir horários alternativos neste fluxo.", 403);
       const suggestion = new Date(body.startsAt);
       if (Number.isNaN(suggestion.getTime()))
         throw appError("Informe um novo horário válido.");
@@ -895,36 +962,58 @@ async function respondReschedule(res, user, body) {
       appointment_id: request.appointment_id,
       reschedule_request_id: request.id,
     });
+    const recipientProfileId = user.role === "client" ? request.professional_profile_id : request.client_profile_id;
+    const notificationKind = user.role === "client"
+      ? (requestStatus === "accepted" ? "reschedule_accepted_by_client" : "reschedule_rejected_by_client")
+      : (requestStatus === "accepted" ? "reschedule_accepted" : "reschedule_rejected");
+    const notificationTitle = requestStatus === "accepted" ? "Reagendamento confirmado" : "Reagendamento recusado";
+    const notificationBody = user.role === "client"
+      ? (requestStatus === "accepted"
+          ? `A cliente confirmou o reagendamento de ${request.service} para ${new Date(startsAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}.`
+          : `A cliente recusou a sugestão de reagendamento de ${request.service}.`)
+      : (requestStatus === "accepted"
+          ? `Seu atendimento de ${request.service} foi remarcado.`
+          : `A solicitação de reagendamento de ${request.service} não foi aceita.`);
+
+    const actionUrl = user.role === "client" ? "/profissional/agenda" : `/cliente/agendamentos/${request.appointment_id}`;
+
     await client.query(
       `insert into public.notifications(profile_id,kind,title,body,data,action_url,metadata) values($1,$2,$3,$4,$5,$6,$5)`,
       [
-        request.client_profile_id,
-        requestStatus === "accepted"
-          ? "reschedule_accepted"
-          : "reschedule_rejected",
-        requestStatus === "accepted"
-          ? "Reagendamento confirmado"
-          : "Reagendamento recusado",
-        requestStatus === "accepted"
-          ? `Seu atendimento de ${request.service} foi remarcado.`
-          : `A solicitação de reagendamento de ${request.service} não foi aceita.`,
+        recipientProfileId,
+        notificationKind,
+        notificationTitle,
+        notificationBody,
         data,
-        `/cliente/agendamentos/${request.appointment_id}`,
+        actionUrl,
       ],
     );
     return { ...request, action: body.action, finalStart: startsAt };
   });
   const accepted = result.action === "accept";
-  const text = accepted
-    ? `Seu reagendamento de ${result.service} foi confirmado para ${new Date(result.finalStart).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}.`
-    : `A profissional respondeu sua solicitação de reagendamento de ${result.service}. Consulte o aplicativo.`;
+  const recipientEmail = user.role === "client" ? result.professional_email : result.client_email;
+  const recipientPhone = user.role === "client" ? result.professional_phone : result.client_phone;
+  const subject = accepted
+    ? "Reagendamento confirmado — Carol Sol"
+    : "Atualização de reagendamento — Carol Sol";
+
+  const prettyTime = new Date(result.finalStart).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" });
+
+  const text = user.role === "client"
+    ? (accepted
+        ? `A cliente confirmou o reagendamento de ${result.service} para ${prettyTime}.`
+        : `A cliente recusou a sugestão de reagendamento de ${result.service}.`)
+    : (accepted
+        ? `Seu reagendamento de ${result.service} foi confirmado para ${prettyTime}.`
+        : `A profissional respondeu sua solicitação de reagendamento de ${result.service}. Consulte o aplicativo.`);
+
   await Promise.allSettled([
     sendEmail({
-      to: result.client_email,
-      subject: "Atualização de reagendamento — Carol Sol",
+      to: recipientEmail,
+      subject,
       html: `<p>${text}</p>`,
     }),
-    sendWhatsApp({ to: result.client_phone, text: `Carol Sol: ${text}` }),
+    sendWhatsApp({ to: recipientPhone, text: `Carol Sol: ${text}` }),
   ]);
   return send(res, 200, { ok: true });
 }
@@ -935,7 +1024,8 @@ async function createPhoto(req, res, user, body) {
       "Apenas a cliente pode adicionar fotos por este fluxo.",
       403,
     );
-  if (!body.url) throw appError("Imagem não informada.");
+  if (!isConfiguredCloudinaryUrl(body.url, ["image"]))
+    throw appError("A imagem deve ser enviada pelo upload seguro.");
   const { rows: clients } = await query(
     "select id from public.clients where profile_id=$1",
     [user.id],
@@ -974,6 +1064,12 @@ async function createTechnicalRecord(req, res, user, body) {
   await requireUser(req, ["professional", "admin"]);
   const { value, error } = technicalRecordInput(body);
   if (error) throw appError(error);
+  if (
+    value.photos.some(
+      (photo) => !isConfiguredCloudinaryUrl(photo.url, ["image"]),
+    )
+  )
+    throw appError("As fotos técnicas devem ser enviadas pelo upload seguro.");
   const result = await transaction(async (client) => {
     const params = [value.appointmentId];
     let scope = "";

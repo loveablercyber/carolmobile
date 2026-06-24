@@ -42,6 +42,8 @@ async function sumupRequest(path, options = {}) {
       `SumUp respondeu ${response.status}`;
     throw Object.assign(new Error(message), {
       status: response.status >= 500 ? 502 : 400,
+      providerStatus: response.status,
+      providerCode: data?.error_code || null,
     });
   }
   return data;
@@ -52,6 +54,9 @@ export async function createSumupCheckout({
   amount,
   description,
   returnUrl,
+  customerId,
+  purpose,
+  useDefaultReturnUrl = true,
 }) {
   const config = configured();
   const checkout = await sumupRequest("/v0.1/checkouts", {
@@ -62,7 +67,11 @@ export async function createSumupCheckout({
       currency: "BRL",
       merchant_code: config.merchantCode,
       description,
-      return_url: returnUrl || config.returnUrl,
+      ...(returnUrl || (useDefaultReturnUrl && config.returnUrl)
+        ? { return_url: returnUrl || config.returnUrl }
+        : {}),
+      ...(customerId ? { customer_id: customerId } : {}),
+      ...(purpose ? { purpose } : {}),
     }),
   });
   const links = Array.isArray(checkout.links) ? checkout.links : [];
@@ -79,6 +88,40 @@ export async function createSumupCheckout({
 
 export const retrieveSumupCheckout = (id) =>
   sumupRequest(`/v0.1/checkouts/${encodeURIComponent(id)}`);
+
+export const processSumupCheckout = ({ checkoutId, token, customerId }) =>
+  sumupRequest(`/v0.1/checkouts/${encodeURIComponent(checkoutId)}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      payment_type: "card",
+      installments: 1,
+      token,
+      customer_id: customerId,
+    }),
+  });
+
+export const createSumupCustomer = ({ customerId, personalDetails }) =>
+  sumupRequest("/v0.1/customers", {
+    method: "POST",
+    body: JSON.stringify({
+      customer_id: customerId,
+      personal_details: personalDetails,
+    }),
+  });
+
+export const retrieveSumupCustomer = (customerId) =>
+  sumupRequest(`/v0.1/customers/${encodeURIComponent(customerId)}`);
+
+export const listSumupPaymentInstruments = (customerId) =>
+  sumupRequest(
+    `/v0.1/customers/${encodeURIComponent(customerId)}/payment-instruments`,
+  );
+
+export const deactivateSumupPaymentInstrument = (customerId, token) =>
+  sumupRequest(
+    `/v0.1/customers/${encodeURIComponent(customerId)}/payment-instruments/${encodeURIComponent(token)}`,
+    { method: "DELETE" },
+  );
 
 export function mapSumupStatus(value) {
   const status = String(value || "").toUpperCase();

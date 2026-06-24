@@ -1,5 +1,6 @@
 import { SignJWT, jwtVerify } from 'jose'
 import { getCookie, appError } from './http.js'
+import { query } from './db.js'
 
 const COOKIE_NAME = 'carol_sol_session'
 const key = () => new TextEncoder().encode(process.env.JWT_SECRET || 'development-only-change-me')
@@ -27,8 +28,13 @@ export async function readSession(req) {
 export async function requireUser(req, roles = []) {
   const user = await readSession(req)
   if (!user) throw appError('Faça login para continuar.', 401)
-  if (roles.length && !roles.includes(user.role)) throw appError('Você não tem permissão para esta ação.', 403)
-  return user
+  const { rows } = await query('select role,full_name,account_status from public.profiles where id=$1', [user.id])
+  const profile = rows[0]
+  if (!profile) throw appError('Conta não encontrada.', 401)
+  if (['blocked', 'anonymized', 'deleted'].includes(profile.account_status))
+    throw appError('Esta conta não possui acesso ativo.', 403)
+  if (roles.length && !roles.includes(profile.role)) throw appError('Você não tem permissão para esta ação.', 403)
+  return { id: user.id, role: profile.role, name: profile.full_name }
 }
 
 export function setSessionCookie(res, token) {

@@ -71,7 +71,7 @@ async function providerCall(attempts) {
   throw appError(lastError, 502);
 }
 
-function normalizeStatus(data) {
+export function normalizeStatus(data) {
   const value = String(
     data?.status ||
       data?.state ||
@@ -85,7 +85,7 @@ function normalizeStatus(data) {
     return "disconnected";
   return value;
 }
-function qrValue(data) {
+export function qrValue(data) {
   return (
     data?.qr_code_data ||
     data?.qrCode ||
@@ -232,7 +232,8 @@ async function webhook(req, res, body) {
     secret !== process.env.BAILEYS_WEBHOOK_SECRET
   )
     throw appError("Webhook não autorizado.", 401);
-  const sessionName = body.session_name || body.instance || body.session;
+  const payload = body || {};
+  const sessionName = payload.session_name || payload.instance || payload.session;
   if (!sessionName) throw appError("Sessão não informada.");
   const existing = await query(
     "select professional_id from public.whatsapp_sessions where session_name=$1",
@@ -240,7 +241,7 @@ async function webhook(req, res, body) {
   );
   await saveSession(
     { sessionName, professionalId: existing.rows[0]?.professional_id || null },
-    body,
+    payload,
   );
   return send(res, 200, { ok: true });
 }

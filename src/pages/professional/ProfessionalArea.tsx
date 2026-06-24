@@ -108,6 +108,12 @@ function ProfessionalRescheduleRequests() {
   const [items, setItems] = useState<Array<Record<string, any>>>([]);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
+  const [suggestingId, setSuggestingId] = useState("");
+  const [suggestingDate, setSuggestingDate] = useState("");
+  const [suggestingTime, setSuggestingTime] = useState("");
+  const [suggestingSlots, setSuggestingSlots] = useState<Record<string, boolean>>({});
+  const [loadingSlots, setLoadingSlots] = useState(false);
+
   const load = () =>
     apiFetch<{ requests: Array<Record<string, any>> }>(
       "/api/data?resource=reschedule-requests",
@@ -116,9 +122,47 @@ function ProfessionalRescheduleRequests() {
         (data.requests || []).filter((item) => item.status === "pending"),
       ),
     );
+
   useEffect(() => {
     load().catch((error) => console.error("Reschedule requests error", error));
   }, []);
+
+  useEffect(() => {
+    if (!suggestingId || !suggestingDate) return;
+    const request = items.find((x) => x.id === suggestingId);
+    if (!request) return;
+    const controller = new AbortController();
+    setSuggestingSlots({});
+    setSuggestingTime("");
+    setLoadingSlots(true);
+    const params = new URLSearchParams({
+      resource: "availability",
+      date: suggestingDate,
+      serviceId: String(request.service_id),
+      professionalId: String(request.professional_id),
+    });
+    apiFetch<{ slots: Array<{ time: string; available: boolean }> }>(
+      `/api/data?${params}`,
+      { signal: controller.signal },
+    )
+      .then((data) => {
+        const slots = Object.fromEntries(
+          data.slots.map((x) => [x.time, x.available]),
+        );
+        setSuggestingSlots(slots);
+        const first = data.slots.find((x) => x.available);
+        setSuggestingTime(first?.time || "");
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        console.error("Suggest slots error", error);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingSlots(false);
+      });
+    return () => controller.abort();
+  }, [suggestingId, suggestingDate, items]);
+
   const respond = async (id: string, action: "accept" | "reject") => {
     setBusy(id);
     try {
@@ -142,6 +186,33 @@ function ProfessionalRescheduleRequests() {
       setTimeout(() => setMessage(""), 2600);
     }
   };
+
+  const sendSuggestion = async (id: string) => {
+    if (!suggestingDate || !suggestingTime) return;
+    setBusy(id);
+    try {
+      await apiFetch("/api/data?resource=reschedule-requests", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id,
+          action: "suggest",
+          startsAt: `${suggestingDate}T${suggestingTime}:00-03:00`,
+        }),
+      });
+      await load();
+      setSuggestingId("");
+      setMessage("Sugestão de horário enviada com sucesso.");
+    } catch (error) {
+      console.error("Suggest response error", error);
+      setMessage(
+        error instanceof Error ? error.message : "Não foi possível sugerir.",
+      );
+    } finally {
+      setBusy("");
+      setTimeout(() => setMessage(""), 2600);
+    }
+  };
+
   if (!items.length && !message) return null;
   return (
     <section className="surface mb-5 p-6">
@@ -165,7 +236,7 @@ function ProfessionalRescheduleRequests() {
             <br />
             Para {new Date(item.requested_starts_at).toLocaleString("pt-BR")}
           </span>
-          <span className="flex gap-2">
+          <span className="flex flex-wrap gap-2">
             <button
               disabled={busy === item.id}
               onClick={() => respond(item.id, "accept")}
@@ -182,7 +253,76 @@ function ProfessionalRescheduleRequests() {
               <X size={14} />
               Recusar
             </button>
+            <button
+              disabled={busy === item.id}
+              onClick={() => {
+                setSuggestingId(suggestingId === item.id ? "" : item.id);
+                setSuggestingDate(new Date(Date.now() + 86400000).toISOString().slice(0, 10));
+                setSuggestingTime("");
+                setSuggestingSlots({});
+              }}
+              className="btn-secondary !min-h-9 !px-3 text-champagne border-champagne/30"
+            >
+              Sugerir horário
+            </button>
           </span>
+          {suggestingId === item.id && (
+            <div className="col-span-full border-t border-black/5 mt-3 pt-3 space-y-3 bg-warm/30 p-3 rounded-xl animate-fade-down">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block text-[11px] font-bold text-stone-500">
+                  Selecione a data
+                  <input
+                    type="date"
+                    min={new Date(Date.now() + 86400000).toISOString().slice(0, 10)}
+                    value={suggestingDate}
+                    onChange={(e) => setSuggestingDate(e.target.value)}
+                    className="field mt-1"
+                  />
+                </label>
+                <div>
+                  <span className="block text-[11px] font-bold text-stone-500 mb-1">
+                    Horários disponíveis
+                  </span>
+                  {loadingSlots ? (
+                    <small className="text-stone-400">Consultando agenda...</small>
+                  ) : Object.keys(suggestingSlots).length > 0 ? (
+                    <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                      {Object.entries(suggestingSlots).map(([time, available]) => (
+                        <button
+                          key={time}
+                          type="button"
+                          disabled={!available}
+                          onClick={() => setSuggestingTime(time)}
+                          className={`rounded-lg border px-2 py-1 text-[10px] font-bold disabled:opacity-35 ${suggestingTime === time ? "border-champagne bg-champagne/10 text-champagne" : "border-black/10 bg-white"}`}
+                        >
+                          {time}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    suggestingDate && <small className="text-rose-600 font-semibold">Nenhum horário disponível nesta data.</small>
+                  )}
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSuggestingId("")}
+                  className="btn-secondary !min-h-8 !px-3 text-[11px]"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={busy === item.id || !suggestingTime}
+                  onClick={() => sendSuggestion(item.id)}
+                  className="btn-primary !min-h-8 !px-3 text-[11px]"
+                >
+                  Confirmar Sugestão
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       ))}
     </section>

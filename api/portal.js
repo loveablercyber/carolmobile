@@ -1,6 +1,12 @@
+import { createHash } from "node:crypto";
 import { query, transaction } from "../server/lib/db.js";
 import { requireUser } from "../server/lib/auth.js";
-import { sendEmail } from "../server/lib/integrations.js";
+import {
+  deleteFromCloudinary,
+  isConfiguredCloudinaryUrl,
+  sendEmail,
+} from "../server/lib/integrations.js";
+import { deactivateSumupPaymentInstrument } from "../server/lib/sumup.js";
 import {
   periodFitsSchedule,
   schedulePeriod,
@@ -12,6 +18,7 @@ import {
   methodNotAllowed,
   send,
 } from "../server/lib/http.js";
+import { resolveReceiptReview } from "../server/lib/payment-rules.js";
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -77,8 +84,13 @@ async function clientOverview(user) {
         [clientId],
       ),
       query(
-        `select sub.id,sub.status,sub.starts_at,sub.renews_at,sub.expires_at,sub.remaining_maintenances,p.id as plan_id,p.name,p.price,p.benefits
-      from public.subscriptions sub join public.plans p on p.id=sub.plan_id where sub.client_id=$1 order by sub.created_at desc limit 1`,
+        `select sub.id,sub.status,sub.starts_at,sub.renews_at,sub.expires_at,sub.remaining_maintenances,
+        sub.auto_renew,sub.recurring_card_id,sub.recurring_consent_at,sub.recurring_consent_revoked_at,
+        sub.renewal_failures,sub.next_retry_at,sc.last_four as recurring_card_last_four,
+        p.id as plan_id,p.name,p.price,p.benefits
+      from public.subscriptions sub join public.plans p on p.id=sub.plan_id
+      left join public.saved_cards sc on sc.id=sub.recurring_card_id
+      where sub.client_id=$1 order by sub.created_at desc limit 1`,
         [clientId],
       ),
       query(
@@ -120,10 +132,13 @@ async function paymentsResource(user, id) {
     `select pay.id,pay.amount,pay.original_amount,pay.discount_amount,pay.paid_amount,pay.method,pay.payment_method,pay.status,pay.provider,pay.provider_reference,
     pay.provider_checkout_id,pay.provider_transaction_id,pay.checkout_reference,pay.hosted_checkout_url,pay.provider_status,pay.failure_reason,
     pay.receipt_url,pay.notes,pay.paid_at,pay.created_at,pay.updated_at,a.id as appointment_id,a.starts_at,s.name as service,
-    sub.id as subscription_id,pl.name as plan,cp.full_name as client
+    sub.id as subscription_id,pl.name as plan,cp.full_name as client,
+    lr.id as latest_receipt_id,lr.storage_url as latest_receipt_url,lr.status as latest_receipt_status,
+    lr.rejection_reason as latest_receipt_rejection_reason,lr.created_at as latest_receipt_created_at
     from public.payments pay join public.clients c on c.id=pay.client_id join public.profiles cp on cp.id=c.profile_id
     left join public.appointments a on a.id=pay.appointment_id left join public.services s on s.id=a.service_id
     left join public.subscriptions sub on sub.id=pay.subscription_id left join public.plans pl on pl.id=sub.plan_id
+    left join lateral (select pr.id,pr.storage_url,pr.status,pr.rejection_reason,pr.created_at from public.payment_receipts pr where pr.payment_id=pay.id order by pr.created_at desc limit 1) lr on true
     where ${where} order by pay.created_at desc`,
     params,
   );
@@ -173,18 +188,32 @@ async function benefitsResource(user) {
   const overview = await clientOverview(user);
   const plans = await plansResource(user);
   const clientId = await clientIdFor(user);
-  const usage = await query(
-    `select u.id,u.used_at,u.discount_amount,c.code,c.description from public.coupon_usage u join public.coupons c on c.id=u.coupon_id where u.client_id=$1 order by u.used_at desc`,
-    [clientId],
-  );
-  return { ...overview, plans, couponUsage: usage.rows };
+  const [usage, defaultCard] = await Promise.all([
+    query(
+      `select u.id,u.used_at,u.discount_amount,c.code,c.description from public.coupon_usage u join public.coupons c on c.id=u.coupon_id where u.client_id=$1 order by u.used_at desc`,
+      [clientId],
+    ),
+    query(
+      `select id,brand,last_four from public.saved_cards where client_id=$1 and active
+       and is_default and provider='sumup' and external_token is not null limit 1`,
+      [clientId],
+    ),
+  ]);
+  return {
+    ...overview,
+    plans,
+    couponUsage: usage.rows,
+    defaultCard: defaultCard.rows[0] || null,
+  };
 }
 
 async function cardsResource(user) {
   requireRole(user, ["client"]);
   const clientId = await clientIdFor(user);
   const { rows } = await query(
-    "select id,brand,last_four,holder_name,active,is_default,created_at from public.saved_cards where client_id=$1 and active order by is_default desc,created_at desc",
+    `select id,brand,last_four,holder_name,active,is_default,tokenized_at,created_at
+     from public.saved_cards where client_id=$1 and active and provider='sumup' and external_token is not null
+     order by is_default desc,created_at desc`,
     [clientId],
   );
   return rows;
@@ -294,6 +323,7 @@ async function clientDetail(user, rawId) {
     reviews,
     referrals,
     consents,
+    deletion,
     notes,
   ] = await Promise.all([
     query(
@@ -342,6 +372,14 @@ async function clientDetail(user, rawId) {
           [profile.rows[0].profile_id],
         )
       : Promise.resolve({ rows: [] }),
+    user.role === "admin"
+      ? query(
+          `select id,status,reason,requested_at,reviewed_at,reviewed_by
+           from public.account_deletion_requests where profile_id=$1
+           order by requested_at desc limit 1`,
+          [profile.rows[0].profile_id],
+        )
+      : Promise.resolve({ rows: [] }),
     query(
       `select n.id,n.note,n.created_at,p.full_name as author from public.client_internal_notes n join public.profiles p on p.id=n.author_id where n.client_id=$1 order by n.created_at desc`,
       [id],
@@ -358,6 +396,7 @@ async function clientDetail(user, rawId) {
     reviews: reviews.rows,
     referrals: referrals.rows,
     consents: consents.rows,
+    deletion: deletion.rows[0] || null,
     notes: notes.rows,
   };
 }
@@ -676,9 +715,21 @@ async function updateProfile(user, body) {
   const fullName = clean(body.fullName);
   const email = clean(body.email).toLowerCase();
   const phone = clean(body.phone);
+  const avatarUrl = clean(body.avatarUrl);
   if (fullName.length < 3) throw appError("Informe o nome completo.");
   if (!/^\S+@\S+\.\S+$/.test(email))
     throw appError("Informe um e-mail válido.");
+  const currentProfile = await query(
+    "select avatar_url from public.profiles where id=$1",
+    [user.id],
+  );
+  if (!currentProfile.rows[0]) throw appError("Perfil não encontrado.", 404);
+  if (
+    avatarUrl &&
+    avatarUrl !== clean(currentProfile.rows[0].avatar_url) &&
+    !isConfiguredCloudinaryUrl(avatarUrl, ["image"])
+  )
+    throw appError("A foto deve ser enviada pelo upload seguro.");
   return transaction(async (client) => {
     await client.query(
       "update auth.users set email=$1,phone=$2,updated_at=now() where id=$3",
@@ -692,7 +743,7 @@ async function updateProfile(user, body) {
         body.birthDate || null,
         clean(body.instagram) || null,
         JSON.stringify(body.address || {}),
-        clean(body.avatarUrl) || null,
+        avatarUrl || null,
         user.id,
       ],
     );
@@ -856,56 +907,158 @@ async function requestSubscription(user, body) {
 
 async function saveCard(user, body) {
   requireRole(user, ["client"]);
-  const clientId = await clientIdFor(user);
-  const brand = clean(body.brand);
-  const lastFour = clean(body.lastFour);
-  const holder = clean(body.holderName);
-  if (!brand || !/^\d{4}$/.test(lastFour) || holder.length < 3)
-    throw appError("Preencha bandeira, nome e últimos quatro dígitos.");
-  return transaction(async (client) => {
-    if (body.isDefault)
-      await client.query(
-        "update public.saved_cards set is_default=false where client_id=$1",
-        [clientId],
-      );
-    const { rows } = await client.query(
-      `insert into public.saved_cards(client_id,brand,last_four,holder_name,external_token,is_default) values($1,$2,$3,$4,$5,$6) returning id,brand,last_four,holder_name,active,is_default,created_at`,
-      [
-        clientId,
-        brand,
-        lastFour,
-        holder,
-        clean(body.externalToken) || null,
-        Boolean(body.isDefault),
-      ],
-    );
-    return rows[0];
-  });
+  void body;
+  throw appError(
+    "Cartões só podem ser adicionados pelo fluxo seguro da SumUp.",
+    409,
+  );
 }
 
 async function updateCard(user, body) {
   requireRole(user, ["client"]);
   const clientId = await clientIdFor(user);
   const id = validUuid(body.id, "Cartão");
+  const selected = await query(
+    `select sc.id,sc.is_default,sc.external_token,sc.provider_customer_id,c.sumup_customer_id
+     from public.saved_cards sc join public.clients c on c.id=sc.client_id
+     where sc.id=$1 and sc.client_id=$2 and sc.active and sc.provider='sumup' and sc.external_token is not null`,
+    [id, clientId],
+  );
+  const card = selected.rows[0];
+  if (!card) throw appError("Cartão não encontrado.", 404);
+  if (body.action === "remove" && card.external_token) {
+    const customerId = card.provider_customer_id || card.sumup_customer_id;
+    if (!customerId)
+      throw appError("Cartão sem vínculo de cliente na SumUp.", 409);
+    try {
+      await deactivateSumupPaymentInstrument(customerId, card.external_token);
+    } catch (error) {
+      if (error.providerStatus !== 404) throw error;
+    }
+  }
   return transaction(async (client) => {
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [
+      clientId,
+    ]);
     if (body.action === "default") {
       await client.query(
-        "update public.saved_cards set is_default=false where client_id=$1",
+        "update public.saved_cards set is_default=false,updated_at=now() where client_id=$1 and active",
         [clientId],
       );
       const { rows } = await client.query(
-        "update public.saved_cards set is_default=true where id=$1 and client_id=$2 and active returning id",
+        "update public.saved_cards set is_default=true,updated_at=now() where id=$1 and client_id=$2 and active and provider='sumup' returning id",
         [id, clientId],
       );
       if (!rows[0]) throw appError("Cartão não encontrado.", 404);
     } else if (body.action === "remove") {
+      await client.query(
+        `update public.subscriptions set auto_renew=false,recurring_card_id=null,
+         recurring_consent_revoked_at=case when auto_renew then now() else recurring_consent_revoked_at end,
+         next_retry_at=null,updated_at=now() where client_id=$1 and recurring_card_id=$2`,
+        [clientId, id],
+      );
       const { rows } = await client.query(
-        "update public.saved_cards set active=false,is_default=false where id=$1 and client_id=$2 returning id",
+        "update public.saved_cards set active=false,is_default=false,external_token=null,updated_at=now() where id=$1 and client_id=$2 and active returning id,is_default",
         [id, clientId],
       );
       if (!rows[0]) throw appError("Cartão não encontrado.", 404);
+      if (card.is_default)
+        await client.query(
+          `update public.saved_cards set is_default=true,updated_at=now()
+           where id=(select id from public.saved_cards where client_id=$1 and active and provider='sumup'
+           and external_token is not null order by created_at desc limit 1)`,
+          [clientId],
+        );
     } else throw appError("Ação inválida.");
+    await client.query(
+      `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
+       values($1,$2,'saved_card',$3,$4)`,
+      [
+        user.id,
+        body.action === "remove" ? "card_deactivated" : "card_defaulted",
+        id,
+        JSON.stringify({ provider: "sumup" }),
+      ],
+    );
     return { ok: true };
+  });
+}
+
+async function updateSubscriptionRecurring(user, body) {
+  requireRole(user, ["client"]);
+  if (typeof body.enabled !== "boolean")
+    throw appError("Informe se deseja ativar ou desativar a renovação.");
+  const clientId = await clientIdFor(user);
+  const subscriptionId = validUuid(body.subscriptionId, "Assinatura");
+  const cardId = body.cardId ? validUuid(body.cardId, "Cartão") : null;
+  return transaction(async (client) => {
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [
+      `subscription-consent:${subscriptionId}`,
+    ]);
+    const selected = await client.query(
+      `select id,status,auto_renew,recurring_card_id from public.subscriptions
+       where id=$1 and client_id=$2 for update`,
+      [subscriptionId, clientId],
+    );
+    const subscription = selected.rows[0];
+    if (!subscription) throw appError("Assinatura não encontrada.", 404);
+    if (body.enabled && subscription.status !== "active")
+      throw appError("A renovação só pode ser ativada em um plano ativo.", 409);
+    let selectedCard = null;
+    if (body.enabled) {
+      const params = [clientId];
+      let filter = "sc.is_default";
+      if (cardId) {
+        params.push(cardId);
+        filter = "sc.id=$2";
+      }
+      const card = await client.query(
+        `select sc.id,sc.last_four,coalesce(sc.provider_customer_id,c.sumup_customer_id) as customer_id
+         from public.saved_cards sc join public.clients c on c.id=sc.client_id
+         where sc.client_id=$1 and ${filter} and sc.active and sc.provider='sumup'
+           and sc.external_token is not null order by sc.created_at desc limit 1`,
+        params,
+      );
+      selectedCard = card.rows[0];
+      if (!selectedCard?.customer_id)
+        throw appError("Adicione um cartão tokenizado e defina-o como principal.", 409);
+    }
+    const updated = await client.query(
+      `update public.subscriptions set auto_renew=$3,recurring_card_id=$4,
+       recurring_consent_at=case when $3 then now() else recurring_consent_at end,
+       recurring_consent_revoked_at=case when $3 then null else now() end,
+       recurring_consent_version=case when $3 then '1.0' else recurring_consent_version end,
+       renewal_failures=case when $3 then 0 else renewal_failures end,
+       next_retry_at=null,updated_at=now() where id=$1 and client_id=$2
+       returning id,auto_renew,recurring_card_id,recurring_consent_at,recurring_consent_revoked_at`,
+      [subscriptionId, clientId, body.enabled, selectedCard?.id || null],
+    );
+    await client.query(
+      `insert into public.consent_logs(profile_id,consent_type,granted,policy_version,source)
+       values($1,'recurring_billing',$2,'1.0','client_portal')`,
+      [user.id, body.enabled],
+    );
+    await client.query(
+      `insert into public.audit_logs(actor_id,action,entity_type,entity_id,previous_data,new_data)
+       values($1,$2,'subscription',$3,$4,$5)`,
+      [
+        user.id,
+        body.enabled ? "recurring_consent_granted" : "recurring_consent_revoked",
+        subscriptionId,
+        JSON.stringify({
+          autoRenew: subscription.auto_renew,
+          recurringCardId: subscription.recurring_card_id,
+        }),
+        JSON.stringify({
+          autoRenew: body.enabled,
+          recurringCardId: selectedCard?.id || null,
+        }),
+      ],
+    );
+    return {
+      ...updated.rows[0],
+      recurring_card_last_four: selectedCard?.last_four || null,
+    };
   });
 }
 
@@ -947,54 +1100,248 @@ async function updateConsent(user, body) {
   return rows[0];
 }
 
+export async function collectClientDataExport(client, { profileId, clientId }) {
+  const [
+    account,
+    appointments,
+    reschedules,
+    messages,
+    technicalRecords,
+    photos,
+    payments,
+    receipts,
+    subscriptions,
+    quotes,
+    loyalty,
+    coupons,
+    referrals,
+    rewards,
+    reviews,
+    notifications,
+    cards,
+    tokenizationSessions,
+    consents,
+    consentHistory,
+    internalNotes,
+    exportRequests,
+    deletionRequests,
+  ] = await Promise.all([
+    client.query(
+      `select p.id,p.role,p.full_name,p.phone,p.avatar_url,p.birth_date,p.instagram,p.address,p.account_status,p.created_at,p.updated_at,
+       u.email,u.email_confirmed_at,u.created_at as account_created_at,
+       c.id as client_id,c.cpf,c.source,c.preferences,c.technical_notes,c.personal_notes,c.lifetime_value,c.sumup_customer_id,c.created_at as client_created_at
+       from public.profiles p join auth.users u on u.id=p.id join public.clients c on c.profile_id=p.id
+       where p.id=$1 and c.id=$2`,
+      [profileId, clientId],
+    ),
+    client.query(
+      `select id,booking_code,professional_id,service_id,location_id,starts_at,ends_at,status,notes,estimated_value,
+       original_value,discount_amount,intake_data,cancellation_reason,created_at,updated_at
+       from public.appointments where client_id=$1 order by starts_at desc`,
+      [clientId],
+    ),
+    client.query(
+      `select rr.* from public.reschedule_requests rr join public.appointments a on a.id=rr.appointment_id
+       where a.client_id=$1 order by rr.created_at desc`,
+      [clientId],
+    ),
+    client.query(
+      `select m.id,m.appointment_id,m.sender_profile_id,m.message,m.message_type,m.visible_to_client,m.created_at
+       from public.appointment_messages m join public.appointments a on a.id=m.appointment_id
+       where a.client_id=$1 order by m.created_at`,
+      [clientId],
+    ),
+    client.query(
+      `select id,appointment_id,professional_id,hair_method_id,strands_count,weight_grams,color,shade,length_cm,texture,
+       hair_lot,products_used,recommendations,internal_notes,next_maintenance_date,final_value,payment_status,created_at
+       from public.technical_records where client_id=$1 order by created_at desc`,
+      [clientId],
+    ),
+    client.query(
+      "select id,appointment_id,kind,storage_path,created_at from public.client_photos where client_id=$1 order by created_at desc",
+      [clientId],
+    ),
+    client.query(
+      `select id,appointment_id,subscription_id,quote_id,amount,original_amount,discount_amount,paid_amount,method,payment_method,
+       provider,status,provider_status,installments,paid_at,created_at,updated_at
+       from public.payments where client_id=$1 order by created_at desc`,
+      [clientId],
+    ),
+    client.query(
+      `select pr.id,pr.payment_id,pr.storage_url,pr.status,pr.reviewed_at,pr.rejection_reason,pr.created_at
+       from public.payment_receipts pr join public.payments p on p.id=pr.payment_id
+       where p.client_id=$1 order by pr.created_at desc`,
+      [clientId],
+    ),
+    client.query(
+      `select id,plan_id,quote_id,status,starts_at,renews_at,expires_at,cancelled_at,activated_at,
+       remaining_maintenances,payment_method,created_at,updated_at
+       from public.subscriptions where client_id=$1 order by created_at desc`,
+      [clientId],
+    ),
+    client.query(
+      `select q.id,q.appointment_id,q.plan_id,q.status,q.intake_data,q.subtotal,q.discount_amount,q.total,q.notes,q.expires_at,q.created_at,q.updated_at,
+       coalesce(json_agg(json_build_object('description',qi.description,'quantity',qi.quantity,'unit_price',qi.unit_price,'total',qi.total)) filter(where qi.id is not null),'[]') as items
+       from public.quotes q left join public.quote_items qi on qi.quote_id=q.id
+       where q.client_id=$1 group by q.id order by q.created_at desc`,
+      [clientId],
+    ),
+    client.query(
+      "select id,points,reason,expires_at,created_at from public.loyalty_points where client_id=$1 order by created_at desc",
+      [clientId],
+    ),
+    client.query(
+      `select c.code,c.description,u.used_at,u.discount_amount,u.status
+       from public.coupon_usage u join public.coupons c on c.id=u.coupon_id
+       where u.client_id=$1 order by u.used_at desc`,
+      [clientId],
+    ),
+    client.query(
+      `select id,referrer_client_id,referred_client_id,code,status,reward_amount,invited_name,invited_phone,created_at
+       from public.referrals where referrer_client_id=$1 or referred_client_id=$1 order by created_at desc`,
+      [clientId],
+    ),
+    client.query(
+      "select id,referral_id,kind,points,amount,status,granted_at from public.referral_rewards where client_id=$1 order by granted_at desc nulls last",
+      [clientId],
+    ),
+    client.query(
+      "select id,appointment_id,professional_id,rating,comment,published,created_at from public.reviews where client_id=$1 order by created_at desc",
+      [clientId],
+    ),
+    client.query(
+      "select id,kind,title,body,data,action_url,read_at,scheduled_at,created_at from public.notifications where profile_id=$1 order by created_at desc",
+      [profileId],
+    ),
+    client.query(
+      "select id,brand,last_four,holder_name,active,is_default,created_at from public.saved_cards where client_id=$1 order by created_at desc",
+      [clientId],
+    ),
+    client.query(
+      `select id,checkout_reference,status,expires_at,completed_at,created_at
+       from public.card_tokenization_sessions where client_id=$1 order by created_at desc`,
+      [clientId],
+    ),
+    client.query(
+      "select consent_type,accepted,accepted_at,revoked_at,policy_version,created_at from public.privacy_consents where profile_id=$1 order by consent_type",
+      [profileId],
+    ),
+    client.query(
+      "select consent_type,granted,policy_version,source,created_at from public.consent_logs where profile_id=$1 order by created_at desc",
+      [profileId],
+    ),
+    client.query(
+      "select id,note,author_id,created_at from public.client_internal_notes where client_id=$1 order by created_at desc",
+      [clientId],
+    ),
+    client.query(
+      "select id,status,requested_at,completed_at from public.data_export_requests where profile_id=$1 order by requested_at desc",
+      [profileId],
+    ),
+    client.query(
+      "select id,status,reason,requested_at,reviewed_at,reviewed_by from public.account_deletion_requests where profile_id=$1 order by requested_at desc",
+      [profileId],
+    ),
+  ]);
+  return {
+    schemaVersion: "1.0",
+    generatedAt: new Date().toISOString(),
+    account: account.rows[0] || null,
+    appointments: appointments.rows,
+    rescheduleRequests: reschedules.rows,
+    appointmentMessages: messages.rows,
+    technicalRecords: technicalRecords.rows,
+    photos: photos.rows,
+    payments: payments.rows,
+    paymentReceipts: receipts.rows,
+    subscriptions: subscriptions.rows,
+    quotes: quotes.rows,
+    loyaltyPoints: loyalty.rows,
+    couponUsage: coupons.rows,
+    referrals: referrals.rows,
+    referralRewards: rewards.rows,
+    reviews: reviews.rows,
+    notifications: notifications.rows,
+    savedCards: cards.rows,
+    cardTokenizationSessions: tokenizationSessions.rows,
+    privacyConsents: consents.rows,
+    consentHistory: consentHistory.rows,
+    internalNotes: internalNotes.rows,
+    exportRequests: exportRequests.rows,
+    deletionRequests: deletionRequests.rows,
+  };
+}
+
 async function exportData(user) {
   requireRole(user, ["client"]);
   const clientId = await clientIdFor(user);
   const request = await query(
-    `insert into public.data_export_requests(profile_id,status,completed_at) values($1,'completed',now()) returning id,status,requested_at,completed_at`,
+    `insert into public.data_export_requests(profile_id,status)
+     values($1,'pending') returning id,status,requested_at,completed_at`,
     [user.id],
   );
-  const [profile, appointments, payments, subscriptions, coupons, consents] =
-    await Promise.all([
-      profileResource(user),
+  const requestId = request.rows[0].id;
+  try {
+    return await transaction(async (client) => {
+      await client.query(
+        "update public.data_export_requests set status='processing' where id=$1 and profile_id=$2",
+        [requestId, user.id],
+      );
+      const exported = await collectClientDataExport(client, {
+        profileId: user.id,
+        clientId,
+      });
+      const serialized = JSON.stringify(exported);
+      const sha256 = createHash("sha256").update(serialized).digest("hex");
+      const completed = await client.query(
+        `update public.data_export_requests set status='completed',completed_at=now()
+         where id=$1 and profile_id=$2 and status='processing'
+         returning id,status,requested_at,completed_at`,
+        [requestId, user.id],
+      );
+      if (!completed.rows[0])
+        throw appError("Não foi possível concluir a exportação.");
+      await client.query(
+        `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
+         values($1,'data_export_completed','data_export_request',$2,$3)`,
+        [
+          user.id,
+          requestId,
+          JSON.stringify({ sha256, schema_version: exported.schemaVersion }),
+        ],
+      );
+      return { request: completed.rows[0], export: exported, sha256 };
+    });
+  } catch (error) {
+    await Promise.allSettled([
       query(
-        "select * from public.appointments where client_id=$1 order by starts_at desc",
-        [clientId],
+        "update public.data_export_requests set status='failed' where id=$1 and profile_id=$2 and status<>'completed'",
+        [requestId, user.id],
       ),
       query(
-        "select id,appointment_id,subscription_id,amount,discount_amount,paid_amount,method,status,paid_at,created_at from public.payments where client_id=$1 order by created_at desc",
-        [clientId],
+        `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
+         values($1,'data_export_failed','data_export_request',$2,$3)`,
+        [
+          user.id,
+          requestId,
+          JSON.stringify({ error: String(error?.message || "unknown").slice(0, 300) }),
+        ],
       ),
-      query(
-        "select * from public.subscriptions where client_id=$1 order by created_at desc",
-        [clientId],
-      ),
-      query(
-        "select c.code,c.description,u.used_at,u.discount_amount from public.coupon_usage u join public.coupons c on c.id=u.coupon_id where u.client_id=$1",
-        [clientId],
-      ),
-      query(
-        "select consent_type,accepted,accepted_at,revoked_at,policy_version from public.privacy_consents where profile_id=$1",
-        [user.id],
-      ),
-    ]);
-  return {
-    request: request.rows[0],
-    export: {
-      generatedAt: new Date().toISOString(),
-      profile,
-      appointments: appointments.rows,
-      payments: payments.rows,
-      subscriptions: subscriptions.rows,
-      couponUsage: coupons.rows,
-      consents: consents.rows,
-    },
-  };
+    ]).then((results) => {
+      for (const result of results)
+        if (result.status === "rejected")
+          console.error("Data export failure audit error", result.reason);
+    });
+    throw error;
+  }
 }
 
 async function requestDeletion(user, body) {
   requireRole(user, ["client"]);
   return transaction(async (client) => {
+    await client.query("select id from public.profiles where id=$1 for update", [
+      user.id,
+    ]);
     const existing = await client.query(
       `select id from public.account_deletion_requests where profile_id=$1 and status in ('requested','under_review')`,
       [user.id],
@@ -1005,12 +1352,234 @@ async function requestDeletion(user, body) {
       `insert into public.account_deletion_requests(profile_id,reason) values($1,$2) returning *`,
       [user.id, clean(body.reason) || null],
     );
-    await client.query(
+    const updated = await client.query(
       `update public.profiles set account_status='deletion_requested',updated_at=now() where id=$1`,
       [user.id],
     );
+    if (!updated.rowCount) throw appError("Perfil não encontrado.", 404);
+    await client.query(
+      `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
+       values($1,'account_deletion_requested','account_deletion_request',$2,$3)`,
+      [user.id, rows[0].id, JSON.stringify({ reason: clean(body.reason) || null })],
+    );
     return rows[0];
   });
+}
+
+export async function anonymizeClientAccount(client, { requestId, adminId }) {
+  const locked = await client.query(
+    `select dr.id,dr.profile_id,c.id as client_id,c.sumup_customer_id
+     from public.account_deletion_requests dr
+     join public.profiles p on p.id=dr.profile_id
+     join public.clients c on c.profile_id=p.id
+     where dr.id=$1 and dr.status in ('requested','under_review')
+     for update of dr,p,c`,
+    [requestId],
+  );
+  const target = locked.rows[0];
+  if (!target) throw appError("Solicitação de exclusão não encontrada.", 404);
+
+  await client.query(
+    "update public.account_deletion_requests set status='under_review',reviewed_at=now(),reviewed_by=$2 where id=$1",
+    [requestId, adminId],
+  );
+  const [photos, gallery, cards] = await Promise.all([
+    client.query(
+      "select storage_path from public.client_photos where client_id=$1",
+      [target.client_id],
+    ),
+    client.query(
+      "select before_photo_path,after_photo_path from public.before_after_gallery where client_id=$1",
+      [target.client_id],
+    ),
+    client.query(
+      `select coalesce(provider_customer_id,$2) as customer_id,external_token
+       from public.saved_cards where client_id=$1 and provider='sumup' and external_token is not null`,
+      [target.client_id, target.sumup_customer_id],
+    ),
+  ]);
+  const mediaUrls = [
+    ...photos.rows.map((item) => item.storage_path),
+    ...gallery.rows.flatMap((item) => [
+      item.before_photo_path,
+      item.after_photo_path,
+    ]),
+  ].filter(Boolean);
+  const cardInstruments = cards.rows
+    .filter((item) => item.customer_id && item.external_token)
+    .map((item) => ({
+      customerId: item.customer_id,
+      token: item.external_token,
+    }));
+
+  await client.query(
+    `update auth.users set email=$2,phone=null,encrypted_password=null,raw_user_meta_data='{}',updated_at=now()
+     where id=$1`,
+    [
+      target.profile_id,
+      `deleted+${String(target.profile_id).replace(/-/g, "")}@anonymized.invalid`,
+    ],
+  );
+  await client.query(
+    `update public.profiles set full_name='Conta anonimizada',phone=null,avatar_url=null,birth_date=null,
+     instagram=null,address='{}',notification_preferences='{}',account_status='anonymized',updated_at=now()
+     where id=$1`,
+    [target.profile_id],
+  );
+  await client.query(
+    `update public.clients set cpf=null,source='Conta anonimizada',preferences='{}',technical_notes=null,personal_notes=null,sumup_customer_id=null
+     where id=$1`,
+    [target.client_id],
+  );
+  await client.query(
+    `update public.appointments set notes=null,intake_data='{}',cancellation_reason=null
+     where client_id=$1`,
+    [target.client_id],
+  );
+  await client.query(
+    `update public.reschedule_requests rr set reason=null,response_note=null
+     from public.appointments a where a.id=rr.appointment_id and a.client_id=$1`,
+    [target.client_id],
+  );
+  await client.query(
+    `update public.quotes set notes=null,intake_data='{}' where client_id=$1`,
+    [target.client_id],
+  );
+  await client.query(
+    `update public.technical_records set recommendations=null,internal_notes=null where client_id=$1`,
+    [target.client_id],
+  );
+  await client.query(
+    `update public.saved_cards set holder_name='REMOVIDO',external_token=null,active=false,is_default=false
+     where client_id=$1`,
+    [target.client_id],
+  );
+  await client.query(
+    "update public.reviews set comment=null,published=false where client_id=$1",
+    [target.client_id],
+  );
+  await client.query(
+    "update public.referrals set invited_name=null,invited_phone=null where referrer_client_id=$1",
+    [target.client_id],
+  );
+  await client.query(
+    `delete from public.appointment_messages m using public.appointments a
+     where a.id=m.appointment_id and a.client_id=$1`,
+    [target.client_id],
+  );
+  await client.query(
+    "delete from public.client_internal_notes where client_id=$1",
+    [target.client_id],
+  );
+  await client.query(
+    "delete from public.client_photos where client_id=$1",
+    [target.client_id],
+  );
+  await client.query(
+    "delete from public.before_after_gallery where client_id=$1",
+    [target.client_id],
+  );
+  await client.query(
+    "delete from public.notifications where profile_id=$1",
+    [target.profile_id],
+  );
+  await client.query(
+    "delete from public.notification_preferences where profile_id=$1",
+    [target.profile_id],
+  );
+  const completed = await client.query(
+    `update public.account_deletion_requests
+     set status='completed',reviewed_at=now(),reviewed_by=$2
+     where id=$1 and status='under_review' returning *`,
+    [requestId, adminId],
+  );
+  await client.query(
+    `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
+     values($1,'account_anonymized','account_deletion_request',$2,$3)`,
+    [
+      adminId,
+      requestId,
+      JSON.stringify({
+        profile_id: target.profile_id,
+        client_id: target.client_id,
+        removed_media: mediaUrls.length,
+        financial_records_preserved: true,
+      }),
+    ],
+  );
+  return { request: completed.rows[0], mediaUrls, cardInstruments };
+}
+
+async function reviewDeletion(user, body) {
+  requireRole(user, ["admin"]);
+  const requestId = validUuid(body.requestId, "Solicitação");
+  const action = clean(body.action);
+  if (!['approve', 'reject'].includes(action))
+    throw appError("Ação de exclusão inválida.");
+  if (action === "reject")
+    return transaction(async (client) => {
+      const rejected = await client.query(
+        `update public.account_deletion_requests
+         set status='rejected',reviewed_at=now(),reviewed_by=$2
+         where id=$1 and status in ('requested','under_review')
+         returning id,profile_id,status,reviewed_at`,
+        [requestId, user.id],
+      );
+      if (!rejected.rows[0])
+        throw appError("Solicitação de exclusão não encontrada.", 404);
+      await client.query(
+        `update public.profiles set account_status='active',updated_at=now()
+         where id=$1 and account_status='deletion_requested'`,
+        [rejected.rows[0].profile_id],
+      );
+      await client.query(
+        `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
+         values($1,'account_deletion_rejected','account_deletion_request',$2,$3)`,
+        [user.id, requestId, JSON.stringify({ reason: clean(body.reason) || null })],
+      );
+      return { request: rejected.rows[0], cleanup: { attempted: 0, failed: 0 } };
+    });
+
+  const result = await transaction((client) =>
+    anonymizeClientAccount(client, { requestId, adminId: user.id }),
+  );
+  const cleanup = await Promise.allSettled(
+    [...new Set(result.mediaUrls)].map((url) => deleteFromCloudinary(url)),
+  );
+  const cardCleanup = await Promise.allSettled(
+    result.cardInstruments.map(({ customerId, token }) =>
+      deactivateSumupPaymentInstrument(customerId, token).catch((error) => {
+        if (error.providerStatus === 404) return { alreadyRemoved: true };
+        throw error;
+      }),
+    ),
+  );
+  const mediaFailed = cleanup.filter(
+    (item) =>
+      item.status === "rejected" ||
+      (item.status === "fulfilled" && item.value?.success !== true),
+  ).length;
+  const cardFailed = cardCleanup.filter(
+    (item) => item.status === "rejected",
+  ).length;
+  const failed = mediaFailed + cardFailed;
+  if (failed)
+    console.error("Account media cleanup incomplete", {
+      requestId,
+      attempted: cleanup.length,
+      failed,
+      mediaFailed,
+      cardFailed,
+    });
+  return {
+    request: result.request,
+    cleanup: {
+      attempted: cleanup.length + cardCleanup.length,
+      failed,
+      mediaFailed,
+      cardFailed,
+    },
+  };
 }
 
 async function createReferral(user, body) {
@@ -1048,8 +1617,10 @@ async function markNotification(user, body) {
 async function updateManualPayment(user, body) {
   requireRole(user, ["admin"]);
   const id = validUuid(body.id, "Pagamento");
-  const status = clean(body.status);
+  const receiptAction = clean(body.receiptAction);
+  const requestedStatus = clean(body.status);
   if (
+    !receiptAction &&
     ![
       "pending",
       "under_review",
@@ -1057,7 +1628,7 @@ async function updateManualPayment(user, body) {
       "partial",
       "cancelled",
       "refunded",
-    ].includes(status)
+    ].includes(requestedStatus)
   )
     throw appError("Status de pagamento inválido.");
   const result = await transaction(async (client) => {
@@ -1066,19 +1637,67 @@ async function updateManualPayment(user, body) {
       [id],
     );
     if (!previous.rows[0]) throw appError("Pagamento não encontrado.", 404);
+    const payment = previous.rows[0];
+    let status = requestedStatus;
+    let receiptUrl = clean(body.receiptUrl) || payment.receipt_url || null;
+    let receipt = null;
+    let activationContact = null;
+    let notes = clean(body.notes) || "Atualização manual pela administração";
+
+    if (receiptAction) {
+      const receiptId = validUuid(body.receiptId, "Comprovante");
+      const found = await client.query(
+        "select * from public.payment_receipts where id=$1 and payment_id=$2 for update",
+        [receiptId, id],
+      );
+      receipt = found.rows[0];
+      if (!receipt) throw appError("Comprovante não encontrado.", 404);
+      const review = resolveReceiptReview(receipt.status, receiptAction);
+      if (review.error) throw appError(review.error, 409);
+      if (!review.changed)
+        return { payment, contact: null, idempotent: true };
+      const rejectionReason = clean(body.rejectionReason);
+      if (receiptAction === "reject" && rejectionReason.length < 3)
+        throw appError("Informe o motivo da rejeição.");
+      status = receiptAction === "approve" ? "paid" : "pending";
+      receiptUrl = receiptAction === "approve" ? receipt.storage_url : null;
+      notes =
+        receiptAction === "approve"
+          ? "Comprovante aprovado pela administração"
+          : `Comprovante rejeitado: ${rejectionReason}`;
+      await client.query(
+        `update public.payment_receipts set status=$1,reviewed_by=$2,reviewed_at=now(),rejection_reason=$3 where id=$4`,
+        [
+          review.status,
+          user.id,
+          receiptAction === "reject" ? rejectionReason : null,
+          receipt.id,
+        ],
+      );
+    } else {
+      if (payment.status === status)
+        return { payment, contact: null, idempotent: true };
+      if (payment.status === "paid" && status !== "refunded")
+        throw appError("Um pagamento confirmado não pode regredir de status.", 409);
+      if (status === "paid" && payment.provider === "sumup")
+        throw appError("Sincronize este pagamento diretamente com a SumUp.", 409);
+      if (status === "paid" && payment.provider === "pix_manual")
+        throw appError("Aprove o comprovante antes de confirmar este Pix.", 409);
+    }
+
     const paidAmount =
       status === "paid"
-        ? previous.rows[0].amount
+        ? payment.amount
         : body.paidAmount == null
-          ? previous.rows[0].paid_amount
+          ? payment.paid_amount
           : money(body.paidAmount);
     const { rows } = await client.query(
-      `update public.payments set status=$1,paid_amount=$2,receipt_url=coalesce($3,receipt_url),notes=coalesce($4,notes),confirmed_by=$5,paid_at=case when $1='paid' then coalesce(paid_at,now()) else paid_at end,updated_at=now() where id=$6 returning *`,
+      `update public.payments set status=$1,paid_amount=$2,receipt_url=$3,notes=$4,confirmed_by=case when $1='paid' then $5 else confirmed_by end,paid_at=case when $1='paid' then coalesce(paid_at,now()) else paid_at end,updated_at=now() where id=$6 returning *`,
       [
         status,
         paidAmount,
-        clean(body.receiptUrl) || null,
-        clean(body.notes) || null,
+        receiptUrl,
+        notes,
         user.id,
         id,
       ],
@@ -1087,10 +1706,10 @@ async function updateManualPayment(user, body) {
       `insert into public.payment_status_history(payment_id,old_status,new_status,changed_by,notes) values($1,$2,$3,$4,$5)`,
       [
         id,
-        previous.rows[0].status,
+        payment.status,
         status,
         user.id,
-        clean(body.notes) || "Atualização manual pela administração",
+        notes,
       ],
     );
     if (status === "paid" && rows[0].appointment_id)
@@ -1117,7 +1736,7 @@ async function updateManualPayment(user, body) {
       );
     if (rows[0].subscription_id && status === "paid") {
       const subscription = await client.query(
-        `update public.subscriptions s set status='active',starts_at=coalesce(starts_at,current_date),renews_at=coalesce(renews_at,current_date+interval '1 month'),expires_at=coalesce(expires_at,current_date+interval '1 month'),remaining_maintenances=coalesce(nullif(remaining_maintenances,0),(select case when p.name='Essencial' then 1 when p.name='Completo' then 2 when p.name='VIP' then 3 else 4 end from public.plans p where p.id=s.plan_id)),updated_at=now() where s.id=$1 returning s.client_id,s.plan_id`,
+        `update public.subscriptions s set status='active',starts_at=coalesce(starts_at,current_date),activated_at=coalesce(activated_at,now()),renews_at=coalesce(renews_at,current_date+interval '1 month'),expires_at=coalesce(expires_at,current_date+interval '1 month'),remaining_maintenances=coalesce(nullif(remaining_maintenances,0),(select case when p.name='Essencial' then 1 when p.name='Completo' then 2 when p.name='VIP' then 3 else 4 end from public.plans p where p.id=s.plan_id)),updated_at=now() where s.id=$1 returning s.client_id,s.plan_id`,
         [rows[0].subscription_id],
       );
       if (subscription.rows[0]) {
@@ -1134,10 +1753,56 @@ async function updateManualPayment(user, body) {
               JSON.stringify({ subscription_id: rows[0].subscription_id }),
             ],
           );
-        return { payment: rows[0], contact: contact.rows[0] };
+        activationContact = contact.rows[0] || null;
       }
     }
-    return { payment: rows[0], contact: null };
+    const profile = await client.query(
+      "select profile_id from public.clients where id=$1",
+      [rows[0].client_id],
+    );
+    if (profile.rows[0]) {
+      const rejected = receiptAction === "reject";
+      const confirmed = status === "paid";
+      const notificationData = JSON.stringify({
+        payment_id: rows[0].id,
+        receipt_id: receipt?.id || null,
+        status,
+      });
+      await client.query(
+        `insert into public.notifications(profile_id,kind,title,body,data,action_url,metadata) values($1,$2,$3,$4,$5,$6,$5)`,
+        [
+          profile.rows[0].profile_id,
+          rejected
+            ? "payment_receipt_rejected"
+            : confirmed
+              ? "payment_confirmed"
+              : "payment_status",
+          rejected
+            ? "Comprovante rejeitado"
+            : confirmed
+              ? "Pagamento confirmado"
+              : "Pagamento atualizado",
+          rejected
+            ? "Revise o motivo e envie um novo comprovante."
+            : confirmed
+              ? receipt
+                ? "Seu comprovante foi aprovado e o pagamento foi confirmado."
+                : "Seu pagamento foi confirmado pela administração."
+              : `O pagamento está ${status}.`,
+          notificationData,
+          `/cliente/pagamentos/${id}`,
+        ],
+      );
+    }
+    await client.query(
+      `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data) values($1,'update','payment',$2,$3)`,
+      [
+        user.id,
+        id,
+        JSON.stringify({ status, receiptId: receipt?.id || null, receiptAction }),
+      ],
+    );
+    return { payment: rows[0], contact: activationContact };
   });
   if (result.contact?.email)
     await sendEmail({
@@ -1167,7 +1832,7 @@ async function updateClientStatus(user, body) {
   requireRole(user, ["admin"]);
   const clientId = validUuid(body.clientId, "Cliente");
   const status = clean(body.status);
-  if (!["active", "blocked", "deletion_requested"].includes(status))
+  if (!["active", "blocked"].includes(status))
     throw appError("Status da conta inválido.");
   const { rows } = await query(
     `update public.profiles p set account_status=$1,updated_at=now() from public.clients c where c.profile_id=p.id and c.id=$2 returning p.id,p.account_status`,
@@ -1331,6 +1996,8 @@ async function mutate(user, resource, body) {
   if (resource === "profile") return updateProfile(user, body);
   if (resource === "subscription-request")
     return requestSubscription(user, body);
+  if (resource === "subscription-recurring")
+    return updateSubscriptionRecurring(user, body);
   if (resource === "cards" && body.action) return updateCard(user, body);
   if (resource === "cards") return saveCard(user, body);
   if (resource === "notification-preferences")
@@ -1338,6 +2005,7 @@ async function mutate(user, resource, body) {
   if (resource === "privacy-consent") return updateConsent(user, body);
   if (resource === "data-export") return exportData(user);
   if (resource === "deletion-request") return requestDeletion(user, body);
+  if (resource === "deletion-review") return reviewDeletion(user, body);
   if (resource === "referrals") return createReferral(user, body);
   if (resource === "notification-read") return markNotification(user, body);
   if (resource === "admin-payment") return updateManualPayment(user, body);

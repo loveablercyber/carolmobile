@@ -247,6 +247,7 @@ function Discover() {
   const [answer, setAnswer] = useState<Record<string, string>>({});
   const [files, setFiles] = useState<string[]>([]);
   const [uploading, setUploading] = useState<number | null>(null);
+  const [uploadMessage, setUploadMessage] = useState("");
   const [specialist, setSpecialist] = useState<{ name: string; photo: string } | null>(null);
   const navigate = useNavigate();
 
@@ -273,12 +274,12 @@ function Discover() {
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const preview = URL.createObjectURL(file);
-    setFiles((current) => {
-      const next = [...current];
-      next[index] = preview;
-      return next;
-    });
+    if (!file.type.startsWith("image/") || file.size > 10 * 1024 * 1024) {
+      setUploadMessage("Selecione uma imagem de até 10 MB.");
+      setTimeout(() => setUploadMessage(""), 2800);
+      e.target.value = "";
+      return;
+    }
     setUploading(index);
     try {
       const uploaded = await uploadImage(file, kind.toLowerCase());
@@ -295,14 +296,23 @@ function Discover() {
         next[index] = uploaded.url;
         return next;
       });
+      setUploadMessage("Foto enviada com sucesso.");
     } catch (error) {
-      console.error(error);
+      console.error("Discovery photo upload error", error);
+      setUploadMessage(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível enviar a foto.",
+      );
     } finally {
       setUploading(null);
+      e.target.value = "";
+      setTimeout(() => setUploadMessage(""), 2800);
     }
   };
   return (
     <div className="animate-fade-up">
+      <Toast show={!!uploadMessage} message={uploadMessage} />
       <PageHeader
         eyebrow="DIAGNÓSTICO INTELIGENTE"
         title={
@@ -478,6 +488,7 @@ function Discover() {
                         <input
                           type="file"
                           accept="image/*"
+                          disabled={uploading !== null}
                           onChange={(e) => addFiles(e, i, label)}
                           className="hidden"
                         />
@@ -800,6 +811,10 @@ function ClientAgenda() {
   const [remoteAppointments, setRemoteAppointments] = useState<
     Array<Record<string, any>>
   >([]);
+  const [rescheduleRequests, setRescheduleRequests] = useState<
+    Array<Record<string, any>>
+  >([]);
+  const [busyRequestId, setBusyRequestId] = useState("");
   const [availability, setAvailability] = useState<Record<string, boolean>>({});
   const [resolvedProfessionalId, setResolvedProfessionalId] = useState("");
   const [checkingAvailability, setCheckingAvailability] = useState(false);
@@ -824,8 +839,19 @@ function ClientAgenda() {
       setRemoteAppointments(data.appointments);
       return data.appointments;
     });
+  const refreshRescheduleRequests = () =>
+    apiFetch<{ requests: Array<Record<string, any>> }>(
+      "/api/data?resource=reschedule-requests",
+    ).then((data) => {
+      setRescheduleRequests(data.requests || []);
+      return data.requests;
+    });
   useEffect(() => {
-    refreshAppointments().catch((error) => {
+    const init = async () => {
+      await refreshAppointments();
+      await refreshRescheduleRequests();
+    };
+    init().catch((error) => {
       console.error("Client appointments load error", error);
       setBookingError(
         error instanceof Error
@@ -1027,6 +1053,7 @@ function ClientAgenda() {
         }),
       });
       await refreshAppointments();
+      await refreshRescheduleRequests();
       setReschedule(null);
       setToastMessage(
         "Reagendamento solicitado com sucesso. A profissional recebeu a solicitação.",
@@ -1042,6 +1069,32 @@ function ClientAgenda() {
       setToast(true);
     } finally {
       setRescheduling(false);
+      setTimeout(() => setToast(false), 3200);
+    }
+  };
+  const handleRespondReschedule = async (requestId: string, action: "accept" | "reject") => {
+    setBusyRequestId(requestId);
+    try {
+      await apiFetch("/api/data?resource=reschedule-requests", {
+        method: "PATCH",
+        body: JSON.stringify({ id: requestId, action }),
+      });
+      setToastMessage(
+        action === "accept"
+          ? "Novo horário confirmado com sucesso!"
+          : "Sugestão de reagendamento recusada."
+      );
+      setToast(true);
+      await refreshAppointments();
+      await refreshRescheduleRequests();
+    } catch (error) {
+      console.error("Error responding to reschedule request", error);
+      setToastMessage(
+        error instanceof Error ? error.message : "Não foi possível responder."
+      );
+      setToast(true);
+    } finally {
+      setBusyRequestId("");
       setTimeout(() => setToast(false), 3200);
     }
   };
@@ -1194,6 +1247,98 @@ function ClientAgenda() {
                   )}
                 </div>
               </div>
+
+              {/* Reschedule alert section */}
+              {(() => {
+                const activeRequest = rescheduleRequests.find(
+                  (r) => r.appointment_id === appointment.id && ["pending", "suggested"].includes(r.status)
+                );
+                if (!activeRequest) return null;
+
+                if (activeRequest.status === "suggested") {
+                  const prettySuggestedTime = new Date(activeRequest.suggested_starts_at).toLocaleString("pt-BR", {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  });
+                  return (
+                    <div
+                      className={`mt-6 rounded-2xl border p-4 text-xs animate-fade-down ${
+                        index === 0
+                          ? "border-white/20 bg-white/10 text-white"
+                          : "border-champagne/20 bg-champagne/[.04] text-stone-800"
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <Sparkles size={16} className="text-champagne shrink-0 mt-0.5" />
+                        <div className="flex-1 space-y-1">
+                          <p className="font-bold">
+                            Sugestão de novo horário recebida:
+                          </p>
+                          <p className="font-semibold text-[13px]">
+                            {prettySuggestedTime}
+                          </p>
+                          {activeRequest.response_note && (
+                            <p className={`text-[11px] leading-relaxed italic ${index === 0 ? "text-white/70" : "text-stone-500"}`}>
+                              "{activeRequest.response_note}"
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-2 justify-end">
+                        <button
+                          type="button"
+                          disabled={busyRequestId === activeRequest.id}
+                          onClick={() => handleRespondReschedule(activeRequest.id, "reject")}
+                          className={`rounded-xl px-4 py-2 text-[11px] font-bold transition disabled:opacity-50 ${
+                            index === 0
+                              ? "border border-white/20 bg-white/5 text-white hover:bg-white/10"
+                              : "border border-black/10 bg-white text-stone-600 hover:bg-black/5"
+                          }`}
+                        >
+                          Recusar Sugestão
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busyRequestId === activeRequest.id}
+                          onClick={() => handleRespondReschedule(activeRequest.id, "accept")}
+                          className={`rounded-xl px-4 py-2 text-[11px] font-bold transition disabled:opacity-50 ${
+                            index === 0
+                              ? "bg-white text-ink hover:bg-white/95"
+                              : "btn-primary !min-h-0 !py-2"
+                          }`}
+                        >
+                          Confirmar Novo Horário
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (activeRequest.status === "pending") {
+                  return (
+                    <div
+                      className={`mt-5 flex gap-2.5 rounded-2xl border p-4 text-[11px] leading-relaxed ${
+                        index === 0
+                          ? "border-white/10 bg-white/5 text-white/80"
+                          : "border-black/5 bg-warm/40 text-stone-500"
+                      }`}
+                    >
+                      <Clock3 size={15} className="shrink-0 mt-0.5 text-champagne" />
+                      <span>
+                        Você solicitou reagendamento para{" "}
+                        <b>
+                          {new Date(activeRequest.requested_starts_at).toLocaleString("pt-BR", {
+                            dateStyle: "short",
+                            timeStyle: "short",
+                          })}
+                        </b>
+                        . Aguardando retorno da profissional...
+                      </span>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
             </section>
           ))
         ) : (
@@ -1676,4 +1821,3 @@ function BookingStep({
 function WalletIcon({ size = 18 }: { size?: string | number }) {
   return <CreditCard size={size} />;
 }
-

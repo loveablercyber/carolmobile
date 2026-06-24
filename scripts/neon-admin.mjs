@@ -47,6 +47,8 @@ const expectedTables = [
   "waitlist",
   "consent_logs",
   "audit_logs",
+  "card_tokenization_sessions",
+  "subscription_renewal_attempts",
 ];
 
 const client = new Client({
@@ -109,6 +111,18 @@ async function setup() {
   );
   const masterCompletionMigration = await readFile(
     resolve("database/neon-master-completion.sql"),
+    "utf8",
+  );
+  const cardTokenizationMigration = await readFile(
+    resolve("database/neon-card-tokenization.sql"),
+    "utf8",
+  );
+  const recurringBillingMigration = await readFile(
+    resolve("database/neon-recurring-billing.sql"),
+    "utf8",
+  );
+  const cloudinaryRotationMigration = await readFile(
+    resolve("database/neon-cloudinary-rotation.sql"),
     "utf8",
   );
 
@@ -196,6 +210,33 @@ async function setup() {
       await client.query(masterCompletionMigration);
       await client.query(
         "insert into public._luxe_migrations(version, description) values ('007_master_completion', 'Fluxos transacionais, reagendamento e integrações')",
+      );
+    }
+    const { rowCount: cardTokenizationApplied } = await client.query(
+      "select 1 from public._luxe_migrations where version = '008_card_tokenization'",
+    );
+    if (!cardTokenizationApplied) {
+      await client.query(cardTokenizationMigration);
+      await client.query(
+        "insert into public._luxe_migrations(version, description) values ('008_card_tokenization', 'Tokenização segura de cartões via SumUp')",
+      );
+    }
+    const { rowCount: recurringBillingApplied } = await client.query(
+      "select 1 from public._luxe_migrations where version = '009_recurring_billing'",
+    );
+    if (!recurringBillingApplied) {
+      await client.query(recurringBillingMigration);
+      await client.query(
+        "insert into public._luxe_migrations(version, description) values ('009_recurring_billing', 'Cobrança recorrente idempotente de assinaturas')",
+      );
+    }
+    const { rowCount: cloudinaryRotationApplied } = await client.query(
+      "select 1 from public._luxe_migrations where version = '010_cloudinary_rotation'",
+    );
+    if (!cloudinaryRotationApplied) {
+      await client.query(cloudinaryRotationMigration);
+      await client.query(
+        "insert into public._luxe_migrations(version, description) values ('010_cloudinary_rotation', 'Rotação global de uploads entre contas Cloudinary')",
       );
     }
     await client.query("commit");

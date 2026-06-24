@@ -47,6 +47,7 @@ const labels: Record<string, string> = {
   requested: "Solicitado",
   pending: "Pendente",
   under_review: "Em análise",
+  approved: "Aprovado",
   paid: "Pago",
   partial: "Parcial",
   cancelled: "Cancelado",
@@ -55,6 +56,8 @@ const labels: Record<string, string> = {
   awaiting_payment: "Aguardando pagamento",
   blocked: "Bloqueada",
   deletion_requested: "Exclusão solicitada",
+  rejected: "Rejeitada",
+  anonymized: "Anonimizada",
   confirmed: "Confirmado",
   pending_deposit: "Aguardando sinal",
   reschedule_requested: "Reagendamento solicitado",
@@ -78,6 +81,7 @@ const tone = (s: string): "green" | "amber" | "rose" | "gold" | "neutral" =>
             "refunded",
             "blocked",
             "deletion_requested",
+            "rejected",
             "no_show",
           ].includes(s)
         ? "rose"
@@ -313,6 +317,8 @@ export function AdminClientDetailPage() {
   const [tab, setTab] = useState("Resumo");
   const [note, setNote] = useState("");
   const [toast, setToast] = useState("");
+  const [reviewAction, setReviewAction] = useState<"approve" | "reject" | "">("");
+  const [reviewing, setReviewing] = useState(false);
   if (p.loading) return <LoadingState />;
   if (!p.data) return <ErrorBox text={p.error} />;
   const d = p.data,
@@ -350,6 +356,25 @@ export function AdminClientDetailPage() {
       setTimeout(() => setToast(""), 2200);
     }
   };
+  const reviewDeletion = async () => {
+    if (!d.deletion?.id || !reviewAction) return;
+    setReviewing(true);
+    try {
+      const result = await apiFetch<{data:{cleanup?:{failed:number}}}>("/api/portal?resource=deletion-review", {
+        method: "POST",
+        body: JSON.stringify({ requestId: d.deletion.id, action: reviewAction }),
+      });
+      await p.reload();
+      setReviewAction("");
+      setToast(result.data.cleanup?.failed ? "Conta anonimizada, mas algumas mídias exigem limpeza manual." : reviewAction === "approve" ? "Conta anonimizada com sucesso." : "Solicitação rejeitada.");
+    } catch (e) {
+      console.error("Deletion review error", e);
+      setToast(e instanceof Error ? e.message : "Não foi possível concluir a análise.");
+    } finally {
+      setReviewing(false);
+      setTimeout(() => setToast(""), 2600);
+    }
+  };
   const tabs = [
     "Resumo",
     "Agendamentos",
@@ -368,7 +393,7 @@ export function AdminClientDetailPage() {
         eyebrow="FICHA COMPLETA"
         title={profile.full_name}
         subtitle={`${profile.email} • ${profile.phone}`}
-        action={
+        action={["active", "blocked"].includes(profile.account_status) ?
           <div className="flex gap-2">
             <button
               onClick={() =>
@@ -386,7 +411,7 @@ export function AdminClientDetailPage() {
               <Plus size={15} />
               Novo agendamento
             </a>
-          </div>
+          </div> : undefined
         }
       />
       <section className="surface p-6">
@@ -534,23 +559,10 @@ export function AdminClientDetailPage() {
             )}
           />
         )}{" "}
-        {tab === "Privacidade" && (
-          <TableEmpty
-            rows={d.consents}
-            render={(x: any) => (
-              <Row
-                key={x.consent_type}
-                title={x.consent_type}
-                detail={`Política ${x.policy_version}`}
-                value={
-                  <Badge tone={x.accepted ? "green" : "rose"}>
-                    {x.accepted ? "Aceito" : "Revogado"}
-                  </Badge>
-                }
-              />
-            )}
-          />
-        )}{" "}
+        {tab === "Privacidade" && (<>
+          {d.deletion&&<div className="mb-5 rounded-2xl bg-warm p-5"><div className="flex flex-wrap items-center justify-between gap-3"><span><b className="block text-xs">Solicitação de exclusão</b><small className="text-stone-400">{dt(d.deletion.requested_at)} • {d.deletion.reason||'Sem motivo informado'}</small></span><Badge tone={tone(d.deletion.status)}>{labels[d.deletion.status]||d.deletion.status}</Badge></div>{['requested','under_review'].includes(d.deletion.status)&&<div className="mt-4 flex gap-2"><button onClick={()=>setReviewAction('reject')} className="btn-secondary">Rejeitar</button><button onClick={()=>setReviewAction('approve')} className="btn-primary">Aprovar e anonimizar</button></div>}</div>}
+          <TableEmpty rows={d.consents} render={(x: any) => (<Row key={x.consent_type} title={x.consent_type} detail={`Política ${x.policy_version}`} value={<Badge tone={x.accepted ? "green" : "rose"}>{x.accepted ? "Aceito" : "Revogado"}</Badge>}/>)}/>
+        </>)}{" "}
         {tab === "Histórico" && (
           <>
             <TableEmpty
@@ -582,6 +594,10 @@ export function AdminClientDetailPage() {
           </>
         )}
       </section>
+      <Modal open={!!reviewAction} onClose={()=>{if(!reviewing)setReviewAction("")}} title={reviewAction==='approve'?"Aprovar exclusão":"Rejeitar exclusão"}>
+        <p className="muted">{reviewAction==='approve'?"Esta ação remove dados pessoais, mídias e acesso da conta, preservando registros financeiros anonimizados. Não pode ser desfeita.":"A conta voltará ao estado ativo e a solicitação será encerrada."}</p>
+        <button disabled={reviewing} onClick={reviewDeletion} className="btn-primary mt-5 w-full disabled:opacity-50">{reviewing?'Processando…':reviewAction==='approve'?'Confirmar anonimização':'Confirmar rejeição'}</button>
+      </Modal>
     </div>
   );
 }
@@ -590,7 +606,10 @@ export function AdminPaymentsPage() {
   const p = useLoad<any[]>("/api/portal?resource=admin-payments");
   const [busy, setBusy] = useState("");
   const [toast, setToast] = useState("");
+  const [review, setReview] = useState<any>(null);
+  const [rejectionReason, setRejectionReason] = useState("");
   if (p.loading) return <LoadingState />;
+  if (!p.data) return <ErrorBox text={p.error} />;
   const confirm = async (id: string) => {
     setBusy(id);
     try {
@@ -631,6 +650,39 @@ export function AdminPaymentsPage() {
       setTimeout(() => setToast(""), 2600);
     }
   };
+  const reviewReceipt = async () => {
+    if (!review) return;
+    setBusy(review.id);
+    try {
+      await apiFetch("/api/portal?resource=admin-payment", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: review.id,
+          receiptId: review.receiptId,
+          receiptAction: review.action,
+          rejectionReason,
+        }),
+      });
+      await p.reload();
+      setReview(null);
+      setRejectionReason("");
+      setToast(
+        review.action === "approve"
+          ? "Comprovante aprovado e pagamento confirmado."
+          : "Comprovante rejeitado. A cliente poderá enviar outro.",
+      );
+    } catch (error) {
+      console.error("Payment receipt review error", error);
+      setToast(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível analisar o comprovante.",
+      );
+    } finally {
+      setBusy("");
+      setTimeout(() => setToast(""), 3000);
+    }
+  };
   return (
     <div>
       <Toast show={!!toast} message={toast} />
@@ -651,6 +703,21 @@ export function AdminPaymentsPage() {
                 <span className="text-[10px] text-stone-400">
                   {x.service || x.plan || "Pagamento manual"}
                 </span>
+                {x.latest_receipt_url && (
+                  <a
+                    href={x.latest_receipt_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 block text-[10px] font-bold underline"
+                  >
+                    Ver comprovante
+                  </a>
+                )}
+                {x.latest_receipt_rejection_reason && (
+                  <small className="mt-1 block text-rose-700">
+                    Motivo: {x.latest_receipt_rejection_reason}
+                  </small>
+                )}
               </span>
               <span className="hidden text-xs sm:block">
                 {x.provider || "manual"}
@@ -660,7 +727,36 @@ export function AdminPaymentsPage() {
               <Badge tone={tone(x.status)}>
                 {labels[x.status] || x.status}
               </Badge>
-              {x.provider === "sumup" && x.provider_checkout_id ? (
+              {x.latest_receipt_status === "under_review" ? (
+                <span className="flex flex-wrap justify-end gap-2">
+                  <button
+                    disabled={busy === x.id}
+                    onClick={() =>
+                      setReview({
+                        id: x.id,
+                        receiptId: x.latest_receipt_id,
+                        action: "reject",
+                      })
+                    }
+                    className="btn-secondary !min-h-9 !px-3"
+                  >
+                    Rejeitar
+                  </button>
+                  <button
+                    disabled={busy === x.id}
+                    onClick={() =>
+                      setReview({
+                        id: x.id,
+                        receiptId: x.latest_receipt_id,
+                        action: "approve",
+                      })
+                    }
+                    className="btn-primary !min-h-9 !px-3"
+                  >
+                    Aprovar
+                  </button>
+                </span>
+              ) : x.provider === "sumup" && x.provider_checkout_id ? (
                 <button
                   disabled={busy === x.id}
                   onClick={() => sync(x.id)}
@@ -668,7 +764,7 @@ export function AdminPaymentsPage() {
                 >
                   {busy === x.id ? "Sincronizando…" : "Atualizar status"}
                 </button>
-              ) : x.status !== "paid" ? (
+              ) : x.provider === "local" && x.status !== "paid" ? (
                 <button
                   disabled={busy === x.id}
                   onClick={() => confirm(x.id)}
@@ -676,9 +772,11 @@ export function AdminPaymentsPage() {
                 >
                   {busy === x.id ? "Confirmando…" : "Confirmar"}
                 </button>
-              ) : (
-                <span />
-              )}
+              ) : x.provider === "pix_manual" && x.status !== "paid" ? (
+                <small className="max-w-28 text-right text-stone-400">
+                  Aguardando comprovante
+                </small>
+              ) : <span />}
             </div>
           ))}
         </section>
@@ -688,6 +786,41 @@ export function AdminPaymentsPage() {
           text="Os pagamentos aparecerão aqui."
         />
       )}
+      <Modal
+        open={Boolean(review)}
+        onClose={() => {
+          if (!busy) {
+            setReview(null);
+            setRejectionReason("");
+          }
+        }}
+        title={review?.action === "approve" ? "Aprovar comprovante" : "Rejeitar comprovante"}
+      >
+        <p className="muted">
+          {review?.action === "approve"
+            ? "A aprovação confirma o pagamento e libera os vínculos associados."
+            : "Informe o motivo para que a cliente possa corrigir e reenviar."}
+        </p>
+        {review?.action === "reject" && (
+          <textarea
+            className="field mt-4 min-h-24 py-3"
+            value={rejectionReason}
+            onChange={(event) => setRejectionReason(event.target.value)}
+            placeholder="Motivo da rejeição"
+          />
+        )}
+        <button
+          disabled={Boolean(busy) || (review?.action === "reject" && rejectionReason.trim().length < 3)}
+          onClick={reviewReceipt}
+          className="btn-primary mt-5 w-full disabled:opacity-50"
+        >
+          {busy
+            ? "Salvando…"
+            : review?.action === "approve"
+              ? "Confirmar aprovação"
+              : "Confirmar rejeição"}
+        </button>
+      </Modal>
     </div>
   );
 }

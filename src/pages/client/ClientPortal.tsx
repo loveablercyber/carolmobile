@@ -31,8 +31,59 @@ import {
   SectionHeading,
   Toast,
 } from "../../components/ui";
-import { apiFetch, uploadImage } from "../../lib/api";
+import { apiFetch, uploadFile, uploadImage } from "../../lib/api";
 import { useAuth } from "../../context/AuthContext";
+
+declare global {
+  interface Window {
+    SumUpCard?: {
+      mount: (options: {
+        id: string;
+        checkoutId: string;
+        onResponse: (type: string, body: unknown) => void;
+      }) => void;
+    };
+  }
+}
+
+let sumupWidgetLoader: Promise<void> | null = null;
+function loadSumupWidget() {
+  if (window.SumUpCard) return Promise.resolve();
+  if (sumupWidgetLoader) return sumupWidgetLoader;
+  sumupWidgetLoader = new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[data-sumup-card-widget="true"]',
+    );
+    const ready = () =>
+      window.SumUpCard
+        ? resolve()
+        : reject(new Error("O widget da SumUp não ficou disponível."));
+    if (existing) {
+      existing.addEventListener("load", ready, { once: true });
+      existing.addEventListener(
+        "error",
+        () => reject(new Error("Não foi possível carregar o widget da SumUp.")),
+        { once: true },
+      );
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://gateway.sumup.com/gateway/ecom/card/v2/sdk.js";
+    script.async = true;
+    script.dataset.sumupCardWidget = "true";
+    script.addEventListener("load", ready, { once: true });
+    script.addEventListener(
+      "error",
+      () => reject(new Error("Não foi possível carregar o widget da SumUp.")),
+      { once: true },
+    );
+    document.head.appendChild(script);
+  }).catch((error) => {
+    sumupWidgetLoader = null;
+    throw error;
+  });
+  return sumupWidgetLoader;
+}
 
 type PortalResponse<T> = { data: T };
 const brl = (value: unknown) =>
@@ -70,6 +121,11 @@ const statusLabel: Record<string, string> = {
   delinquent: "Inadimplente",
   draft: "Rascunho",
   requested: "Solicitação enviada",
+  invited: "Convidado",
+  registered: "Registrado",
+  processing: "Processando",
+  approved: "Aprovado",
+  rejected: "Rejeitado",
   completed: "Concluído",
 };
 const statusTone = (
@@ -77,6 +133,7 @@ const statusTone = (
 ): "green" | "gold" | "amber" | "rose" | "neutral" =>
   status === "paid" ||
   status === "active" ||
+  status === "approved" ||
   status === "completed" ||
   status === "confirmed"
     ? "green"
@@ -92,6 +149,7 @@ const statusTone = (
       : status === "cancelled" ||
           status === "refunded" ||
           status === "failed" ||
+          status === "rejected" ||
           status === "delinquent" ||
           status === "no_show"
         ? "rose"
@@ -594,9 +652,19 @@ export function ClientPaymentsPage() {
   };
   const receipt = async (file?: File) => {
     if (!file || !id) return;
+    if (!(file.type.startsWith("image/") || file.type === "application/pdf")) {
+      setToast("Envie o comprovante em imagem ou PDF.");
+      setTimeout(() => setToast(""), 2800);
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setToast("O arquivo deve ter no máximo 8 MB.");
+      setTimeout(() => setToast(""), 2800);
+      return;
+    }
     setBusy("receipt");
     try {
-      const uploaded = await uploadImage(file, "payment-receipt");
+      const uploaded = await uploadFile(file, "payment-receipt");
       await apiFetch("/api/payments?resource=receipt", {
         method: "POST",
         body: JSON.stringify({ paymentId: id, url: uploaded.url }),
@@ -666,6 +734,36 @@ export function ClientPaymentsPage() {
               Ver comprovante <ExternalLink size={15} />
             </a>
           )}
+          {p.receipts?.length > 0 && (
+            <div className="mt-5 rounded-2xl bg-warm p-4">
+              <b className="block text-xs">Comprovantes enviados</b>
+              {p.receipts.map((item: any) => (
+                <div
+                  key={item.id}
+                  className="mt-3 flex flex-wrap items-start justify-between gap-3 border-t border-black/5 pt-3 text-xs"
+                >
+                  <span>
+                    <a
+                      href={item.storage_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-bold underline"
+                    >
+                      Abrir imagem
+                    </a>
+                    {item.rejection_reason && (
+                      <small className="mt-1 block text-rose-700">
+                        Motivo: {item.rejection_reason}
+                      </small>
+                    )}
+                  </span>
+                  <Badge tone={statusTone(item.status)}>
+                    {statusLabel[item.status] || item.status}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          )}
           {["pending", "failed", "expired", "awaiting_confirmation"].includes(
             p.status,
           ) && (
@@ -697,17 +795,19 @@ export function ClientPaymentsPage() {
                   Pagar no local
                 </button>
               </div>
-              <label className="btn-secondary mt-3 cursor-pointer">
-                <Upload size={16} />
-                {busy === "receipt" ? "Enviando…" : "Enviar comprovante"}
-                <input
-                  type="file"
-                  accept="image/*,application/pdf"
-                  className="hidden"
-                  disabled={!!busy}
-                  onChange={(event) => receipt(event.target.files?.[0])}
-                />
-              </label>
+              {p.provider === "pix_manual" && (
+                <label className="btn-secondary mt-3 cursor-pointer">
+                  <Upload size={16} />
+                  {busy === "receipt" ? "Enviando…" : "Enviar comprovante"}
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    className="hidden"
+                    disabled={!!busy}
+                    onChange={(event) => receipt(event.target.files?.[0])}
+                  />
+                </label>
+              )}
             </div>
           )}
           {p.history?.length > 0 && (
@@ -1091,15 +1191,15 @@ export function ClientHistoryPage() {
 export function ClientCardsPage() {
   const portal = usePortal<any[]>("/api/portal?resource=cards");
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({
-    brand: "Visa",
-    lastFour: "",
-    holderName: "",
-    isDefault: true,
-  });
+  const [setup, setSetup] = useState<{
+    sessionId: string;
+    checkoutId: string;
+    expiresAt: string;
+  } | null>(null);
+  const [widgetError, setWidgetError] = useState("");
+  const [pendingRemoval, setPendingRemoval] = useState<any>(null);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
-  if (portal.loading) return <LoadingState />;
   const act = async (body: any) => {
     setSaving(true);
     try {
@@ -1108,8 +1208,12 @@ export function ClientCardsPage() {
         body: JSON.stringify(body),
       });
       await portal.reload();
-      setOpen(false);
-      setToast("Alterações salvas com sucesso.");
+      setPendingRemoval(null);
+      setToast(
+        body.action === "remove"
+          ? "Cartão removido da SumUp e da sua conta."
+          : "Cartão principal atualizado.",
+      );
     } catch (err) {
       console.error("Card action error", err);
       setToast(
@@ -1122,15 +1226,100 @@ export function ClientCardsPage() {
       setTimeout(() => setToast(""), 2400);
     }
   };
+  const finishSetup = async (sessionId: string) => {
+    setSaving(true);
+    setWidgetError("");
+    try {
+      await apiFetch("/api/payments?resource=card-setup-complete", {
+        method: "POST",
+        body: JSON.stringify({ sessionId }),
+      });
+      await portal.reload();
+      setSetup(null);
+      setOpen(false);
+      setToast("Cartão tokenizado com segurança pela SumUp.");
+    } catch (error) {
+      console.error("Card tokenization confirmation error", error);
+      setWidgetError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível confirmar o cartão.",
+      );
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2800);
+    }
+  };
+  const startSetup = async () => {
+    setSaving(true);
+    setWidgetError("");
+    try {
+      const result = await apiFetch<{
+        sessionId: string;
+        checkoutId: string;
+        expiresAt: string;
+      }>("/api/payments?resource=card-setup", { method: "POST" });
+      setSetup(result);
+    } catch (error) {
+      console.error("Card tokenization start error", error);
+      setWidgetError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível iniciar a tokenização.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+  useEffect(() => {
+    if (!setup?.checkoutId) return;
+    let active = true;
+    loadSumupWidget()
+      .then(() => {
+        if (!active || !window.SumUpCard) return;
+        window.SumUpCard.mount({
+          id: "sumup-card-tokenization",
+          checkoutId: setup.checkoutId,
+          onResponse: (type) => {
+            if (!active) return;
+            const responseType = String(type || "").toLowerCase();
+            if (responseType === "success") void finishSetup(setup.sessionId);
+            else if (["error", "fail", "failed", "invalid"].includes(responseType))
+              setWidgetError("A SumUp não conseguiu tokenizar este cartão.");
+          },
+        });
+      })
+      .catch((error) => {
+        console.error("SumUp widget load error", error);
+        if (active)
+          setWidgetError(
+            error instanceof Error
+              ? error.message
+              : "Não foi possível carregar o widget da SumUp.",
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [setup?.checkoutId]);
+  if (portal.loading) return <LoadingState />;
+  if (!portal.data) return <Notice message={portal.error} />;
   return (
     <div>
       <Toast show={!!toast} message={toast} />
       <PageHeader
         eyebrow="PAGAMENTOS"
         title="Cartões salvos"
-        subtitle="Guardamos somente bandeira e últimos quatro dígitos; nenhum número completo ou CVV."
+        subtitle="A SumUp coleta consentimento e protege os dados. O aplicativo recebe somente bandeira e últimos quatro dígitos."
         action={
-          <button onClick={() => setOpen(true)} className="btn-primary">
+          <button
+            onClick={() => {
+              setSetup(null);
+              setWidgetError("");
+              setOpen(true);
+            }}
+            className="btn-primary"
+          >
             <Plus size={16} />
             Adicionar cartão
           </button>
@@ -1156,15 +1345,18 @@ export function ClientCardsPage() {
                   <Badge tone="gold">PRINCIPAL</Badge>
                 ) : (
                   <button
+                    disabled={saving}
                     onClick={() => act({ id: card.id, action: "default" })}
-                    className="text-[10px] font-bold text-champagne"
+                    className="text-[10px] font-bold text-champagne disabled:opacity-50"
                   >
                     Definir principal
                   </button>
                 )}
                 <button
-                  onClick={() => act({ id: card.id, action: "remove" })}
-                  className="ml-auto text-white/60"
+                  disabled={saving}
+                  onClick={() => setPendingRemoval(card)}
+                  className="ml-auto text-white/60 disabled:opacity-50"
+                  aria-label={`Remover cartão final ${card.last_four}`}
                 >
                   <Trash2 size={16} />
                 </button>
@@ -1174,7 +1366,7 @@ export function ClientCardsPage() {
         ) : (
           <EmptyState
             title="Nenhum cartão salvo"
-            text="Adicione somente uma referência segura para uso futuro."
+            text="Tokenize um cartão com consentimento e 3DS diretamente no ambiente seguro da SumUp."
             action={
               <button onClick={() => setOpen(true)} className="btn-primary">
                 Adicionar cartão
@@ -1185,43 +1377,68 @@ export function ClientCardsPage() {
       </div>
       <Modal
         open={open}
-        onClose={() => setOpen(false)}
-        title="Adicionar cartão"
+        onClose={() => {
+          if (!saving) {
+            setOpen(false);
+            setSetup(null);
+            setWidgetError("");
+          }
+        }}
+        title="Tokenizar cartão com a SumUp"
       >
         <div className="space-y-4">
-          <Field
-            label="Bandeira"
-            value={form.brand}
-            onChange={(v) => setForm({ ...form, brand: v })}
-          />
-          <Field
-            label="Últimos 4 dígitos"
-            value={form.lastFour}
-            onChange={(v) =>
-              setForm({ ...form, lastFour: v.replace(/\D/g, "").slice(0, 4) })
-            }
-          />
-          <Field
-            label="Nome impresso"
-            value={form.holderName}
-            onChange={(v) => setForm({ ...form, holderName: v })}
-          />
-          <label className="flex gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={form.isDefault}
-              onChange={(e) =>
-                setForm({ ...form, isDefault: e.target.checked })
-              }
-            />
-            Definir como cartão principal
-          </label>
+          <p className="muted">
+            Os dados completos e o CVV não passam pelos servidores Carol Sol.
+            A SumUp fará a verificação, coletará seu consentimento e devolverá
+            apenas um instrumento tokenizado.
+          </p>
+          {widgetError && (
+            <div className="rounded-2xl bg-rose-50 p-4 text-xs font-semibold text-rose-800">
+              {widgetError}
+            </div>
+          )}
+          {setup ? (
+            <>
+              <div id="sumup-card-tokenization" className="min-h-52" />
+              <button
+                disabled={saving}
+                onClick={() => finishSetup(setup.sessionId)}
+                className="btn-secondary w-full disabled:opacity-50"
+              >
+                {saving ? "Confirmando…" : "Confirmar após concluir na SumUp"}
+              </button>
+            </>
+          ) : (
+            <button
+              disabled={saving}
+              onClick={startSetup}
+              className="btn-primary w-full disabled:opacity-50"
+            >
+              {saving ? "Preparando ambiente seguro…" : "Continuar com a SumUp"}
+            </button>
+          )}
+        </div>
+      </Modal>
+      <Modal
+        open={Boolean(pendingRemoval)}
+        onClose={() => {
+          if (!saving) setPendingRemoval(null);
+        }}
+        title="Remover cartão"
+      >
+        <div className="space-y-4">
+          <p className="muted">
+            O cartão final {pendingRemoval?.last_four} será desativado também
+            na SumUp e deixará de poder ser usado em pagamentos futuros.
+          </p>
           <button
             disabled={saving}
-            onClick={() => act(form)}
-            className="btn-primary w-full"
+            onClick={() =>
+              act({ id: pendingRemoval?.id, action: "remove" })
+            }
+            className="btn-primary w-full disabled:opacity-50"
           >
-            {saving ? "Salvando…" : "Salvar referência"}
+            {saving ? "Removendo…" : "Confirmar remoção"}
           </button>
         </div>
       </Modal>
@@ -1270,13 +1487,43 @@ export function ClientBenefitsPage() {
     }
   };
   const current = portal.data.subscription;
+  const updateRecurring = async (enabled: boolean) => {
+    if (!current?.id) return;
+    setSaving(true);
+    try {
+      await apiFetch("/api/portal?resource=subscription-recurring", {
+        method: "PATCH",
+        body: JSON.stringify({
+          subscriptionId: current.id,
+          enabled,
+          cardId: enabled ? portal.data.defaultCard?.id : undefined,
+        }),
+      });
+      await portal.reload();
+      setToast(
+        enabled
+          ? "Renovação automática ativada no cartão principal."
+          : "Renovação automática desativada.",
+      );
+    } catch (err) {
+      console.error("Subscription recurring consent error", err);
+      setToast(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível atualizar a renovação automática.",
+      );
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 3200);
+    }
+  };
   return (
     <div>
       <Toast show={!!toast} message={toast} />
       <PageHeader
         eyebrow="CLUBE CAROL SOL"
         title="Benefícios e planos"
-        subtitle="Planos só são ativados após a confirmação manual do pagamento."
+        subtitle="Contratação e renovações só mudam após confirmação real do pagamento."
       />
       <section className="hair-gradient rounded-[28px] p-7 text-white">
         <div className="flex justify-between">
@@ -1307,6 +1554,54 @@ export function ClientBenefitsPage() {
           </div>
         )}
       </section>
+      {current && (
+        <section className="surface mt-5 p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="font-display text-2xl">Renovação automática</h3>
+              <p className="muted mt-1">
+                {current.auto_renew
+                  ? `Ativa no cartão final ${current.recurring_card_last_four || "••••"}. A cobrança ocorrerá no vencimento.`
+                  : portal.data.defaultCard
+                    ? `Use o cartão principal final ${portal.data.defaultCard.last_four} nas próximas renovações.`
+                    : "Adicione e defina um cartão principal para ativar a renovação."}
+              </p>
+              {Number(current.renewal_failures || 0) > 0 && (
+                <p className="mt-2 text-xs font-semibold text-rose-700">
+                  Falhas consecutivas: {current.renewal_failures}. Próxima tentativa: {date(current.next_retry_at)}.
+                </p>
+              )}
+            </div>
+            {current.auto_renew ? (
+              <button
+                disabled={saving}
+                onClick={() => updateRecurring(false)}
+                className="btn-secondary disabled:opacity-50"
+              >
+                {saving ? "Salvando…" : "Desativar renovação"}
+              </button>
+            ) : portal.data.defaultCard ? (
+              <button
+                disabled={saving || current.status !== "active"}
+                onClick={() => updateRecurring(true)}
+                className="btn-primary disabled:opacity-50"
+              >
+                {saving ? "Salvando…" : "Ativar renovação"}
+              </button>
+            ) : (
+              <button
+                onClick={() => nav("/cliente/cartoes")}
+                className="btn-secondary"
+              >
+                Adicionar cartão
+              </button>
+            )}
+          </div>
+          <p className="mt-4 text-[10px] leading-relaxed text-stone-400">
+            Ao ativar, você autoriza cobranças recorrentes do valor vigente do plano no cartão indicado. É possível revogar esta autorização antes do próximo vencimento.
+          </p>
+        </section>
+      )}
       <section className="mt-8">
         <SectionHeading title="Planos disponíveis" />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -1524,13 +1819,13 @@ export function ClientNotificationsPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
   useEffect(() => {
-    if (portal.data?.preferences)
+    if (portal.data)
       setPrefs({
-        inApp: portal.data.preferences.in_app,
-        whatsapp: portal.data.preferences.whatsapp,
-        email: portal.data.preferences.email,
-        reminders: portal.data.preferences.reminders,
-        promotions: portal.data.preferences.promotions,
+        inApp: portal.data.preferences?.in_app ?? true,
+        whatsapp: portal.data.preferences?.whatsapp ?? true,
+        email: portal.data.preferences?.email ?? true,
+        reminders: portal.data.preferences?.reminders ?? true,
+        promotions: portal.data.preferences?.promotions ?? true,
       });
   }, [portal.data]);
   if (portal.loading) return <LoadingState />;
@@ -1658,6 +1953,8 @@ export function ClientPrivacyPage() {
   const portal = usePortal<any>("/api/portal?resource=privacy");
   const [toast, setToast] = useState("");
   const [deletion, setDeletion] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [deletionSaving, setDeletionSaving] = useState(false);
   if (portal.loading) return <LoadingState />;
   const update = async (type: string, accepted: boolean) => {
     try {
@@ -1675,6 +1972,7 @@ export function ClientPrivacyPage() {
     }
   };
   const download = async () => {
+    setExporting(true);
     try {
       const result = await apiFetch<PortalResponse<any>>(
         "/api/portal?resource=data-export",
@@ -1686,14 +1984,17 @@ export function ClientPrivacyPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "dados-carol-sol.json";
+      a.download = `dados-carol-sol-${result.data.request.id}.json`;
       a.click();
-      URL.revokeObjectURL(url);
-      portal.reload();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      await portal.reload();
       setToast("Exportação gerada com sucesso.");
     } catch (err) {
       console.error("Data export error", err);
       setToast("Não foi possível gerar a exportação.");
+    } finally {
+      setExporting(false);
+      setTimeout(() => setToast(""), 2200);
     }
   };
   return (
@@ -1738,18 +2039,30 @@ export function ClientPrivacyPage() {
           ))}
         </div>
         <div className="mt-6 flex flex-wrap gap-3 border-t border-black/5 pt-6">
-          <button onClick={download} className="btn-secondary">
+          <button disabled={exporting} onClick={download} className="btn-secondary disabled:opacity-50">
             <Download size={16} />
-            Exportar meus dados
+            {exporting ? "Gerando…" : "Exportar meus dados"}
           </button>
           <button
+            disabled={Boolean(portal.data?.deletion&&['requested','under_review'].includes(portal.data.deletion.status))}
             onClick={() => setDeletion(true)}
-            className="btn-secondary text-rose-700"
+            className="btn-secondary text-rose-700 disabled:opacity-50"
           >
             <Trash2 size={16} />
             Solicitar exclusão
           </button>
         </div>
+        {portal.data?.exports?.length ? (
+          <div className="mt-5 border-t border-black/5 pt-5">
+            <SectionHeading title="Histórico de exportações" />
+            {portal.data.exports.map((item: any) => (
+              <div key={item.id} className="flex justify-between border-b border-black/5 py-3 text-xs">
+                <span>{dateTime(item.requested_at)}</span>
+                <Badge tone={statusTone(item.status)}>{statusLabel[item.status] || item.status}</Badge>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {portal.data?.deletion && (
           <div className="mt-5 rounded-2xl bg-amber-50 p-4 text-xs text-amber-800">
             Solicitação de exclusão:{" "}
@@ -1771,6 +2084,7 @@ export function ClientPrivacyPage() {
         </p>
         <button
           onClick={async () => {
+            setDeletionSaving(true);
             try {
               await apiFetch("/api/portal?resource=deletion-request", {
                 method: "POST",
@@ -1786,11 +2100,15 @@ export function ClientPrivacyPage() {
                   ? err.message
                   : "Não foi possível concluir a ação.",
               );
+            } finally {
+              setDeletionSaving(false);
+              setTimeout(() => setToast(""), 2200);
             }
           }}
-          className="btn-primary mt-5 w-full"
+          disabled={deletionSaving}
+          className="btn-primary mt-5 w-full disabled:opacity-50"
         >
-          Confirmar solicitação
+          {deletionSaving ? "Enviando…" : "Confirmar solicitação"}
         </button>
       </Modal>
     </div>

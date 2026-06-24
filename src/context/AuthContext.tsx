@@ -5,7 +5,7 @@ type AuthContextValue = {
   user: SessionUser | null
   loading: boolean
   login: (identifier: string, password: string) => Promise<SessionUser>
-  register: (fullName: string, email: string, password: string) => Promise<SessionUser>
+  register: (fullName: string, email: string, password: string, refCode?: string | null) => Promise<SessionUser>
   logout: () => Promise<void>
   refresh: () => Promise<void>
 }
@@ -28,8 +28,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await apiFetch<{ user: SessionUser }>('/api/auth', { method: 'POST', body: JSON.stringify({ action: 'login', identifier, password }) })
     setUser(data.user); return data.user
   }
-  const register = async (fullName: string, email: string, password: string) => {
-    const data = await apiFetch<{ user: SessionUser }>('/api/auth', { method: 'POST', body: JSON.stringify({ action: 'register', fullName, email, password }) })
+  const register = async (fullName: string, email: string, password: string, refCode?: string | null) => {
+    const data = await apiFetch<{ user: SessionUser }>('/api/auth', { method: 'POST', body: JSON.stringify({ action: 'register', fullName, email, password, refCode }) })
     setUser(data.user); return data.user
   }
   const logout = async () => {
