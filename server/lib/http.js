@@ -35,7 +35,12 @@ export function handleError(res, error) {
       stack: process.env.NODE_ENV === 'production' ? undefined : error.stack
     })
   }
-  return send(res, status, { error: status >= 500 ? 'Não foi possível concluir a operação.' : error.message })
+  return send(res, status, {
+    error:
+      status >= 500 && error.expose !== true
+        ? 'Não foi possível concluir a operação.'
+        : error.message,
+  })
 }
 
 export function appError(message, status = 400) {

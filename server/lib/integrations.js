@@ -1,27 +1,8 @@
 import { createHash } from "node:crypto";
+import { sendBaileysTextMessage } from "./baileys-client.js";
 
 const truthy = (value) =>
   ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
-
-function asList(value) {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    if (Array.isArray(parsed)) return parsed;
-  } catch {}
-  return String(value)
-    .split(/[,;|]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function hashIndex(value, length) {
-  if (length <= 1) return 0;
-  const hash = createHash("sha256")
-    .update(String(value || Date.now()))
-    .digest();
-  return hash.readUInt32BE(0) % length;
-}
 
 export function cloudinaryProviders() {
   let parsed;
@@ -117,47 +98,13 @@ export async function sendWhatsApp({ to, text }) {
     !to
   )
     return { skipped: true };
-  const instances = asList(process.env.BAILEYS_DEFAULT_INSTANCE);
-  const apiKeys = asList(process.env.BAILEYS_API_KEY);
-  const tokens = asList(process.env.BAILEYS_API_TOKEN);
-  const size = Math.max(instances.length, apiKeys.length, tokens.length, 1);
-  const index = hashIndex(to, size);
-  const instance =
-    instances[index % Math.max(instances.length, 1)] ||
-    instances[0] ||
-    "default";
-  const apiKey = apiKeys[index % Math.max(apiKeys.length, 1)] || apiKeys[0];
-  const token = tokens[index % Math.max(tokens.length, 1)] || tokens[0];
-  const base = process.env.BAILEYS_API_URL.replace(/\/$/, "");
-  const headers = { "Content-Type": "application/json" };
-  if (apiKey) {
-    headers.apikey = apiKey;
-    headers["x-api-key"] = apiKey;
-  }
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const number = String(to).replace(/\D/g, "");
-  const attempts = [
-    {
-      url: `${base}/message/sendText/${encodeURIComponent(instance)}`,
-      body: { number, text },
-    },
-    {
-      url: `${base}/api/send-message`,
-      body: { instance, phone: number, message: text },
-    },
-  ];
-  let lastStatus = 0;
-  for (const attempt of attempts) {
-    const response = await fetch(attempt.url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(attempt.body),
-    });
-    lastStatus = response.status;
-    if (response.ok) return { sent: true, instance };
-    if (![404, 405].includes(response.status)) break;
-  }
-  throw new Error(`BAILEYS respondeu ${lastStatus}`);
+  const result = await sendBaileysTextMessage({ number: to, text });
+  return {
+    sent: true,
+    provider: "baileys",
+    messageId: result.data?.messageId || null,
+    number: result.data?.number || String(to).replace(/\D/g, ""),
+  };
 }
 
 export async function notifyAppointment({

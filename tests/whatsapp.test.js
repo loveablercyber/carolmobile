@@ -8,14 +8,19 @@ test("normalizeStatus maps various provider values correctly", () => {
     { input: { state: "connected" }, expected: "connected" },
     { input: { instance: { state: "online" } }, expected: "connected" },
     { input: { connectionStatus: "open" }, expected: "connected" },
+    { input: { status: "ready" }, expected: "connected" },
 
     { input: { status: "connecting" }, expected: "connecting" },
     { input: { state: "starting" }, expected: "connecting" },
+    { input: { status: "reconnecting" }, expected: "connecting" },
+
+    { input: { status: "qr" }, expected: "qrcode" },
 
     { input: { status: "close" }, expected: "disconnected" },
     { input: { state: "closed" }, expected: "disconnected" },
     { input: { instance: { state: "disconnected" } }, expected: "disconnected" },
     { input: { connectionStatus: "offline" }, expected: "disconnected" },
+    { input: { status: "logged_out" }, expected: "disconnected" },
 
     { input: {}, expected: "disconnected" },
     { input: null, expected: "disconnected" },

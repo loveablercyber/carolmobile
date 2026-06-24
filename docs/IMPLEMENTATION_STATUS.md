@@ -487,3 +487,22 @@ Trabalhar somente em **desbloqueio da tokenização SumUp sandbox**, verificando
 ## Próxima etapa recomendada (Módulo específico)
 
 Trabalhar somente em **limpeza compensatória de uploads Cloudinary órfãos**, registrando uma autorização de upload pendente, confirmando o vínculo após a persistência e removendo de forma idempotente arquivos expirados que nunca foram associados a avatar, foto técnica, diagnóstico ou comprovante.
+
+## Resultado desta etapa (Bot WhatsApp via API Baileys própria)
+
+- **API externa validada:** `https://whatsapp-api-tyd0.onrender.com` respondeu online com engine `baileys`. O estado atual é `qr` e a API informa `hasQr=true`; nenhuma mensagem foi enviada antes do pareamento.
+- **Client exclusivamente server-side:** criado `server/lib/baileys-client.js` com `getBaileysStatus`, `sendBaileysTextMessage`, `resetBaileysSession`, `getBaileysQr` e `logoutBaileysSession`. O local solicitado inicialmente (`src/lib`) não foi usado porque `src` compõe o bundle do navegador neste projeto; manter o client em `server/lib` impede qualquer risco de inclusão da chave privada no frontend.
+- **Contrato real aplicado:** o backend agora usa somente `GET /api/status`, `POST /api/send-text`, `POST /api/reset-session`, `GET /api/qr` e `POST /api/logout`, sempre com `x-api-key`. Os endpoints genéricos antigos de instância foram removidos do fluxo ativo.
+- **Envio protegido:** números são normalizados e validados no formato `55 + DDD + número`; mensagens vazias são recusadas. Antes de `POST /api/send-text`, o backend exige que a API externa retorne exatamente `ready`. Estados `qr`, `starting`, `reconnecting` e `logged_out` produzem estado/erro amigável sem sucesso falso.
+- **Tratamento de falhas:** rede/timeout, credencial recusada (`401`), indisponibilidade (`503`) e respostas inválidas são normalizados por `BaileysClientError`. Somente mensagens seguras marcadas pelo client podem ser exibidas em erros 5xx; erros internos continuam ocultos pelo handler global.
+- **Painel preservado:** nenhum arquivo visual foi alterado. Os botões existentes foram conectados ao contrato real: Conectar/Gerar QR consultam `/api/qr`, Reconectar usa `/api/reset-session`, Desconectar usa `/api/logout`, Atualizar consulta `/api/status` e Testar envio usa `/api/send-text` somente após `ready`.
+- **Sessão única:** Administrador e Profissional consultam a mesma sessão configurada `carol-sol`, coerente com a API Baileys externa única; não são mais fabricados nomes de instância que o provedor não suporta.
+- **Configuração Vercel:** `BAILEYS_API_KEY` foi gravada como sensível somente em Production e Preview. `BAILEYS_API_URL`, `BAILEYS_ENABLED=true` e `BAILEYS_DEFAULT_INSTANCE=carol-sol` foram configurados nos ambientes aplicáveis; Development não recebeu a chave porque a Vercel não permite variável sensível nesse alvo.
+- **Validação em produção:** a rota interna autenticada retornou `configured=true`, `enabled=true`, `status=qrcode`, `liveStatus=qrcode`, `hasQr=true` e `error=null`. O QR existente foi carregado no painel sem reset ou envio de mensagem.
+- **Deploy:** publicado em Production no deployment `dpl_HpSVY5hmeQMvZpFGdiB7iDFBuAyc`, com alias `https://carolmobile.vercel.app`.
+- **Qualidade:** `node --check` passou nos arquivos Node alterados, `npm test` passou com 54/54 testes, `npm run lint` passou e os builds local/remoto passaram.
+- **Pendências:** é necessário escanear o QR pelo WhatsApp responsável para a API alcançar `ready`. O webhook de mensagens recebidas não foi ampliado nesta etapa; o escopo solicitado permanece somente texto de saída.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **pareamento e envio controlado do WhatsApp**: escanear o QR disponível em `/admin/integracoes/whatsapp`, aguardar `ready` e então enviar uma única mensagem de teste para um número autorizado, validando `messageId` e registro de erro sem implementar áudio, imagens, documentos ou automações adicionais.

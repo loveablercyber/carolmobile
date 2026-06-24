@@ -15,7 +15,8 @@ export default async function handler(req, res) {
         ),
         baileys: Boolean(
           process.env.BAILEYS_ENABLED &&
-            (process.env.BAILEYS_API_BASE_URL || process.env.BAILEYS_API_URL),
+            process.env.BAILEYS_API_URL &&
+            process.env.BAILEYS_API_KEY,
         ),
         cloudinary: Boolean(cloudinaryProviders().length),
         sumup: Boolean(
