@@ -499,7 +499,9 @@ Trabalhar somente em **limpeza compensatória de uploads Cloudinary órfãos**, 
 - **Sessão única:** Administrador e Profissional consultam a mesma sessão configurada `carol-sol`, coerente com a API Baileys externa única; não são mais fabricados nomes de instância que o provedor não suporta.
 - **Configuração Vercel:** `BAILEYS_API_KEY` foi gravada como sensível somente em Production e Preview. `BAILEYS_API_URL`, `BAILEYS_ENABLED=true` e `BAILEYS_DEFAULT_INSTANCE=carol-sol` foram configurados nos ambientes aplicáveis; Development não recebeu a chave porque a Vercel não permite variável sensível nesse alvo.
 - **Validação em produção:** a rota interna autenticada retornou `configured=true`, `enabled=true`, `status=qrcode`, `liveStatus=qrcode`, `hasQr=true` e `error=null`. O QR existente foi carregado no painel sem reset ou envio de mensagem.
-- **Deploy:** publicado em Production no deployment `dpl_HpSVY5hmeQMvZpFGdiB7iDFBuAyc`, com alias `https://carolmobile.vercel.app`.
+- **Correção do QR piscando:** o painel deixou de apagar `qr_code_data` quando o polling de status retorna `hasQr=true` sem enviar o payload do QR. Enquanto o estado não for `connected` ou `disconnected`, o backend preserva o QR anterior e tenta renovar o QR atual via `/api/qr` quando o provedor indica `hasQr=true`.
+- **Validação pós-correção:** após carregar o QR em produção e aguardar mais que o intervalo de polling, a segunda consulta ao painel manteve `hasQr=true`. O estado do provedor oscilou para `connecting`, mas o QR não voltou a ficar indisponível.
+- **Deploy:** publicado em Production no deployment `dpl_77RXLSX3CbJf7SijC6V3ekmhoT6q`, com alias `https://carolmobile.vercel.app`.
 - **Qualidade:** `node --check` passou nos arquivos Node alterados, `npm test` passou com 54/54 testes, `npm run lint` passou e os builds local/remoto passaram.
 - **Pendências:** é necessário escanear o QR pelo WhatsApp responsável para a API alcançar `ready`. O webhook de mensagens recebidas não foi ampliado nesta etapa; o escopo solicitado permanece somente texto de saída.
 

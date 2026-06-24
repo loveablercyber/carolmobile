@@ -64,7 +64,7 @@ async function saveSession(ctx, data, error = null) {
   const phone =
     data?.phone_number || data?.number || data?.instance?.number || null;
   const { rows } = await query(
-    `insert into public.whatsapp_sessions(professional_id,session_name,phone_number,account_name,connection_status,qr_code_data,last_connected_at,last_activity_at,last_error) values($1,$2,$3,$4,$5,$6,case when $5='connected' then now() end,now(),$7) on conflict(session_name) do update set phone_number=coalesce(excluded.phone_number,whatsapp_sessions.phone_number),account_name=coalesce(excluded.account_name,whatsapp_sessions.account_name),connection_status=excluded.connection_status,qr_code_data=excluded.qr_code_data,last_connected_at=case when excluded.connection_status='connected' then now() else whatsapp_sessions.last_connected_at end,last_activity_at=now(),last_error=excluded.last_error,updated_at=now() returning *`,
+    `insert into public.whatsapp_sessions(professional_id,session_name,phone_number,account_name,connection_status,qr_code_data,last_connected_at,last_activity_at,last_error) values($1,$2,$3,$4,$5,$6,case when $5='connected' then now() end,now(),$7) on conflict(session_name) do update set phone_number=coalesce(excluded.phone_number,whatsapp_sessions.phone_number),account_name=coalesce(excluded.account_name,whatsapp_sessions.account_name),connection_status=excluded.connection_status,qr_code_data=case when excluded.connection_status in ('connected','disconnected') then null else coalesce(excluded.qr_code_data,whatsapp_sessions.qr_code_data) end,last_connected_at=case when excluded.connection_status='connected' then now() else whatsapp_sessions.last_connected_at end,last_activity_at=now(),last_error=excluded.last_error,updated_at=now() returning *`,
     [
       ctx.professionalId,
       ctx.sessionName,
@@ -86,6 +86,16 @@ async function getPanel(user) {
   if (config.configured)
     try {
       live = (await getBaileysStatus()).data;
+      if (normalizeStatus(live) === "qrcode" && live.hasQr) {
+        try {
+          const qr = (await getBaileysQr()).data;
+          if (qrValue(qr)) live = { ...live, ...qr };
+        } catch (qrError) {
+          console.error("WhatsApp QR refresh error", {
+            message: qrError.message,
+          });
+        }
+      }
     } catch (e) {
       error = e.message;
     }
