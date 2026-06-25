@@ -511,7 +511,8 @@ Trabalhar somente em **pareamento e envio controlado do WhatsApp**: escanear o Q
 
 ## Resultado desta etapa (Correção de pareamento WhatsApp/Baileys)
 
-- **Render:** a URL `https://dashboard.render.com/web/srv-d83a04d7vvec7396t640` abriu na tela de login do Render. A auditoria visual completa da configuração do serviço ainda depende de login no painel.
+- **Render auditado:** o serviço `whatsapp-api` está como Web Service Docker, plano Free, região Oregon, repositório `loveablercyber/whats`, branch `main`, `Dockerfile Path=./Dockerfile`, contexto `.`, auto-deploy `On Commit` e URL pública `https://whatsapp-api-tyd0.onrender.com`.
+- **Variáveis Render conferidas:** existem `API_KEY`, `MONGODB_URI`, `CLIENT_ID`, `LOG_LEVEL`, `PORT`, `WEBHOOK_URL`, `BAILEYS_IGNORE_GROUPS` e `BAILEYS_IGNORE_STATUS`, todas mascaradas no painel. As flags `BAILEYS_IGNORE_*` não são usadas pelo código atual, mas foram preservadas por não causarem falha.
 - **Causa provável corrigida no bot externo:** o repositório do servidor WhatsApp tinha risco de manter `isStarting=true`/socket antigo após falhas de conexão, impedindo reinício limpo depois de uma tentativa de pareamento por QR.
 - **Baileys atualizado no bot externo:** o pacote antigo/deprecado `@whiskeysockets/baileys` foi substituído por `baileys@7.0.0-rc13`; o projeto do bot passou a declarar `engines.node>=20.0.0`, compatível com o `Dockerfile` atual (`node:20-bookworm-slim`).
 - **Conexão mais estável:** o socket agora usa `Browsers.ubuntu("Chrome")`, timeouts explícitos, limpeza de timer de reconexão, limpeza de QR/código em `ready`, `logged_out`, `logout` e `reset-session`, e diagnósticos seguros de desconexão no `/api/status`.
@@ -519,7 +520,9 @@ Trabalhar somente em **pareamento e envio controlado do WhatsApp**: escanear o Q
 - **PWA conectado ao fallback:** `server/lib/baileys-client.js`, `api/whatsapp.js` e `src/pages/WhatsAppIntegration.tsx` agora suportam `pairing_code`; o painel usa o mesmo campo de telefone para gerar e exibir o código somente após resposta real da API.
 - **Sem exposição de segredo:** a chave do bot continua apenas em backend/Vercel/Render; nenhum segredo foi adicionado ao frontend ou ao código versionado.
 - **Validação local:** `node --check api/whatsapp.js server/lib/baileys-client.js` passou; `npm test` passou com 55/55 testes; `npm run lint` passou; `npm run build` passou. No bot externo, `node --check index.js` passou e `npm ls baileys --depth=0` confirmou `baileys@7.0.0-rc13`.
+- **Deploy Render:** o commit `5d5393e` (`fix: estabilizar pareamento baileys`) foi enviado ao GitHub e o Render publicou esse deploy como `live` por auto-deploy. A API retornou `status=qr`, `hasQr=true`, QR presente e diagnósticos novos (`lastQrGeneratedAt`, `lastDisconnectReason`, `lastDisconnectAt`) sem erro.
+- **Deploy Vercel:** o PWA foi publicado em Production no deployment `dpl_FaeCi6YcpJGgR7QDfCaWMkcRLAri`, com alias `https://carolmobile.vercel.app`. A rota interna autenticada retornou `configured=true`, `enabled=true`, `connection_status=qrcode`, `liveStatus=qrcode` e `provider.hasQr=true`.
 
 ## Próxima etapa recomendada (Módulo específico)
 
-Trabalhar somente em **validação do serviço Render WhatsApp**: fazer login no Render, confirmar se o serviço usa Dockerfile ou build nativo, validar variáveis `API_KEY`, `MONGODB_URI`, `CLIENT_ID` e auto-deploy, acompanhar o deploy do bot atualizado e testar primeiro QR; se o QR ainda falhar, gerar código de pareamento pelo painel e aguardar status `ready` antes de enviar uma única mensagem de teste.
+Trabalhar somente em **pareamento final do WhatsApp**: tentar primeiro o QR novo; se o celular ainda recusar, informar o número com `55 + DDD + número` no painel e usar **Gerar código de pareamento**. Depois aguardar `ready` e enviar uma única mensagem de teste para número autorizado, sem ampliar automações ou mídia.
