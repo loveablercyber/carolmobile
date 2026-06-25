@@ -809,10 +809,27 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   }
 
   const count = await query(
-    `select count(*)::int as total
-       from public.whatsapp_messages
-      where conversation_id=$1 and direction='outbound' and sender_type='ai'`,
-    [conversationId],
+    `with latest_resume as (
+       select max(created_at) as resumed_at
+         from public.whatsapp_messages
+        where conversation_id=$1
+          and direction='inbound'
+          and sender_type='client'
+          and body is not null
+          and lower(body) like '%' || lower($2) || '%'
+     )
+     select count(*)::int as total
+       from public.whatsapp_messages wm
+      where wm.conversation_id=$1
+        and wm.direction='outbound'
+        and wm.sender_type='ai'
+        and coalesce(wm.payload->>'reason','') <> 'typing_placeholder'
+        and wm.created_at >= coalesce(
+          (select resumed_at from latest_resume),
+          (select created_at from public.whatsapp_conversations where id=$1),
+          '-infinity'::timestamptz
+        )`,
+    [conversationId, settings.resumeKeyword],
   );
   if (Number(count.rows[0]?.total || 0) >= settings.maxAutoMessages) {
     const responseText = settings.humanHandoffMessage;
