@@ -97,6 +97,13 @@ function providerDiagnostics(data) {
           lastWebhookTarget: webhook.lastWebhookTarget || null,
           lastWebhookStatus: webhook.lastWebhookStatus || null,
           lastWebhookError: webhook.lastWebhookError || null,
+          lastUpsertCount: webhook.lastUpsertCount ?? null,
+          recentEvents: Array.isArray(webhook.recentEvents)
+            ? webhook.recentEvents.slice(0, 10).map((event) => ({
+                ...event,
+                from: event.from ? maskPhoneLike(event.from) : null,
+              }))
+            : [],
         }
       : null,
   };

@@ -628,3 +628,15 @@ Testar novamente em **conversa privada**, não em grupo: envie uma mensagem dire
 ## Próxima etapa recomendada (Módulo específico)
 
 Testar em **conversa privada real** usando outro número de WhatsApp: confirmar `lastIncomingFromMe=false`, `lastIncomingHasText=true`, `lastWebhookStatus=200`, conversa registrada e resposta Gemini enviada. Só depois avançar para usar os fluxos ativados como regras reais de atendimento.
+
+## Resultado desta etapa (Correção de lote de mensagens Baileys)
+
+- **Diagnóstico encontrado:** mesmo com a usuária relatando teste privado entre dois números diferentes, o último diagnóstico em produção ainda mostrava `lastIncomingFrom=@g.us`, ou seja, grupo. O bot externo processava apenas `messages[0]` do evento `messages.upsert`, então uma mensagem privada poderia ser perdida se viesse no mesmo lote após uma mensagem de grupo.
+- **Correção no bot externo:** o repositório `loveablercyber/whats` agora percorre todos os itens do array `messages`, extrai texto de mensagens comuns, estendidas, mídia com legenda, view once/ephemeral e respostas interativas, e envia cada mensagem recebida ao webhook do PWA. O `/api/status` também passou a mostrar `lastUpsertCount` e os últimos eventos de webhook com JID mascarado.
+- **Correção no PWA:** o normalizador do webhook agora aceita `phone` explícito enviado pelo bot quando o `remoteJid` vier em formato LID, evitando `invalid_phone` em mensagens privadas válidas. O painel interno também expõe `recentEvents` sanitizados do provedor.
+- **Referência técnica:** a documentação do Baileys informa que `messages.upsert` entrega um array e orienta processar todos os itens, pois usar apenas o primeiro pode perder mensagens.
+- **Validação técnica:** `node --check` passou no bot externo, `server/lib/whatsapp-ai-engine.js` e `api/whatsapp.js`; `npm test` passou com 70/70 testes; `npm run lint` passou; `npm run build` passou.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Após o auto-deploy do Render, enviar uma nova mensagem privada de outro número para o WhatsApp Business conectado e conferir `recentEvents`, `lastIncomingFromMe=false`, `lastIncomingHasText=true`, conversa criada e resposta Gemini. Se ainda aparecer apenas `@g.us`, o problema está no teste chegando como grupo ou na conta conectada recebendo eventos de grupo antes do privado.

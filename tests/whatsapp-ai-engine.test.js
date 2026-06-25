@@ -46,6 +46,21 @@ test("extracts text from raw Baileys message when text field is absent", () => {
   assert.equal(normalized.messageId, "RAW1");
 });
 
+test("uses explicit phone when Baileys remote JID is a LID", () => {
+  const normalized = normalizeIncomingWhatsappPayload({
+    from: "123456789012345@lid",
+    phone: "5514996405496",
+    text: "Teste privado",
+    isFromMe: false,
+    messageId: "LID1",
+  });
+
+  assert.equal(normalized.from, "123456789012345@lid");
+  assert.equal(normalized.phoneNumber, "5514996405496");
+  assert.equal(normalized.isGroup, false);
+  assert.equal(normalized.messageId, "LID1");
+});
+
 test("detects keywords ignoring accents and casing", () => {
   assert.equal(keywordInText("Quero falar com ATENDENTE agora", "atendente"), true);
   assert.equal(keywordInText("Pode voltar ao bot por favor?", "voltar ao bot"), true);

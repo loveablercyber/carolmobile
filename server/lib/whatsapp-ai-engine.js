@@ -44,13 +44,29 @@ function jidToPhone(value) {
   return number.replace(/\D/g, "");
 }
 
+function firstValidPhone(...values) {
+  for (const value of values) {
+    const number = jidToPhone(value);
+    if (/^55\d{10,11}$/.test(number)) return number;
+  }
+  return "";
+}
+
 export function normalizeIncomingWhatsappPayload(payload = {}) {
   const raw = payload.raw || payload.message || {};
   const key = raw?.key || payload.key || {};
   const from =
     clean(payload.from || payload.remoteJid || payload.jid || key.remoteJid) ||
     "";
-  const phoneNumber = jidToPhone(from || payload.phone || payload.number);
+  const phoneNumber = firstValidPhone(
+    payload.phone,
+    payload.number,
+    from,
+    payload.remoteJid,
+    payload.participant,
+    key.participant,
+    key.remoteJid,
+  );
   const text = clean(payload.text || payload.body || extractRawText(raw));
   const isFromMe = truthy(payload.isFromMe ?? payload.fromMe ?? key.fromMe);
   const messageId = clean(
