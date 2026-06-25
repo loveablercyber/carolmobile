@@ -7,6 +7,7 @@ import {
   getBaileysStatus,
   logoutBaileysSession,
   normalizeBaileysNumber,
+  requestBaileysPairingCode,
   resetBaileysSession,
   sendBaileysTextMessage,
 } from "../server/lib/baileys-client.js";
@@ -100,6 +101,26 @@ test("maps protected session endpoints without exposing credentials", async () =
   await getBaileysQr();
   await logoutBaileysSession();
   assert.deepEqual(paths, ["/api/reset-session", "/api/qr", "/api/logout"]);
+});
+
+test("requests pairing code with normalized phone number", async () => {
+  configure();
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return new Response(
+      JSON.stringify({ success: true, status: "pairing_code", pairingCode: "123-456" }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+  const result = await requestBaileysPairingCode({
+    number: "+55 (14) 99999-9999",
+  });
+  assert.equal(calls[0].url, "https://whatsapp.example.test/api/pairing-code");
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    number: "5514999999999",
+  });
+  assert.equal(result.data.pairingCode, "123-456");
 });
 
 test("returns friendly errors for invalid numbers and rejected credentials", async () => {

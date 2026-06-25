@@ -508,3 +508,18 @@ Trabalhar somente em **limpeza compensatória de uploads Cloudinary órfãos**, 
 ## Próxima etapa recomendada (Módulo específico)
 
 Trabalhar somente em **pareamento e envio controlado do WhatsApp**: escanear o QR disponível em `/admin/integracoes/whatsapp`, aguardar `ready` e então enviar uma única mensagem de teste para um número autorizado, validando `messageId` e registro de erro sem implementar áudio, imagens, documentos ou automações adicionais.
+
+## Resultado desta etapa (Correção de pareamento WhatsApp/Baileys)
+
+- **Render:** a URL `https://dashboard.render.com/web/srv-d83a04d7vvec7396t640` abriu na tela de login do Render. A auditoria visual completa da configuração do serviço ainda depende de login no painel.
+- **Causa provável corrigida no bot externo:** o repositório do servidor WhatsApp tinha risco de manter `isStarting=true`/socket antigo após falhas de conexão, impedindo reinício limpo depois de uma tentativa de pareamento por QR.
+- **Baileys atualizado no bot externo:** o pacote antigo/deprecado `@whiskeysockets/baileys` foi substituído por `baileys@7.0.0-rc13`; o projeto do bot passou a declarar `engines.node>=20.0.0`, compatível com o `Dockerfile` atual (`node:20-bookworm-slim`).
+- **Conexão mais estável:** o socket agora usa `Browsers.ubuntu("Chrome")`, timeouts explícitos, limpeza de timer de reconexão, limpeza de QR/código em `ready`, `logged_out`, `logout` e `reset-session`, e diagnósticos seguros de desconexão no `/api/status`.
+- **Fallback oficial ao QR:** criado no bot externo `POST /api/pairing-code`, que gera código de pareamento pelo número (`55 + DDD + número`) quando o QR é recusado pelo WhatsApp.
+- **PWA conectado ao fallback:** `server/lib/baileys-client.js`, `api/whatsapp.js` e `src/pages/WhatsAppIntegration.tsx` agora suportam `pairing_code`; o painel usa o mesmo campo de telefone para gerar e exibir o código somente após resposta real da API.
+- **Sem exposição de segredo:** a chave do bot continua apenas em backend/Vercel/Render; nenhum segredo foi adicionado ao frontend ou ao código versionado.
+- **Validação local:** `node --check api/whatsapp.js server/lib/baileys-client.js` passou; `npm test` passou com 55/55 testes; `npm run lint` passou; `npm run build` passou. No bot externo, `node --check index.js` passou e `npm ls baileys --depth=0` confirmou `baileys@7.0.0-rc13`.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **validação do serviço Render WhatsApp**: fazer login no Render, confirmar se o serviço usa Dockerfile ou build nativo, validar variáveis `API_KEY`, `MONGODB_URI`, `CLIENT_ID` e auto-deploy, acompanhar o deploy do bot atualizado e testar primeiro QR; se o QR ainda falhar, gerar código de pareamento pelo painel e aguardar status `ready` antes de enviar uma única mensagem de teste.

@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { MessageCircle, Power, QrCode, RefreshCw, Send } from "lucide-react";
+import { KeyRound, MessageCircle, Power, QrCode, RefreshCw, Send } from "lucide-react";
 import {
   Badge,
   EmptyState,
@@ -25,6 +25,7 @@ export function WhatsAppIntegrationPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [phone, setPhone] = useState("");
+  const [pairingCode, setPairingCode] = useState("");
   const [toast, setToast] = useState("");
   const load = () => {
     setLoading(true);
@@ -42,7 +43,7 @@ export function WhatsAppIntegrationPage() {
   useEffect(() => {
     if (
       !data ||
-      !["connecting", "qrcode", "awaiting_scan"].includes(
+      !["connecting", "qrcode", "awaiting_scan", "pairing_code"].includes(
         String(data.session?.connection_status),
       )
     )
@@ -57,6 +58,11 @@ export function WhatsAppIntegrationPage() {
         "/api/whatsapp?resource=action",
         { method: "POST", body: JSON.stringify({ action, phone }) },
       );
+      const provider = result.data?.provider || result.data?.result || {};
+      if (action === "pairing_code" && provider.pairingCode)
+        setPairingCode(String(provider.pairingCode));
+      else if (["connect", "qr", "restart", "disconnect"].includes(action))
+        setPairingCode("");
       if (result.data?.session)
         setData((current) =>
           current ? { ...current, session: result.data.session } : current,
@@ -65,6 +71,8 @@ export function WhatsAppIntegrationPage() {
       setToast(
         action === "test"
           ? "Mensagem de teste enviada."
+          : action === "pairing_code"
+            ? "Código de pareamento gerado."
           : "Status do WhatsApp atualizado.",
       );
     } catch (error) {
@@ -220,6 +228,19 @@ export function WhatsAppIntegrationPage() {
               }
             />
           )}
+          {pairingCode && (
+            <div className="mt-4 rounded-2xl bg-warm p-4 text-center">
+              <span className="text-[9px] uppercase text-stone-400">
+                Código de pareamento
+              </span>
+              <b className="mt-1 block text-2xl tracking-[0.2em] text-stone-900">
+                {pairingCode}
+              </b>
+              <p className="mt-2 text-[11px] text-stone-500">
+                No WhatsApp, use Conectar dispositivo com número de telefone.
+              </p>
+            </div>
+          )}
           <form onSubmit={test} className="mt-5 border-t border-black/5 pt-5">
             <label className="text-xs font-bold">
               Telefone para teste
@@ -230,6 +251,19 @@ export function WhatsAppIntegrationPage() {
                 placeholder="5511999999999"
               />
             </label>
+            <button
+              type="button"
+              disabled={
+                !data.configured ||
+                !!busy ||
+                phone.replace(/\D/g, "").length < 10
+              }
+              onClick={() => act("pairing_code")}
+              className="btn-secondary mt-3 w-full"
+            >
+              <KeyRound size={15} />
+              Gerar código de pareamento
+            </button>
             <button
               disabled={
                 !data.configured ||

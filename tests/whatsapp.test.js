@@ -15,6 +15,7 @@ test("normalizeStatus maps various provider values correctly", () => {
     { input: { status: "reconnecting" }, expected: "connecting" },
 
     { input: { status: "qr" }, expected: "qrcode" },
+    { input: { status: "pairing_code" }, expected: "pairing_code" },
 
     { input: { status: "close" }, expected: "disconnected" },
     { input: { state: "closed" }, expected: "disconnected" },

@@ -112,6 +112,14 @@ export async function getBaileysQr() {
   return request("/api/qr");
 }
 
+export async function requestBaileysPairingCode({ number }) {
+  const normalizedNumber = normalizeBaileysNumber(number);
+  return request("/api/pairing-code", {
+    method: "POST",
+    body: { number: normalizedNumber },
+  });
+}
+
 export async function logoutBaileysSession() {
   return request("/api/logout", { method: "POST" });
 }

@@ -5,6 +5,7 @@ import {
   getBaileysQr,
   getBaileysStatus,
   logoutBaileysSession,
+  requestBaileysPairingCode,
   resetBaileysSession,
   sendBaileysTextMessage,
 } from "../server/lib/baileys-client.js";
@@ -37,6 +38,8 @@ export function normalizeStatus(data) {
     return "connected";
   if (["connecting", "starting", "reconnecting"].includes(value))
     return "connecting";
+  if (["pairing", "pairing_code", "pairing-code"].includes(value))
+    return "pairing_code";
   if (["qr", "qrcode", "awaiting_scan"].includes(value)) return "qrcode";
   if (
     ["close", "closed", "disconnected", "offline", "logged_out"].includes(
@@ -138,6 +141,10 @@ async function action(user, body) {
     let result;
     if (["connect", "qr"].includes(action)) result = await getBaileysQr();
     else if (action === "status") result = await getBaileysStatus();
+    else if (action === "pairing_code") {
+      if (!body.phone) throw appError("Informe o telefone para gerar o código.");
+      result = await requestBaileysPairingCode({ number: body.phone });
+    }
     else if (action === "restart") {
       result = await resetBaileysSession();
       result.data = { ...result.data, status: "starting" };
