@@ -9,6 +9,7 @@ import {
   saveAiSettings,
   saveKnowledgeArticle,
   deleteKnowledgeArticle,
+  updateAiConversationStatus,
 } from "../server/lib/ai-whatsapp.js";
 import { generateGeminiText } from "../server/lib/gemini-client.js";
 import {
@@ -46,6 +47,10 @@ async function mutate(user, resource, body) {
   if (resource === "flow-settings") {
     const flow = await saveAiFlowSettings(user, body);
     return { flow, panel: await getAiPanel() };
+  }
+  if (resource === "conversation-action") {
+    const conversation = await updateAiConversationStatus(user, body);
+    return { conversation, panel: await getAiPanel() };
   }
   if (resource === "action") {
     const action = clean(body.action);

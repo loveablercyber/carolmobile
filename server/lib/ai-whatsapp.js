@@ -1154,6 +1154,48 @@ export async function saveAiFlowSettings(user, input) {
   });
 }
 
+export async function updateAiConversationStatus(user, input) {
+  await ensureAiWhatsappSchema();
+  const conversationId = clean(input.conversationId || input.conversation_id || input.id);
+  const action = clean(input.action);
+  if (!uuidLike(conversationId)) throw appError("Conversa invÃ¡lida.");
+  if (!["resume_ai", "pause_ai"].includes(action)) throw appError("AÃ§Ã£o invÃ¡lida.");
+
+  const nextStatus = action === "resume_ai" ? "ai" : "human";
+  const aiEnabled = action === "resume_ai";
+  return transaction(async (client) => {
+    const { rows } = await client.query(
+      `update public.whatsapp_conversations
+          set status=$2, ai_enabled=$3, updated_at=now()
+        where id=$1
+        returning id,phone_number,status,ai_enabled,last_message_at,last_message_preview`,
+      [conversationId, nextStatus, aiEnabled],
+    );
+    if (!rows[0]) throw appError("Conversa nÃ£o encontrada.", 404);
+
+    if (action === "resume_ai") {
+      await client.query(
+        `update public.human_handoff_tickets
+            set status='resolved', resolved_by=$2, resolved_at=coalesce(resolved_at,now()), updated_at=now()
+          where conversation_id=$1 and status='pending'`,
+        [conversationId, user.id],
+      ).catch(() => null);
+    }
+
+    await client.query(
+      `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+       values($1,null,'conversation_status_changed','success',$2)`,
+      [conversationId, JSON.stringify({ action, actorId: user.id })],
+    );
+    await client.query(
+      `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
+       values($1,$2,'whatsapp_conversation',$3,$4)`,
+      [user.id, action, conversationId, JSON.stringify({ status: nextStatus, ai_enabled: aiEnabled })],
+    ).catch(() => null);
+    return rows[0];
+  });
+}
+
 export async function getAiCommercialBase() {
   await ensureAiWhatsappSchema();
   const now = Date.now();
