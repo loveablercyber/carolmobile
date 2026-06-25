@@ -416,25 +416,26 @@ async function sendTextAndRecord({ normalized, conversationId, text, reason }) {
   return { sent, provider: result.data };
 }
 
-async function pauseConversationForHuman({ conversationId, messageId, reason, responseText }) {
+async function requestHumanAttention({ conversationId, messageId, reason, responseText }) {
   await transaction(async (client) => {
     await client.query(
-      `update public.whatsapp_conversations
-          set status='human',ai_enabled=false,updated_at=now()
-        where id=$1`,
-      [conversationId],
-    );
-    await client.query(
       `insert into public.human_handoff_tickets(conversation_id,reason,status,created_by)
-       values($1,$2,'pending',null)`,
+       select $1,$2,'pending',null
+        where not exists (
+          select 1
+            from public.human_handoff_tickets
+           where conversation_id=$1
+             and reason=$2
+             and status='pending'
+        )`,
       [conversationId, reason],
     );
     await logMessage(client, {
       conversationId,
       messageId,
-      eventType: "human_handoff",
+      eventType: "human_attention_requested",
       status: "warning",
-      details: { reason, responseText },
+      details: { reason, responseText, action: "keep_ai_enabled" },
     });
   });
 }
@@ -738,7 +739,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
 
   if (keywordInText(concatenatedText, settings.pauseKeyword)) {
     const responseText = settings.humanHandoffMessage;
-    await pauseConversationForHuman({
+    await requestHumanAttention({
       conversationId,
       messageId: inboundMessageId,
       reason: "pause_keyword",
@@ -751,10 +752,13 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
 
   if (keywordInText(concatenatedText, settings.stopKeyword)) {
     await query(
-      `update public.whatsapp_conversations
-          set status='closed',ai_enabled=false,updated_at=now()
-        where id=$1`,
-      [conversationId],
+      `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+       values($1,$2,'stop_keyword_received','info',$3)`,
+      [
+        conversationId,
+        inboundMessageId,
+        JSON.stringify({ reason: "stop_keyword", action: "keep_ai_enabled" }),
+      ],
     );
     await sendTextAndRecord({ normalized, conversationId, text: settings.closingMessage, reason: "stop_keyword" });
     await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
@@ -862,7 +866,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       reason: "safety_alert",
     });
 
-    await pauseConversationForHuman({
+    await requestHumanAttention({
       conversationId,
       messageId: inboundMessageId,
       reason: "safety_alert",
@@ -876,7 +880,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       messageId: inboundMessageId,
       provider: "local_safety",
       model: matchedArticle?.slug || "safety_alert",
-      status: "human_handoff",
+      status: "safety_alert",
       retryCount: 0,
       fallbackUsed: false,
       queueLatencyMs,
@@ -887,7 +891,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     return {
       ok: true,
       replied: true,
-      reason: "safety_handoff",
+      reason: "safety_alert",
       conversationId,
     };
   }

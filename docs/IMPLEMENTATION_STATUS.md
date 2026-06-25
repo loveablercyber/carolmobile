@@ -724,3 +724,15 @@ Trabalhar somente em **validação operacional em produção do inbound privado 
 ## Próxima etapa recomendada (Módulo específico)
 
 Trabalhar somente em **saúde dos provedores IA em produção**: verificar por que o Gemini está falhando nas mensagens reais, configurar/habilitar Groq como fallback real no Vercel e repetir uma mensagem privada que exija IA generativa. Não avançar para agenda, pagamento ou mídia ainda.
+
+## Ajuste complementar desta etapa (IA permanece ativa até ação do admin)
+
+- **Regra confirmada pela cliente:** a conversa deve permanecer com `status='ai'` e `ai_enabled=true`; ela só deve voltar para atendimento humano quando o administrador desabilitar/pausar manualmente pelo painel ou pela ação backend protegida.
+- **Pausas automáticas removidas do motor:** palavra-chave de atendimento humano, palavra-chave de encerramento, limite de mensagens automáticas, alerta de segurança e contingência por instabilidade não alteram mais `status='human'`, `status='closed'` nem `ai_enabled=false`.
+- **Solicitação humana sem desligar IA:** quando houver palavra-chave de humano ou alerta de segurança, o backend cria/atualiza ticket pendente em `human_handoff_tickets` e registra `human_attention_requested` com `action='keep_ai_enabled'`, mas mantém a conversa ativa para a IA.
+- **Encerramento sem desligar IA:** a palavra-chave de encerramento envia a mensagem configurada e registra `stop_keyword_received` com `action='keep_ai_enabled'`, sem fechar automaticamente a conversa.
+- **Validação técnica:** confirmado por busca no motor que não restam atualizações automáticas para `status='human'`, `status='closed'` ou `ai_enabled=false`; `npm test` passou com 90/90; `npm run lint` passou; `npm run build` passou.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **saúde dos provedores IA em produção**: corrigir a falha atual do Gemini e habilitar Groq como fallback real no Vercel, para que mensagens generativas respondam com IA em vez de cair na contingência de instabilidade.
