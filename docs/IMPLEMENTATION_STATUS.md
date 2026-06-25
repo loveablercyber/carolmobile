@@ -636,6 +636,7 @@ Testar em **conversa privada real** usando outro número de WhatsApp: confirmar 
 - **Correção no PWA:** o normalizador do webhook agora aceita `phone` explícito enviado pelo bot quando o `remoteJid` vier em formato LID, evitando `invalid_phone` em mensagens privadas válidas. O painel interno também expõe `recentEvents` sanitizados do provedor.
 - **Referência técnica:** a documentação do Baileys informa que `messages.upsert` entrega um array e orienta processar todos os itens, pois usar apenas o primeiro pode perder mensagens.
 - **Validação técnica:** `node --check` passou no bot externo, `server/lib/whatsapp-ai-engine.js` e `api/whatsapp.js`; `npm test` passou com 70/70 testes; `npm run lint` passou; `npm run build` passou.
+- **Deploy e validação em produção:** o bot externo foi publicado no commit `07f825c` e o PWA no commit `aecd380`, com Production Vercel `dpl_5K2nxZBZtbmvDZSxCZnPmSBxXmCQ`. Após o auto-deploy do Render, `/api/whatsapp?resource=panel` já retornou `lastUpsertCount=1` e `recentEvents` disponível; o último evento ainda era o grupo anterior `@g.us`, aguardando novo teste privado após a correção.
 
 ## Próxima etapa recomendada (Módulo específico)
 
