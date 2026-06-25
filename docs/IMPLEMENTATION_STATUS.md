@@ -623,6 +623,7 @@ Testar novamente em **conversa privada**, não em grupo: envie uma mensagem dire
 - **Sem sucesso falso:** o card de fluxo só atualiza depois do retorno do backend; se falhar, restaura o estado anterior, exibe erro e registra `console.error`.
 - **Limite de escopo:** ativar fluxos nesta etapa apenas salva a configuração. Agenda automática, pagamento, mídia e execução avançada dos fluxos continuam fora do escopo até implementação própria.
 - **Validação técnica:** `node --check` passou em `server/lib/ai-whatsapp.js` e `api/ai-whatsapp.js`; `npm test` passou com 69/69 testes; `npm run lint` passou; `npm run build` passou.
+- **Deploy e validação em produção:** publicado em Production no Vercel no deployment `dpl_JBTpRMkWZCk61YVurQxxgGXPTN78`, com alias `https://carolmobile.vercel.app`. O endpoint `POST /api/ai-whatsapp?resource=flow-settings` foi validado salvando o fluxo real `boas_vindas` com os mesmos valores existentes (`enabled=false`, `requires_human_approval=true`, `trigger_delay_minutes=0`) e retornou painel atualizado.
 
 ## Próxima etapa recomendada (Módulo específico)
 
