@@ -91,7 +91,7 @@ test("Gemini public status never exposes API key", () => {
 
 test("normalizes AI service settings using real service fallbacks", () => {
   const service = {
-    id: "52000000-0000-4000-8000-000000000001",
+    id: "52000000-0000-0000-0000-000000000001",
     name: "Aplicação Fita Adesiva",
     description: "Aplicação premium personalizada.",
     active: true,
