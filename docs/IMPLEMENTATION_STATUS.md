@@ -521,7 +521,7 @@ Trabalhar somente em **pareamento e envio controlado do WhatsApp**: escanear o Q
 - **Sem exposição de segredo:** a chave do bot continua apenas em backend/Vercel/Render; nenhum segredo foi adicionado ao frontend ou ao código versionado.
 - **Validação local:** `node --check api/whatsapp.js server/lib/baileys-client.js` passou; `npm test` passou com 55/55 testes; `npm run lint` passou; `npm run build` passou. No bot externo, `node --check index.js` passou e `npm ls baileys --depth=0` confirmou `baileys@7.0.0-rc13`.
 - **Deploy Render:** o commit `5d5393e` (`fix: estabilizar pareamento baileys`) foi enviado ao GitHub e o Render publicou esse deploy como `live` por auto-deploy. A API retornou `status=qr`, `hasQr=true`, QR presente e diagnósticos novos (`lastQrGeneratedAt`, `lastDisconnectReason`, `lastDisconnectAt`) sem erro.
-- **Deploy Vercel:** o PWA foi publicado em Production no deployment `dpl_FaeCi6YcpJGgR7QDfCaWMkcRLAri`, com alias `https://carolmobile.vercel.app`. A rota interna autenticada retornou `configured=true`, `enabled=true`, `connection_status=qrcode`, `liveStatus=qrcode` e `provider.hasQr=true`.
+- **Deploy Vercel:** o PWA foi publicado em Production e o alias `https://carolmobile.vercel.app` ficou `Ready`. A rota interna autenticada retornou `configured=true`, `enabled=true`, `connection_status=qrcode`, `liveStatus=qrcode` e `provider.hasQr=true`.
 
 ## Próxima etapa recomendada (Módulo específico)
 
