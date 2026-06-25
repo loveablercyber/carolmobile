@@ -7,6 +7,8 @@ import {
   saveAiFlowSettings,
   saveAiServiceSettings,
   saveAiSettings,
+  saveKnowledgeArticle,
+  deleteKnowledgeArticle,
 } from "../server/lib/ai-whatsapp.js";
 import { generateGeminiText } from "../server/lib/gemini-client.js";
 import {
@@ -25,6 +27,14 @@ function requireAdmin(user) {
 
 async function mutate(user, resource, body) {
   requireAdmin(user);
+  if (resource === "save-knowledge-article") {
+    const article = await saveKnowledgeArticle(user, body);
+    return { article, panel: await getAiPanel() };
+  }
+  if (resource === "delete-knowledge-article") {
+    await deleteKnowledgeArticle(user, body.id);
+    return { success: true, panel: await getAiPanel() };
+  }
   if (resource === "settings") {
     const settings = await saveAiSettings(user, body);
     return { settings, panel: await getAiPanel() };

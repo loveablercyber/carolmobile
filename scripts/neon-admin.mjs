@@ -62,6 +62,9 @@ const expectedTables = [
   "human_handoff_tickets",
   "conversation_tags",
   "conversation_tag_links",
+  "whatsapp_incoming_queue",
+  "ai_request_logs",
+  "knowledge_articles",
 ];
 
 const client = new Client({

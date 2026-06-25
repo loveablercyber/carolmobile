@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  aiWhatsappTables,
   buildRuntimePrompt,
   defaultAiSettings,
   normalizeAiFlowSettingsInput,
@@ -9,6 +11,42 @@ import {
   normalizeAiSettingsInput,
 } from "../server/lib/ai-whatsapp.js";
 import { geminiPublicStatus } from "../server/lib/gemini-client.js";
+
+test("static AI WhatsApp migration includes runtime hardening tables and router columns", () => {
+  const migration = readFileSync(
+    new URL("../database/neon-ai-whatsapp.sql", import.meta.url),
+    "utf8",
+  );
+  const adminScript = readFileSync(
+    new URL("../scripts/neon-admin.mjs", import.meta.url),
+    "utf8",
+  );
+  for (const table of [
+    "whatsapp_incoming_queue",
+    "ai_request_logs",
+    "knowledge_articles",
+  ]) {
+    assert.ok(aiWhatsappTables.includes(table));
+    assert.match(
+      migration,
+      new RegExp(`create table if not exists public\\.${table}\\b`, "i"),
+    );
+    assert.match(adminScript, new RegExp(`"${table}"`));
+  }
+  for (const column of [
+    "primary_provider",
+    "fallback_provider",
+    "grouping_window_ms",
+    "circuit_breaker_cooldown_seconds",
+    "gemini_circuit_breaker_until",
+    "groq_circuit_breaker_until",
+  ]) {
+    assert.match(
+      migration,
+      new RegExp(`add column if not exists ${column}\\b`, "i"),
+    );
+  }
+});
 
 test("normalizes AI WhatsApp settings and preserves explicit false values", () => {
   const base = defaultAiSettings();

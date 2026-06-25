@@ -61,6 +61,28 @@ test("uses explicit phone when Baileys remote JID is a LID", () => {
   assert.equal(normalized.messageId, "LID1");
 });
 
+test("extracts phone from raw.key.remoteJidAlt when remoteJid is a LID and phone is absent", () => {
+  const normalized = normalizeIncomingWhatsappPayload({
+    from: "123456789012345@lid",
+    text: "Teste LID",
+    isFromMe: false,
+    messageId: "LID2",
+    raw: {
+      key: {
+        id: "LID2",
+        remoteJid: "123456789012345@lid",
+        remoteJidAlt: "5514996405496@s.whatsapp.net",
+        fromMe: false
+      }
+    }
+  });
+
+  assert.equal(normalized.from, "123456789012345@lid");
+  assert.equal(normalized.phoneNumber, "5514996405496");
+  assert.equal(normalized.isGroup, false);
+  assert.equal(normalized.messageId, "LID2");
+});
+
 test("detects keywords ignoring accents and casing", () => {
   assert.equal(keywordInText("Quero falar com ATENDENTE agora", "atendente"), true);
   assert.equal(keywordInText("Pode voltar ao bot por favor?", "voltar ao bot"), true);

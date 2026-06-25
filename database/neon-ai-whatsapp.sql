@@ -37,6 +37,23 @@ create table if not exists public.ai_settings (
   unique(business_id)
 );
 
+alter table public.ai_settings add column if not exists primary_provider text not null default 'gemini';
+alter table public.ai_settings add column if not exists primary_model text not null default 'gemini-2.5-flash-lite';
+alter table public.ai_settings add column if not exists fallback_provider text not null default 'groq';
+alter table public.ai_settings add column if not exists fallback_model text not null default 'llama-3.1-8b-instant';
+alter table public.ai_settings add column if not exists timeout_ms integer not null default 7000;
+alter table public.ai_settings add column if not exists max_retries integer not null default 2;
+alter table public.ai_settings add column if not exists grouping_window_ms integer not null default 1500;
+alter table public.ai_settings add column if not exists context_limit integer not null default 8;
+alter table public.ai_settings add column if not exists max_response_tokens integer not null default 220;
+alter table public.ai_settings add column if not exists fallback_enabled boolean not null default true;
+alter table public.ai_settings add column if not exists contingency_enabled boolean not null default true;
+alter table public.ai_settings add column if not exists cache_enabled boolean not null default true;
+alter table public.ai_settings add column if not exists human_transfer_enabled boolean not null default true;
+alter table public.ai_settings add column if not exists circuit_breaker_cooldown_seconds integer not null default 60;
+alter table public.ai_settings add column if not exists gemini_circuit_breaker_until timestamptz;
+alter table public.ai_settings add column if not exists groq_circuit_breaker_until timestamptz;
+
 create table if not exists public.ai_prompt_versions (
   id uuid primary key default uuid_generate_v4(),
   settings_id uuid references public.ai_settings(id) on delete cascade,
@@ -204,6 +221,59 @@ create index if not exists ai_interactions_conversation_idx on public.ai_interac
 create index if not exists ai_tool_calls_interaction_idx on public.ai_tool_calls(interaction_id,created_at desc);
 create index if not exists human_handoff_status_idx on public.human_handoff_tickets(status,created_at desc);
 
+create table if not exists public.whatsapp_incoming_queue (
+  id uuid primary key default uuid_generate_v4(),
+  phone_number text not null,
+  message_id text not null unique,
+  text text not null,
+  processed boolean not null default false,
+  created_at timestamptz not null default now(),
+  processed_at timestamptz
+);
+
+create table if not exists public.ai_request_logs (
+  id uuid primary key default uuid_generate_v4(),
+  conversation_id uuid references public.whatsapp_conversations(id) on delete set null,
+  message_id uuid references public.whatsapp_messages(id) on delete set null,
+  provider text,
+  model text,
+  status text,
+  retry_count int not null default 0,
+  fallback_used boolean not null default false,
+  queue_latency_ms int,
+  provider_latency_ms int,
+  total_latency_ms int,
+  input_tokens_estimated int,
+  output_tokens_estimated int,
+  error_code text,
+  error_message text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.knowledge_articles (
+  id uuid primary key default uuid_generate_v4(),
+  title text not null,
+  slug text not null unique,
+  category text not null,
+  question_variations jsonb not null default '[]',
+  short_answer text not null,
+  full_answer text not null,
+  recommended_followup_questions jsonb not null default '[]',
+  recommended_services jsonb not null default '[]',
+  requires_evaluation boolean not null default false,
+  requires_human_handoff boolean not null default false,
+  medical_safety_level text not null default 'normal',
+  status text not null default 'active',
+  priority int not null default 100,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists whatsapp_incoming_queue_phone_processed_idx on public.whatsapp_incoming_queue(phone_number, processed);
+create index if not exists ai_request_logs_created_idx on public.ai_request_logs(created_at desc);
+create index if not exists knowledge_articles_category_idx on public.knowledge_articles(category);
+create index if not exists knowledge_articles_status_idx on public.knowledge_articles(status);
+
 insert into public.ai_settings(business_id, system_prompt, welcome_message, after_hours_message, human_handoff_message, closing_message)
 values(
   'default',
@@ -214,3 +284,27 @@ values(
   'Obrigada pelo contato! Se precisar de algo mais, é só me chamar.'
 )
 on conflict(business_id) do nothing;
+
+insert into public.ai_automation_flows(flow_key,name) values
+  ('boas_vindas', 'Boas-vindas'),
+  ('cliente_nova', 'IdentificaÃ§Ã£o de cliente nova'),
+  ('cliente_existente', 'IdentificaÃ§Ã£o de cliente existente'),
+  ('apresentacao_servicos', 'ApresentaÃ§Ã£o de serviÃ§os'),
+  ('consulta_valores', 'Consulta de valores'),
+  ('pre_orcamento', 'PrÃ©-orÃ§amento'),
+  ('solicitacao_fotos', 'SolicitaÃ§Ã£o de fotos'),
+  ('verificacao_agenda', 'VerificaÃ§Ã£o de agenda'),
+  ('pre_agendamento', 'PrÃ©-agendamento'),
+  ('confirmacao_agendamento', 'ConfirmaÃ§Ã£o de agendamento'),
+  ('lembrete_atendimento', 'Lembrete de atendimento'),
+  ('reagendamento', 'Reagendamento'),
+  ('manutencao_proxima', 'ManutenÃ§Ã£o prÃ³xima'),
+  ('cobranca_pagamento', 'CobranÃ§a de pagamento pendente'),
+  ('envio_link_sumup', 'Envio de link SumUp'),
+  ('oferta_plano', 'Oferta de plano'),
+  ('aplicacao_cupom', 'AplicaÃ§Ã£o de cupom'),
+  ('indique_ganhe', 'Indique e Ganhe'),
+  ('transferencia_humano', 'TransferÃªncia para humano'),
+  ('pos_atendimento', 'PÃ³s-atendimento'),
+  ('pedido_avaliacao', 'Pedido de avaliaÃ§Ã£o')
+on conflict(flow_key) do nothing;

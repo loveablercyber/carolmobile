@@ -652,3 +652,58 @@ Após o auto-deploy do Render, enviar uma nova mensagem privada de outro número
 ## Próxima etapa recomendada (Módulo específico)
 
 Depois do auto-deploy do Render, conferir no painel/diagnóstico o `accountNumber` mascarado e comparar com o WhatsApp Business que está sendo testado. Em seguida, enviar nova mensagem privada; o evento precisa aparecer como `chatType=private` ou `private_lid`, não `group`.
+
+## Resultado desta etapa (Resolução de LIDs no PWA)
+
+- **Causa encontrada:** Quando o bot externo recebe uma mensagem privada de um contato com JID do tipo LID (`identifier@lid`), o extrator de telefone do bot (`jidPhoneCandidate`) não reconhecia o domínio `@lid` no regex (que possuía apenas `s.whatsapp.net`, `c.us` e `broadcast`). Com isso, o bot enviava o webhook com `phone: ""` (vazio). O PWA por sua vez validava apenas `payload.phone` e JIDs tradicionais, resultando em `phoneNumber = ""` e fazendo com que a mensagem fosse descartada com motivo `invalid_phone` sem criar conversa ou acionar o Gemini.
+- **Arquivos alterados:**
+  - [whatsapp-ai-engine.js](file:///c:/Users/carol/OneDrive/Área de Trabalho/site mobile carol/server/lib/whatsapp-ai-engine.js)
+  - [whatsapp-ai-engine.test.js](file:///c:/Users/carol/OneDrive/Área de Trabalho/site mobile carol/tests/whatsapp-ai-engine.test.js)
+- **O que foi corrigido:**
+  - O normalizador `normalizeIncomingWhatsappPayload` no PWA foi aprimorado para buscar o número de telefone em campos alternativos do Baileys: `key.remoteJidAlt`, `key.participantAlt`, `raw.senderPn` e `payload.senderPn`.
+  - A função `jidToPhone` no PWA agora aceita também os domínios `@c.us` e `@lid` para limpeza e extração segura de números.
+  - Com essa alteração, mesmo que o bot não envie o telefone resolvido no topo do webhook, o PWA extrai a informação diretamente do JID alternativo (`remoteJidAlt`) e outras propriedades do Baileys dentro do objeto `raw.key` enviado pelo bot.
+- **Resultado dos testes:**
+  - Adicionado caso de teste unitário validando a extração do JID a partir de `raw.key.remoteJidAlt` quando a mensagem vem de um LID e `phone` é ausente.
+  - Executados 71/71 testes unitários com sucesso (`npm test`).
+  - Linter (`npm run lint`) passou 100% sem erros.
+  - Build de produção (`npm run build`) passou com sucesso.
+- **Status do deploy:** O build local passou com sucesso, pronto para deploy.
+
+## Resultado desta etapa (Otimização de Latência e Resolução de Timeouts)
+
+- **Causa encontrada:** O PWA realizava uma requisição de status extra `getBaileysStatus()` (GET `/api/status`) antes de cada envio de mensagem via `sendBaileysTextMessage`. Isso dobrava o número de requisições de rede feitas para a API do bot externo no Render na jornada de resposta da IA. Como o bot roda em plano gratuito (sujeito a cold start e latência) e a Vercel possui limites estritos de execução por função, essa dupla requisição sequencial no webhook frequentemente ultrapassava o timeout de 20 segundos configurado, gerando falhas `BAILEYS_NETWORK_ERROR` após o processamento do Gemini.
+- **Arquivos alterados:**
+  - [baileys-client.js](file:///c:/Users/carol/OneDrive/Área de Trabalho/site mobile carol/server/lib/baileys-client.js)
+  - [whatsapp-ai-engine.js](file:///c:/Users/carol/OneDrive/Área de Trabalho/site mobile carol/server/lib/whatsapp-ai-engine.js)
+  - [baileys-client.test.js](file:///c:/Users/carol/OneDrive/Área de Trabalho/site mobile carol/tests/baileys-client.test.js)
+- **O que foi corrigido:**
+  - Adicionada a flag opcional `skipStatusCheck` (padrão `false`) na assinatura do método `sendBaileysTextMessage`.
+  - Configurada a chamada interna de `sendTextAndRecord` no motor de IA para utilizar `skipStatusCheck: true`. Desta forma, a IA envia a mensagem diretamente via `POST /api/send-text` sem gastar tempo com uma requisição prévia redundante de status, reduzindo significativamente a latência e a chance de timeout no webhook.
+  - Se a sessão não estiver pronta, o endpoint de envio `/api/send-text` do bot falhará diretamente retornando status `503`, o que é capturado e tratado normalmente pelo PWA.
+- **Resultado dos testes:**
+  - Adicionado caso de teste unitário validando o envio de mensagem pulando a requisição de status.
+  - Executados 72/72 testes unitários com sucesso (`npm test`).
+  - Linter (`npm run lint`) executou 100% limpo.
+  - Build de produção (`npm run build`) compilou com sucesso.
+- **Status do deploy:** Nova versão implantada em produção no Vercel com sucesso e aliada ao domínio ativo: `https://carolmobile.vercel.app`.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Testar novamente em **conversa privada real** enviando uma mensagem a partir de uma conta de WhatsApp pessoal (que pode chegar como LID) para o WhatsApp Business conectado ao bot. Confirmar no painel do PWA se o evento é capturado como `private` ou `private_lid` (não como `group`), se a conversa é registrada, se o Gemini cria a resposta e se a mensagem de retorno é entregue.
+
+## Resultado desta etapa (Hardening de migração e diagnóstico do WhatsApp IA)
+
+- **Escopo mantido:** não foram implementados agenda real, pagamento real, mídias no WhatsApp nem alteração visual. A etapa ficou restrita à confiabilidade do schema/migração, cache e processamento inicial de inbound.
+- **Migração 011 sincronizada:** `database/neon-ai-whatsapp.sql` agora cria também `whatsapp_incoming_queue`, `ai_request_logs` e `knowledge_articles`, além dos índices necessários para fila, métricas e base de conhecimento.
+- **Colunas do roteador IA no SQL estático:** a migração passou a incluir `primary_provider`, `primary_model`, `fallback_provider`, `fallback_model`, `timeout_ms`, `max_retries`, `grouping_window_ms`, `context_limit`, `max_response_tokens`, `fallback_enabled`, `contingency_enabled`, `cache_enabled`, `human_transfer_enabled`, `circuit_breaker_cooldown_seconds`, `gemini_circuit_breaker_until` e `groq_circuit_breaker_until`.
+- **Inspect/setup do Neon atualizado:** `scripts/neon-admin.mjs` passou a considerar `whatsapp_incoming_queue`, `ai_request_logs` e `knowledge_articles` como tabelas esperadas. Assim, um ambiente novo não deve ser marcado como completo se faltar a base operacional do roteador IA.
+- **Webhook protegido contra schema parcial:** `processIncomingWhatsAppWebhook` agora chama `ensureAiWhatsappSchema()` antes da primeira consulta real em mensagens válidas. Isso evita falha imediata na checagem de idempotência caso `whatsapp_incoming_queue` ainda não exista.
+- **Cache separado:** criada `getAiCommercialBase()` para cachear apenas dados de referência da IA (serviços, planos, cupons, fluxos e artigos). `getAiBase()` continua entregando o painel, mas agora busca conversas, logs e métricas em tempo real, evitando diagnóstico visual atrasado após mensagens recebidas.
+- **Teste de regressão:** adicionado teste unitário garantindo que a migração estática e o inspect do Neon contenham as tabelas/colunas exigidas pelo runtime do roteador IA.
+- **Validação técnica:** `node --check` passou nos arquivos Node alterados; testes focados do módulo IA passaram com 26/26; `npm test` passou com 90/90; `npm run lint` passou; `npm run build` passou.
+- **Pendência operacional:** aplicar/validar a migração em produção pela rota protegida `POST /api/admin-migrations?resource=ai-whatsapp` com `CRON_SECRET`, caso o ambiente ainda não tenha as tabelas novas. Depois disso, repetir um teste privado real no WhatsApp Business conectado.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **validação operacional em produção do inbound privado WhatsApp IA**: aplicar/confirmar a migração IA, enviar uma mensagem privada real de outro número para o WhatsApp Business conectado e conferir conversa, fila, log, métrica em `ai_request_logs`, resposta Gemini/Groq e envio Baileys. Não avançar para agenda, pagamento ou mídia ainda.

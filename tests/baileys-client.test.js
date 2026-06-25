@@ -140,3 +140,23 @@ test("returns friendly errors for invalid numbers and rejected credentials", asy
       error.code === "BAILEYS_UNAUTHORIZED" && error.providerStatus === 401,
   );
 });
+
+test("sends text message skipping ready status check", async () => {
+  configure();
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ success: true, number: "5514999999999", messageId: "message-2" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const result = await sendBaileysTextMessage({
+    number: "5514999999999",
+    text: "Olá!",
+    skipStatusCheck: true,
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://whatsapp.example.test/api/send-text");
+  assert.equal(result.data.messageId, "message-2");
+});

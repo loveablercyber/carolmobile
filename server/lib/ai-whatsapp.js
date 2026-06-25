@@ -1,6 +1,22 @@
 import { query, transaction } from "./db.js";
 import { appError } from "./http.js";
 import { geminiPublicStatus } from "./gemini-client.js";
+import { groqPublicStatus } from "./groq-client.js";
+
+let settingsCache = null;
+let settingsCacheTime = 0;
+let baseCache = null;
+let baseCacheTime = 0;
+
+export function invalidateAiSettingsCache() {
+  settingsCache = null;
+  settingsCacheTime = 0;
+}
+
+export function invalidateAiBaseCache() {
+  baseCache = null;
+  baseCacheTime = 0;
+}
 
 const DEFAULT_SYSTEM_PROMPT =
   "Você é a assistente virtual do salão [NOME_SALAO], especializado em Mega Hair premium.\n\nSeu objetivo é acolher, orientar e ajudar a cliente a encontrar serviços, valores, planos, horários e agendamentos reais.\n\nVocê deve usar apenas informações fornecidas pelas ferramentas do sistema.\n\nNunca invente valores, horários, cupons, disponibilidade, formas de pagamento ou políticas.\n\nAntes de confirmar um agendamento, sempre mostre resumo completo e peça confirmação explícita.\n\nQuando houver dúvida, pedido de desconto fora das regras, reclamação, pagamento com problema ou pedido de atendente, transfira para uma pessoa da equipe.\n\nUse o modo de humor configurado pelo administrador.\n\nResponda em português do Brasil, com mensagens curtas, claras e elegantes.";
@@ -71,6 +87,9 @@ export const aiWhatsappTables = [
   "human_handoff_tickets",
   "conversation_tags",
   "conversation_tag_links",
+  "whatsapp_incoming_queue",
+  "ai_request_logs",
+  "knowledge_articles",
 ];
 
 const schemaSql = `
@@ -264,6 +283,57 @@ create index if not exists whatsapp_message_logs_created_idx on public.whatsapp_
 create index if not exists ai_interactions_conversation_idx on public.ai_interactions(conversation_id,created_at desc);
 create index if not exists ai_tool_calls_interaction_idx on public.ai_tool_calls(interaction_id,created_at desc);
 create index if not exists human_handoff_status_idx on public.human_handoff_tickets(status,created_at desc);
+
+create table if not exists public.whatsapp_incoming_queue (
+  id uuid primary key default uuid_generate_v4(),
+  phone_number text not null,
+  message_id text not null unique,
+  text text not null,
+  processed boolean not null default false,
+  created_at timestamptz not null default now(),
+  processed_at timestamptz
+);
+create table if not exists public.ai_request_logs (
+  id uuid primary key default uuid_generate_v4(),
+  conversation_id uuid references public.whatsapp_conversations(id) on delete set null,
+  message_id uuid references public.whatsapp_messages(id) on delete set null,
+  provider text,
+  model text,
+  status text,
+  retry_count int not null default 0,
+  fallback_used boolean not null default false,
+  queue_latency_ms int,
+  provider_latency_ms int,
+  total_latency_ms int,
+  input_tokens_estimated int,
+  output_tokens_estimated int,
+  error_code text,
+  error_message text,
+  created_at timestamptz not null default now()
+);
+create index if not exists whatsapp_incoming_queue_phone_processed_idx on public.whatsapp_incoming_queue(phone_number, processed);
+create index if not exists ai_request_logs_created_idx on public.ai_request_logs(created_at desc);
+
+create table if not exists public.knowledge_articles (
+  id uuid primary key default uuid_generate_v4(),
+  title text not null,
+  slug text not null unique,
+  category text not null,
+  question_variations jsonb not null default '[]',
+  short_answer text not null,
+  full_answer text not null,
+  recommended_followup_questions jsonb not null default '[]',
+  recommended_services jsonb not null default '[]',
+  requires_evaluation boolean not null default false,
+  requires_human_handoff boolean not null default false,
+  medical_safety_level text not null default 'normal',
+  status text not null default 'active',
+  priority int not null default 100,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists knowledge_articles_category_idx on public.knowledge_articles(category);
+create index if not exists knowledge_articles_status_idx on public.knowledge_articles(status);
 `;
 
 const defaultMessages = {
@@ -333,6 +403,22 @@ function defaultSettingsInput() {
     resumeKeyword: "voltar ao bot",
     stopKeyword: "parar",
     timezone: "America/Sao_Paulo",
+    primaryProvider: "gemini",
+    primaryModel: "gemini-2.5-flash-lite",
+    fallbackProvider: "groq",
+    fallbackModel: "llama-3.1-8b-instant",
+    timeoutMs: 7000,
+    maxRetries: 2,
+    groupingWindowMs: 1500,
+    contextLimit: 8,
+    maxResponseTokens: 220,
+    fallbackEnabled: true,
+    contingencyEnabled: true,
+    cacheEnabled: true,
+    humanTransferEnabled: true,
+    circuitBreakerCooldownSeconds: 60,
+    geminiCircuitBreakerUntil: null,
+    groqCircuitBreakerUntil: null,
   };
 }
 
@@ -356,7 +442,7 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
     throw appError("O prompt base precisa ter pelo menos 80 caracteres.");
   return {
     enabled: bool(input.enabled, fallback.enabled),
-    provider: "gemini",
+    provider: clean(input.provider || fallback.provider) || "gemini",
     model,
     assistantName,
     salonName,
@@ -395,6 +481,22 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
       clean(input.resumeKeyword || fallback.resumeKeyword) || "voltar ao bot",
     stopKeyword: clean(input.stopKeyword || fallback.stopKeyword) || "parar",
     timezone: clean(input.timezone || fallback.timezone) || "America/Sao_Paulo",
+    primaryProvider: clean(input.primaryProvider || fallback.primaryProvider) || "gemini",
+    primaryModel: clean(input.primaryModel || fallback.primaryModel) || "gemini-2.5-flash-lite",
+    fallbackProvider: clean(input.fallbackProvider || fallback.fallbackProvider) || "groq",
+    fallbackModel: clean(input.fallbackModel || fallback.fallbackModel) || "llama-3.1-8b-instant",
+    timeoutMs: intRange(input.timeoutMs ?? input.timeout_ms, fallback.timeoutMs, 1000, 30000),
+    maxRetries: intRange(input.maxRetries ?? input.max_retries, fallback.maxRetries, 0, 5),
+    groupingWindowMs: intRange(input.groupingWindowMs ?? input.grouping_window_ms, fallback.groupingWindowMs, 100, 10000),
+    contextLimit: intRange(input.contextLimit ?? input.context_limit, fallback.contextLimit, 1, 30),
+    maxResponseTokens: intRange(input.maxResponseTokens ?? input.max_response_tokens, fallback.maxResponseTokens, 10, 2000),
+    fallbackEnabled: bool(input.fallbackEnabled ?? input.fallback_enabled, fallback.fallbackEnabled),
+    contingencyEnabled: bool(input.contingencyEnabled ?? input.contingency_enabled, fallback.contingencyEnabled),
+    cacheEnabled: bool(input.cacheEnabled ?? input.cache_enabled, fallback.cacheEnabled),
+    humanTransferEnabled: bool(input.humanTransferEnabled ?? input.human_transfer_enabled, fallback.humanTransferEnabled),
+    circuitBreakerCooldownSeconds: intRange(input.circuitBreakerCooldownSeconds ?? input.circuit_breaker_cooldown_seconds, fallback.circuitBreakerCooldownSeconds, 5, 3600),
+    geminiCircuitBreakerUntil: input.geminiCircuitBreakerUntil ?? fallback.geminiCircuitBreakerUntil ?? null,
+    groqCircuitBreakerUntil: input.groqCircuitBreakerUntil ?? fallback.groqCircuitBreakerUntil ?? null,
   };
 }
 
@@ -534,13 +636,185 @@ function dbToSettings(row) {
     resumeKeyword: row.resume_keyword,
     stopKeyword: row.stop_keyword,
     timezone: row.timezone,
+    primaryProvider: row.primary_provider,
+    primaryModel: row.primary_model,
+    fallbackProvider: row.fallback_provider,
+    fallbackModel: row.fallback_model,
+    timeoutMs: row.timeout_ms,
+    maxRetries: row.max_retries,
+    groupingWindowMs: row.grouping_window_ms,
+    contextLimit: row.context_limit,
+    maxResponseTokens: row.max_response_tokens,
+    fallbackEnabled: row.fallback_enabled,
+    contingencyEnabled: row.contingency_enabled,
+    cacheEnabled: row.cache_enabled,
+    humanTransferEnabled: row.human_transfer_enabled,
+    circuitBreakerCooldownSeconds: row.circuit_breaker_cooldown_seconds,
+    geminiCircuitBreakerUntil: row.gemini_circuit_breaker_until,
+    groqCircuitBreakerUntil: row.groq_circuit_breaker_until,
     updatedAt: row.updated_at,
   };
 }
 
+const initialKnowledgeArticles = [
+  {
+    title: "O que é Mega Hair?",
+    slug: "o-que-e-mega-hair",
+    category: "O que é Mega Hair",
+    question_variations: ["o que e mega hair", "oque e mega hair", "alongamento de cabelo", "o que e alongamento"],
+    short_answer: "Mega Hair é uma técnica de alongamento ou aumento de volume feita com mechas adicionais de cabelo.",
+    full_answer: "Mega Hair é uma técnica de alongamento ou aumento de volume feita com mechas adicionais de cabelo. Existem vários métodos, como fita adesiva, microlink, queratina e tic tac. O melhor depende do seu comprimento atual, espessura dos fios, rotina e resultado desejado. Você busca mais volume, mais comprimento ou os dois?",
+    recommended_followup_questions: ["Você busca mais volume, mais comprimento ou os dois?", "Qual o comprimento atual do seu cabelo?"],
+    requires_evaluation: false,
+    requires_human_handoff: false,
+    medical_safety_level: "normal"
+  },
+  {
+    title: "Mega Hair faz o cabelo cair?",
+    slug: "mega-hair-faz-cair-cabelo",
+    category: "Mega Hair e queda de cabelo",
+    question_variations: ["mega hair faz cair cabelo", "mega hair prejudica o cabelo", "mega hair causa queda", "estragou meu cabelo", "cabelo caindo"],
+    short_answer: "O Mega Hair não deve causar queda quando a técnica é bem indicada, aplicada corretamente e recebe manutenção no prazo.",
+    full_answer: "O Mega Hair não deve causar queda quando a técnica é bem indicada, aplicada corretamente e recebe manutenção no prazo. Mas peso excessivo, tensão, aplicação inadequada, manutenção atrasada ou um couro cabeludo sensível podem causar desconforto e prejudicar os fios. Para indicar a técnica certa, preciso entender como está seu cabelo hoje. Você sente quebra, queda intensa, dor ou sensibilidade no couro cabeludo?",
+    recommended_followup_questions: ["Você sente quebra, queda intensa, dor ou sensibilidade no couro cabeludo?", "Qual técnica você usa ou está pesquisando?"],
+    requires_evaluation: false,
+    requires_human_handoff: false,
+    medical_safety_level: "normal"
+  },
+  {
+    title: "O que é Mega Hair de queratina?",
+    slug: "o-que-e-mega-hair-de-queratina",
+    category: "Queratina",
+    question_variations: ["o que e mega hair de queratina", "tecnica de queratina", "como funciona a queratina", "megahair de queratina"],
+    short_answer: "É uma técnica em que pequenas mechas são fixadas aos fios naturais com pontos de queratina específicos para alongamento.",
+    full_answer: "É uma técnica em que pequenas mechas são fixadas aos fios naturais com pontos de queratina específicos para alongamento. Ela pode oferecer um resultado discreto e personalizado, mas exige aplicação cuidadosa e manutenção profissional. Para saber se é indicada para você, preciso avaliar o comprimento, a espessura e o estado atual do seu cabelo.",
+    recommended_followup_questions: ["Qual é a textura do seu cabelo atualmente?", "Você já fez aplicação com queratina antes?"],
+    requires_evaluation: true,
+    requires_human_handoff: false,
+    medical_safety_level: "normal"
+  },
+  {
+    title: "Qual o melhor método para cabelo curto?",
+    slug: "qual-o-melhor-metodo-para-cabelo-curto",
+    category: "Cabelo curto",
+    question_variations: ["qual o melhor metodo para cabelo curto", "tenho cabelo curto o que fazer", "mega hair em cabelo curto", "qual e melhor para cabelo curto"],
+    short_answer: "Para cabelo curto, a escolha depende do comprimento atual, densidade dos fios e do quanto você deseja alongar.",
+    full_answer: "Para cabelo curto, a escolha depende principalmente do comprimento atual, da densidade dos fios e de quanto você deseja alongar. Em alguns casos, técnicas com mechas menores podem ajudar a deixar o resultado mais discreto, mas a indicação correta precisa de avaliação. Você consegue me dizer aproximadamente até onde vai seu cabelo hoje e qual comprimento gostaria de alcançar?",
+    recommended_followup_questions: ["Você consegue me dizer aproximadamente até onde vai seu cabelo hoje?", "Qual comprimento você gostaria de alcançar?"],
+    requires_evaluation: true,
+    requires_human_handoff: false,
+    medical_safety_level: "normal"
+  },
+  {
+    title: "Qual método é melhor para cabelo fino?",
+    slug: "qual-metodo-e-melhor-para-cabelo-fino",
+    category: "Cabelo fino",
+    question_variations: ["qual metodo e melhor para cabelo fino", "tenho cabelo muito fino", "mega hair em cabelo fino", "qual e melhor para cabelo fino"],
+    short_answer: "Em cabelos finos, o principal é escolher uma técnica com distribuição adequada de peso e quantidade de mechas compatível.",
+    full_answer: "Em cabelos finos, o principal é escolher uma técnica com distribuição adequada de peso e quantidade de mechas compatível com os fios naturais. A avaliação é importante para evitar excesso de peso e garantir um resultado natural. Você procura mais volume, comprimento ou ambos?",
+    recommended_followup_questions: ["Você procura mais volume, comprimento ou ambos?", "Já teve problemas com quebra em cabelos finos?"],
+    requires_evaluation: true,
+    requires_human_handoff: false,
+    medical_safety_level: "normal"
+  },
+  {
+    title: "Quanto tempo dura o Mega Hair?",
+    slug: "quanto-tempo-dura-o-mega-hair",
+    category: "Durabilidade",
+    question_variations: ["quanto tempo dura o mega hair", "durabilidade do mega hair", "de quanto em quanto tempo faz manutencao", "quanto tempo dura"],
+    short_answer: "A durabilidade varia conforme a técnica, velocidade de crescimento do cabelo e cuidados em casa.",
+    full_answer: "A durabilidade varia conforme a técnica, velocidade de crescimento do cabelo e cuidados em casa. Além da duração da aplicação, existe o prazo ideal de manutenção, que é fundamental para preservar o resultado e a saúde dos fios. Posso mostrar as opções de manutenção disponíveis para cada técnica.",
+    recommended_followup_questions: ["Gostaria de conhecer as opções de manutenção disponíveis?", "Qual método você tem mais interesse?"],
+    requires_evaluation: false,
+    requires_human_handoff: false,
+    medical_safety_level: "normal"
+  },
+  {
+    title: "Posso lavar, usar secador, piscina ou praia?",
+    slug: "posso-lavar-usar-secador-piscina-ou-praia",
+    category: "Cuidados em casa",
+    question_variations: ["posso lavar", "usar secador", "piscina ou praia", "mega hair na piscina", "como lavar o mega hair", "piscina", "praia", "secador"],
+    short_answer: "Em geral, é possível manter uma rotina normal com alguns cuidados específicos, como usar produtos adequados e secar bem a região das fixações.",
+    full_answer: "Em geral, é possível manter uma rotina normal com alguns cuidados específicos, como usar produtos adequados, secar bem a região das fixações e respeitar as orientações da técnica escolhida. Os cuidados podem variar conforme o método. Você já usa Mega Hair ou está pesquisando para fazer pela primeira vez?",
+    recommended_followup_questions: ["Você já usa Mega Hair ou está pesquisando para fazer pela primeira vez?"],
+    requires_evaluation: false,
+    requires_human_handoff: false,
+    medical_safety_level: "normal"
+  },
+  {
+    title: "Mega Hair e progressiva ou química",
+    slug: "mega-hair-com-progressiva",
+    category: "Cabelo com química",
+    question_variations: ["posso fazer se tenho progressiva", "progressiva e mega hair", "mega hair com quimica", "alisamento e mega hair", "mega hair loiro", "loira mega hair", "mega hair com progressiva"],
+    short_answer: "Sim, é possível aplicar Mega Hair em cabelos com progressiva ou química, mas exige cuidados adicionais e uma avaliação da resistência dos fios.",
+    full_answer: "Sim, é possível aplicar Mega Hair em cabelos com progressiva ou outra química, contanto que os fios estejam saudáveis e resistentes. O alisamento diminui o atrito, mas a fixação precisa ser feita de forma correta para evitar escorregamento da mecha. Para recomendar a melhor técnica para o seu caso, preciso entender melhor: faz quanto tempo que você realizou a progressiva?",
+    recommended_followup_questions: ["Faz quanto tempo que você realizou a última progressiva?", "Você sente alguma quebra nos fios após a química?"],
+    requires_evaluation: true,
+    requires_human_handoff: false,
+    medical_safety_level: "normal"
+  },
+  {
+    title: "Dor e coceira intensa no couro cabeludo",
+    slug: "dor-coceira-couro-cabeludo",
+    category: "Contraindicações",
+    question_variations: ["meu couro cabeludo esta cocando e doendo", "dor no couro cabeludo", "irritacao couro cabeludo", "ferida na cabeca", "dor intensa", "meu couro cabeludo esta cocando"],
+    short_answer: "Se você percebe dor, coceira intensa, feridas ou queda importante, recomendamos pausar procedimentos e procurar ajuda médica.",
+    full_answer: "Se você percebe dor, coceira intensa, feridas, quebra acentuada ou queda importante, recomendamos pausar qualquer procedimento, evitar coçar a região e procurar uma profissional qualificada para avaliação física do couro cabeludo e, se necessário, um dermatologista. Sintomas inflamatórios requerem cuidados especializados.",
+    recommended_followup_questions: [],
+    requires_evaluation: true,
+    requires_human_handoff: true,
+    medical_safety_level: "alert"
+  },
+  {
+    title: "Quebra de cabelo associada ao Mega Hair",
+    slug: "mega-hair-quebrando-cabelo",
+    category: "Segurança e contraindicações",
+    question_variations: ["meu mega hair esta quebrando meu cabelo", "quebrando meu cabelo", "dano no cabelo por mega hair", "mega hair quebrando"],
+    short_answer: "A quebra excessiva pode ocorrer por excesso de peso, manutenção atrasada ou aplicação inadequada.",
+    full_answer: "A quebra excessiva dos fios associada ao Mega Hair pode ser causada por excesso de peso das mechas, tensionagem inadequada na aplicação, atraso no prazo de manutenção ou fragilidade prévia do cabelo. Recomendamos pausar a tração e agendar uma avaliação presencial para verificar a integridade da haste capilar.",
+    recommended_followup_questions: ["Há quanto tempo você está com este Mega Hair?", "Quando foi sua última manutenção?"],
+    requires_evaluation: true,
+    requires_human_handoff: true,
+    medical_safety_level: "alert"
+  },
+  {
+    title: "Técnica recomendada / Triagem",
+    slug: "qual-tecnica-combina-comigo",
+    category: "Avaliação profissional",
+    question_variations: ["quero saber qual tecnica combina comigo", "qual o melhor metodo para mim", "qual mega hair escolher", "quero indicacao de tecnica"],
+    short_answer: "A escolha do melhor método depende de uma análise dos seus fios, rotina e preferências.",
+    full_answer: "A escolha do melhor método depende de fatores como a espessura do seu fio, o estado do couro cabeludo, sua rotina e o resultado desejado. Para te dar uma orientação personalizada inicial, você poderia me dizer: você busca mais volume, comprimento ou ambos? Seus fios são finos, médios ou grossos?",
+    recommended_followup_questions: ["Você busca mais volume, comprimento ou ambos?", "Seus fios são finos, médios ou grossos?", "Você possui química no cabelo?"],
+    requires_evaluation: true,
+    requires_human_handoff: false,
+    medical_safety_level: "normal"
+  }
+];
+
 export async function ensureAiWhatsappSchema({ force = false } = {}) {
   if (schemaEnsured && !force) return;
   await query(schemaSql);
+
+  // Add new columns to existing tables
+  await query(`
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_provider text not null default 'gemini';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_model text not null default 'gemini-2.5-flash-lite';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_provider text not null default 'groq';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_model text not null default 'llama-3.1-8b-instant';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS timeout_ms integer not null default 7000;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS max_retries integer not null default 2;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS grouping_window_ms integer not null default 1500;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS context_limit integer not null default 8;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS max_response_tokens integer not null default 220;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_enabled boolean not null default true;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS contingency_enabled boolean not null default true;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS cache_enabled boolean not null default true;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS human_transfer_enabled boolean not null default true;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS circuit_breaker_cooldown_seconds integer not null default 60;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS gemini_circuit_breaker_until timestamptz;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS groq_circuit_breaker_until timestamptz;
+  `).catch(err => console.error("Failed to alter public.ai_settings table", err));
+
   await query(
     `insert into public.ai_settings(
       business_id,system_prompt,welcome_message,after_hours_message,human_handoff_message,closing_message
@@ -560,6 +834,33 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
       [flowKey, name],
     );
   }
+
+  for (const article of initialKnowledgeArticles) {
+    await query(
+      `insert into public.knowledge_articles(
+        title, slug, category, question_variations, short_answer, full_answer,
+        recommended_followup_questions, recommended_services, requires_evaluation,
+        requires_human_handoff, medical_safety_level, status, priority
+      ) values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      on conflict(slug) do nothing`,
+      [
+        article.title,
+        article.slug,
+        article.category,
+        JSON.stringify(article.question_variations),
+        article.short_answer,
+        article.full_answer,
+        JSON.stringify(article.recommended_followup_questions),
+        JSON.stringify(article.recommended_services || []),
+        article.requires_evaluation,
+        article.requires_human_handoff,
+        article.medical_safety_level,
+        article.status || "active",
+        article.priority || 100
+      ]
+    ).catch(err => console.error("Failed to seed article", article.slug, err));
+  }
+
   await query(
     `insert into public._luxe_migrations(version, description)
      values ('011_ai_whatsapp', 'Atendimento IA WhatsApp Gemini')
@@ -609,10 +910,17 @@ export async function applyAiWhatsappMigration() {
 
 export async function getAiSettings() {
   await ensureAiWhatsappSchema();
+  const now = Date.now();
+  if (settingsCache && (now - settingsCacheTime < 60000)) {
+    return settingsCache;
+  }
   const { rows } = await query(
     "select * from public.ai_settings where business_id='default' limit 1",
   );
-  return dbToSettings(rows[0]);
+  const settings = dbToSettings(rows[0]);
+  settingsCache = settings;
+  settingsCacheTime = now;
+  return settings;
 }
 
 export async function saveAiSettings(user, input) {
@@ -626,9 +934,13 @@ export async function saveAiSettings(user, input) {
         welcome_message,after_hours_message,human_handoff_message,closing_message,max_idle_minutes,max_auto_messages,
         allow_24h,ai_start_time,ai_end_time,allow_new_contacts,allow_existing_clients,allow_auto_payment_links,
         allow_auto_booking,require_booking_confirmation,handoff_on_complaint,handoff_on_payment,handoff_on_urgency,
-        pause_keyword,resume_keyword,stop_keyword,timezone,updated_by,updated_at
+        pause_keyword,resume_keyword,stop_keyword,timezone,
+        primary_provider,primary_model,fallback_provider,fallback_model,timeout_ms,max_retries,grouping_window_ms,
+        context_limit,max_response_tokens,fallback_enabled,contingency_enabled,cache_enabled,human_transfer_enabled,
+        circuit_breaker_cooldown_seconds,gemini_circuit_breaker_until,groq_circuit_breaker_until,updated_by,updated_at
       ) values(
-        'default',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,now()
+        'default',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,
+        $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,now()
       ) on conflict(business_id) do update set
         enabled=excluded.enabled,provider=excluded.provider,model=excluded.model,assistant_name=excluded.assistant_name,
         salon_name=excluded.salon_name,personality_mode=excluded.personality_mode,system_prompt=excluded.system_prompt,
@@ -640,7 +952,17 @@ export async function saveAiSettings(user, input) {
         allow_auto_booking=excluded.allow_auto_booking,require_booking_confirmation=excluded.require_booking_confirmation,
         handoff_on_complaint=excluded.handoff_on_complaint,handoff_on_payment=excluded.handoff_on_payment,
         handoff_on_urgency=excluded.handoff_on_urgency,pause_keyword=excluded.pause_keyword,resume_keyword=excluded.resume_keyword,
-        stop_keyword=excluded.stop_keyword,timezone=excluded.timezone,updated_by=excluded.updated_by,updated_at=now()
+        stop_keyword=excluded.stop_keyword,timezone=excluded.timezone,
+        primary_provider=excluded.primary_provider,primary_model=excluded.primary_model,
+        fallback_provider=excluded.fallback_provider,fallback_model=excluded.fallback_model,
+        timeout_ms=excluded.timeout_ms,max_retries=excluded.max_retries,grouping_window_ms=excluded.grouping_window_ms,
+        context_limit=excluded.context_limit,max_response_tokens=excluded.max_response_tokens,
+        fallback_enabled=excluded.fallback_enabled,contingency_enabled=excluded.contingency_enabled,
+        cache_enabled=excluded.cache_enabled,human_transfer_enabled=excluded.human_transfer_enabled,
+        circuit_breaker_cooldown_seconds=excluded.circuit_breaker_cooldown_seconds,
+        gemini_circuit_breaker_until=excluded.gemini_circuit_breaker_until,
+        groq_circuit_breaker_until=excluded.groq_circuit_breaker_until,
+        updated_by=excluded.updated_by,updated_at=now()
       returning *`,
       [
         value.enabled,
@@ -671,6 +993,22 @@ export async function saveAiSettings(user, input) {
         value.resumeKeyword,
         value.stopKeyword,
         value.timezone,
+        value.primaryProvider,
+        value.primaryModel,
+        value.fallbackProvider,
+        value.fallbackModel,
+        value.timeoutMs,
+        value.maxRetries,
+        value.groupingWindowMs,
+        value.contextLimit,
+        value.maxResponseTokens,
+        value.fallbackEnabled,
+        value.contingencyEnabled,
+        value.cacheEnabled,
+        value.humanTransferEnabled,
+        value.circuitBreakerCooldownSeconds,
+        value.geminiCircuitBreakerUntil,
+        value.groqCircuitBreakerUntil,
         user.id,
       ],
     );
@@ -689,6 +1027,8 @@ export async function saveAiSettings(user, input) {
        values($1,'update','ai_settings',$2,$3)`,
       [user.id, rows[0].id, JSON.stringify({ ...value, systemPrompt: "[stored]" })],
     ).catch(() => null);
+    invalidateAiSettingsCache();
+    invalidateAiBaseCache();
     return dbToSettings(rows[0]);
   });
 }
@@ -766,6 +1106,7 @@ export async function saveAiServiceSettings(user, input) {
        values($1,'update','ai_service_settings',$2,$3)`,
       [user.id, rows[0].id, JSON.stringify(value)],
     ).catch(() => null);
+    invalidateAiBaseCache();
     return rows[0];
   });
 }
@@ -808,13 +1149,18 @@ export async function saveAiFlowSettings(user, input) {
        values($1,'update','ai_automation_flow',$2,$3)`,
       [user.id, rows[0].id, JSON.stringify(value)],
     ).catch(() => null);
+    invalidateAiBaseCache();
     return rows[0];
   });
 }
 
-export async function getAiBase() {
+export async function getAiCommercialBase() {
   await ensureAiWhatsappSchema();
-  const [services, plans, coupons, flows, conversations, logs] = await Promise.all([
+  const now = Date.now();
+  if (baseCache && (now - baseCacheTime < 60000)) {
+    return baseCache;
+  }
+  const [services, plans, coupons, flows, knowledgeArticles] = await Promise.all([
     query(
       `select s.id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
         ais.id as ai_service_settings_id,
@@ -827,7 +1173,7 @@ export async function getAiBase() {
        order by s.active desc,coalesce(ais.priority_order,100),s.name`,
     ),
     query(
-      `select p.id,p.name,p.price,p.billing_cycle,p.benefits,p.active,
+      `select p.id,p.name,p.price,p.benefits,p.active,
         coalesce(aps.can_sell_by_ai,false) as can_sell_by_ai,
         coalesce(aps.requires_human_confirmation,true) as requires_human_confirmation
        from public.plans p
@@ -844,6 +1190,26 @@ export async function getAiBase() {
        from public.ai_automation_flows order by name`,
     ),
     query(
+      `select * from public.knowledge_articles order by category, priority desc, title`
+    )
+  ]);
+  const base = {
+    services: services.rows,
+    plans: plans.rows,
+    coupons: coupons.rows,
+    flows: flows.rows,
+    knowledgeArticles: knowledgeArticles.rows,
+  };
+  baseCache = base;
+  baseCacheTime = now;
+  return base;
+}
+
+export async function getAiBase() {
+  await ensureAiWhatsappSchema();
+  const [commercialBase, conversations, logs, metricsSummary, hourlyMetrics, requestLogs] = await Promise.all([
+    getAiCommercialBase(),
+    query(
       `select wc.id,wc.phone_number,wc.status,wc.ai_enabled,wc.last_message_at,wc.last_message_preview,
         p.full_name as client,ap.starts_at
        from public.whatsapp_conversations wc
@@ -857,15 +1223,132 @@ export async function getAiBase() {
       `select id,event_type,status,error_message,created_at
        from public.whatsapp_message_logs order by created_at desc limit 30`,
     ),
+    query(
+      `select
+         coalesce(avg(case when status = 'success' then total_latency_ms end), 0)::float as avg_total_latency,
+         coalesce(avg(case when status = 'success' then provider_latency_ms end), 0)::float as avg_provider_latency,
+         coalesce(avg(case when status = 'success' then queue_latency_ms end), 0)::float as avg_queue_latency,
+         coalesce(count(*), 0)::int as total_requests,
+         coalesce(count(case when status = 'success' then 1 end), 0)::int as success_requests,
+         coalesce(count(case when error_code = '429' or error_message ilike '%429%' or error_message ilike '%RESOURCE_EXHAUSTED%' then 1 end), 0)::int as rate_limit_errors,
+         coalesce(sum(retry_count), 0)::int as total_retries,
+         coalesce(count(case when fallback_used = true then 1 end), 0)::int as fallback_count,
+         coalesce(count(case when status = 'human_handoff' then 1 end), 0)::int as handoff_count,
+         coalesce(sum(input_tokens_estimated), 0)::int as total_input_tokens,
+         coalesce(sum(output_tokens_estimated), 0)::int as total_output_tokens
+       from public.ai_request_logs
+       where created_at >= now() - interval '7 days'`
+    ),
+    query(
+      `select
+         date_trunc('hour', created_at) as hour_bucket,
+         count(*)::int as request_count,
+         count(case when status = 'success' then 1 end)::int as success_count
+       from public.ai_request_logs
+       where created_at >= now() - interval '24 hours'
+       group by hour_bucket
+       order by hour_bucket`
+    ),
+    query(
+      `select id, conversation_id, message_id, provider, model, status, retry_count, fallback_used,
+              total_latency_ms, error_message, created_at
+       from public.ai_request_logs
+       order by created_at desc
+       limit 15`
+    )
   ]);
   return {
-    services: services.rows,
-    plans: plans.rows,
-    coupons: coupons.rows,
-    flows: flows.rows,
+    ...commercialBase,
     conversations: conversations.rows,
     logs: logs.rows,
+    metricsSummary: metricsSummary.rows[0] || {},
+    hourlyMetrics: hourlyMetrics.rows,
+    requestLogs: requestLogs.rows,
   };
+}
+
+export async function saveKnowledgeArticle(user, article) {
+  await ensureAiWhatsappSchema();
+  const id = article.id || null;
+  const title = clean(article.title);
+  const category = clean(article.category);
+  const shortAnswer = clean(article.short_answer || article.shortAnswer);
+  const fullAnswer = clean(article.full_answer || article.fullAnswer);
+  const status = clean(article.status || "active");
+  const priority = intRange(article.priority, 100, 1, 9999);
+  const requiresEvaluation = bool(article.requires_evaluation ?? article.requiresEvaluation, false);
+  const requiresHumanHandoff = bool(article.requires_human_handoff ?? article.requiresHumanHandoff, false);
+  const medicalSafetyLevel = clean(article.medical_safety_level ?? article.medicalSafetyLevel) || "normal";
+
+  const variations = Array.isArray(article.question_variations || article.questionVariations)
+    ? (article.question_variations || article.questionVariations)
+    : JSON.parse(article.question_variations || article.questionVariations || "[]");
+  const followups = Array.isArray(article.recommended_followup_questions || article.recommendedFollowupQuestions)
+    ? (article.recommended_followup_questions || article.recommendedFollowupQuestions)
+    : JSON.parse(article.recommended_followup_questions || article.recommendedFollowupQuestions || "[]");
+  const services = Array.isArray(article.recommended_services || article.recommendedServices)
+    ? (article.recommended_services || article.recommendedServices)
+    : JSON.parse(article.recommended_services || article.recommendedServices || "[]");
+
+  const slug = article.slug || title
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/[\s-]+/g, "-");
+
+  return transaction(async (client) => {
+    let result;
+    if (id) {
+      result = await client.query(
+        `update public.knowledge_articles
+            set title = $2, slug = $3, category = $4, question_variations = $5,
+                short_answer = $6, full_answer = $7, recommended_followup_questions = $8,
+                recommended_services = $9, requires_evaluation = $10,
+                requires_human_handoff = $11, medical_safety_level = $12, status = $13,
+                priority = $14, updated_at = now()
+          where id = $1
+          returning *`,
+        [
+          id, title, slug, category, JSON.stringify(variations), shortAnswer, fullAnswer,
+          JSON.stringify(followups), JSON.stringify(services), requiresEvaluation,
+          requiresHumanHandoff, medicalSafetyLevel, status, priority
+        ]
+      );
+    } else {
+      result = await client.query(
+        `insert into public.knowledge_articles (
+          title, slug, category, question_variations, short_answer, full_answer,
+          recommended_followup_questions, recommended_services, requires_evaluation,
+          requires_human_handoff, medical_safety_level, status, priority
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        on conflict(slug) do update set
+          title = excluded.title, category = excluded.category,
+          question_variations = excluded.question_variations, short_answer = excluded.short_answer,
+          full_answer = excluded.full_answer, recommended_followup_questions = excluded.recommended_followup_questions,
+          recommended_services = excluded.recommended_services, requires_evaluation = excluded.requires_evaluation,
+          requires_human_handoff = excluded.requires_human_handoff, medical_safety_level = excluded.medical_safety_level,
+          status = excluded.status, priority = excluded.priority, updated_at = now()
+        returning *`,
+        [
+          title, slug, category, JSON.stringify(variations), shortAnswer, fullAnswer,
+          JSON.stringify(followups), JSON.stringify(services), requiresEvaluation,
+          requiresHumanHandoff, medicalSafetyLevel, status, priority
+        ]
+      );
+    }
+    invalidateAiBaseCache();
+    return result.rows[0];
+  });
+}
+
+export async function deleteKnowledgeArticle(user, id) {
+  await ensureAiWhatsappSchema();
+  if (!uuidLike(id)) throw appError("ID do artigo inválido.");
+  return transaction(async (client) => {
+    await client.query("delete from public.knowledge_articles where id = $1", [id]);
+    invalidateAiBaseCache();
+  });
 }
 
 export async function getAiPanel() {
@@ -873,10 +1356,14 @@ export async function getAiPanel() {
   return {
     status: {
       gemini: geminiPublicStatus(),
+      groq: groqPublicStatus(),
       database: { configured: true },
       ai: {
         enabled: settings.enabled,
-        active: settings.enabled && geminiPublicStatus().enabled && geminiPublicStatus().configured,
+        active: settings.enabled && (
+          (geminiPublicStatus().enabled && geminiPublicStatus().configured) ||
+          (groqPublicStatus().enabled && groqPublicStatus().configured)
+        ),
       },
     },
     personalityModes,
@@ -889,7 +1376,15 @@ export function buildRuntimePrompt(settings) {
   const mode =
     personalityModes.find((item) => item.value === settings.personalityMode) ||
     personalityModes[0];
+
+  const additionalInstructions = `
+Além de atendimento comercial, você é uma assistente educativa especializada em Mega Hair.
+Responda dúvidas com clareza, gentileza e responsabilidade. Use a base de conhecimento aprovada pelo salão antes de responder perguntas técnicas.
+Nunca faça diagnóstico médico, nunca prometa ausência de riscos e nunca garanta resultado. Quando uma cliente relatar queda intensa, dor, feridas, coceira forte, irritação ou outro problema de saúde do couro cabeludo, oriente avaliação presencial e encaminhe para atendimento humano.
+Quando a cliente pedir indicação de técnica, faça perguntas breves de triagem (objetivo, espessura do fio, química, etc.) e explique que a escolha final depende de avaliação profissional.`;
+
   return `${settings.systemPrompt || DEFAULT_SYSTEM_PROMPT}
+${additionalInstructions}
 
 Contexto configurado:
 - Salão: ${settings.salonName}

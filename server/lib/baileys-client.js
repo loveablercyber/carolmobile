@@ -84,7 +84,7 @@ export async function getBaileysStatus() {
   return request("/api/status");
 }
 
-export async function sendBaileysTextMessage({ number, text }) {
+export async function sendBaileysTextMessage({ number, text, skipStatusCheck = false }) {
   const normalizedNumber = normalizeBaileysNumber(number);
   const message = String(text || "").trim();
   if (!message)
@@ -92,12 +92,14 @@ export async function sendBaileysTextMessage({ number, text }) {
       status: 400,
       code: "BAILEYS_EMPTY_MESSAGE",
     });
-  const status = await getBaileysStatus();
-  if (String(status.status).toLowerCase() !== "ready")
-    throw new BaileysClientError(
-      "O WhatsApp ainda não está conectado. Escaneie o QR Code e aguarde o status ready.",
-      { status: 503, code: "BAILEYS_NOT_READY" },
-    );
+  if (!skipStatusCheck) {
+    const status = await getBaileysStatus();
+    if (String(status.status).toLowerCase() !== "ready")
+      throw new BaileysClientError(
+        "O WhatsApp ainda não está conectado. Escaneie o QR Code e aguarde o status ready.",
+        { status: 503, code: "BAILEYS_NOT_READY" },
+      );
+  }
   return request("/api/send-text", {
     method: "POST",
     body: { number: normalizedNumber, text: message },
@@ -122,4 +124,15 @@ export async function requestBaileysPairingCode({ number }) {
 
 export async function logoutBaileysSession() {
   return request("/api/logout", { method: "POST" });
+}
+
+export async function sendBaileysPresence({ number, presence = "composing" }) {
+  const normalizedNumber = normalizeBaileysNumber(number);
+  return request("/api/presence", {
+    method: "POST",
+    body: { number: normalizedNumber, presence },
+  }).catch((err) => {
+    console.error("Failed to send presence state", err.message);
+    return null;
+  });
 }

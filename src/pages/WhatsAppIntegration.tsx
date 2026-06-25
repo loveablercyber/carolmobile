@@ -70,6 +70,22 @@ type AiSettings = {
   resumeKeyword: string;
   stopKeyword: string;
   timezone: string;
+  primaryProvider: string;
+  primaryModel: string;
+  fallbackProvider: string;
+  fallbackModel: string;
+  timeoutMs: number;
+  maxRetries: number;
+  groupingWindowMs: number;
+  contextLimit: number;
+  maxResponseTokens: number;
+  fallbackEnabled: boolean;
+  contingencyEnabled: boolean;
+  cacheEnabled: boolean;
+  humanTransferEnabled: boolean;
+  circuitBreakerCooldownSeconds: number;
+  geminiCircuitBreakerUntil: string | null;
+  groqCircuitBreakerUntil: string | null;
   updatedAt?: string;
 };
 
@@ -80,6 +96,14 @@ type AiPanelData = {
       configured: boolean;
       enabled: boolean;
       model: string;
+      keyCount?: number;
+    };
+    groq: {
+      provider: string;
+      configured: boolean;
+      enabled: boolean;
+      model: string;
+      keyCount?: number;
     };
     database: { configured: boolean };
     ai: { enabled: boolean; active: boolean };
@@ -93,6 +117,9 @@ type AiPanelData = {
     flows: Array<Record<string, any>>;
     conversations: Array<Record<string, any>>;
     logs: Array<Record<string, any>>;
+    requestLogs: Array<Record<string, any>>;
+    metricsSummary: Record<string, any>;
+    hourlyMetrics: Array<Record<string, any>>;
   };
 };
 
@@ -141,10 +168,12 @@ type FlowForm = {
 const adminTabs = [
   { id: "connection", label: "Conexão", icon: MessageCircle },
   { id: "ai", label: "Atendimento IA", icon: Brain },
+  { id: "performance_settings", label: "Provedor e Performance", icon: ShieldCheck },
   { id: "base", label: "Base de Atendimento", icon: BookOpen },
+  { id: "knowledge", label: "Conhecimento Mega Hair", icon: BookOpen },
   { id: "flows", label: "Fluxos e Automação", icon: ListChecks },
   { id: "conversations", label: "Conversas", icon: MessagesSquare },
-  { id: "logs", label: "Logs e Diagnóstico", icon: FileText },
+  { id: "logs", label: "Logs e Performance", icon: FileText },
 ] as const;
 
 type AdminTabId = (typeof adminTabs)[number]["id"];
@@ -615,10 +644,24 @@ function AiAdminPanel({
     return (
       <BaseKnowledgeTab panel={panel} onPanel={applyPanel} notify={notify} />
     );
+  if (activeTab === "knowledge")
+    return (
+      <KnowledgeTab panel={panel} onPanel={applyPanel} notify={notify} />
+    );
   if (activeTab === "flows")
     return <FlowsTab panel={panel} onPanel={applyPanel} notify={notify} />;
   if (activeTab === "conversations") return <ConversationsTab panel={panel} />;
-  if (activeTab === "logs") return <LogsTab panel={panel} reload={load} />;
+  if (activeTab === "performance_settings")
+    return (
+      <PerformanceSettingsTab
+        panel={panel}
+        form={form}
+        updateField={updateField}
+        saveSettings={saveSettings}
+        saving={saving}
+      />
+    );
+  if (activeTab === "logs") return <LogsAndPerformanceTab panel={panel} reload={load} />;
 
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
@@ -1415,57 +1458,841 @@ function ConversationsTab({ panel }: { panel: AiPanelData }) {
   );
 }
 
-function LogsTab({
+function PerformanceSettingsTab({
+  panel,
+  form,
+  updateField,
+  saveSettings,
+  saving,
+}: {
+  panel: AiPanelData;
+  form: AiSettings;
+  updateField: <K extends keyof AiSettings>(key: K, value: AiSettings[K]) => void;
+  saveSettings: (event: FormEvent) => Promise<void>;
+  saving: string;
+}) {
+  const isGeminiCbActive = form.geminiCircuitBreakerUntil && new Date(form.geminiCircuitBreakerUntil) > new Date();
+  const isGroqCbActive = form.groqCircuitBreakerUntil && new Date(form.groqCircuitBreakerUntil) > new Date();
+
+  return (
+    <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
+      <form onSubmit={saveSettings} className="surface p-6">
+        <div className="mb-5">
+          <SectionHeading title="Configurações de Provedor e Performance" />
+          <p className="muted text-sm">
+            Configure as opções do roteador de IA, limites de tokens, timeouts e políticas de contingência.
+          </p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Provedor Principal">
+            <select
+              className="field"
+              value={form.primaryProvider}
+              onChange={(e) => updateField("primaryProvider", e.target.value)}
+            >
+              <option value="gemini">Gemini (Google)</option>
+              <option value="groq">Groq (Llama)</option>
+            </select>
+          </Field>
+          <Field label="Modelo Principal">
+            <input
+              className="field"
+              value={form.primaryModel}
+              onChange={(e) => updateField("primaryModel", e.target.value)}
+              placeholder="gemini-2.5-flash-lite"
+            />
+          </Field>
+          <Field label="Provedor Fallback">
+            <select
+              className="field"
+              value={form.fallbackProvider}
+              onChange={(e) => updateField("fallbackProvider", e.target.value)}
+            >
+              <option value="groq">Groq (Llama)</option>
+              <option value="gemini">Gemini (Google)</option>
+            </select>
+          </Field>
+          <Field label="Modelo Fallback">
+            <input
+              className="field"
+              value={form.fallbackModel}
+              onChange={(e) => updateField("fallbackModel", e.target.value)}
+              placeholder="llama-3.1-8b-instant"
+            />
+          </Field>
+        </div>
+
+        <div className="mt-6 border-t border-black/5 pt-4">
+          <h3 className="text-xs font-bold uppercase tracking-wide text-stone-400 mb-3">Limites e Latência</h3>
+          <div className="grid gap-4 md:grid-cols-3">
+            <Field label="Timeout (ms)">
+              <input
+                type="number"
+                min={1000}
+                max={30000}
+                className="field"
+                value={form.timeoutMs || 7000}
+                onChange={(e) => updateField("timeoutMs", Number(e.target.value))}
+              />
+            </Field>
+            <Field label="Máx Retries">
+              <input
+                type="number"
+                min={0}
+                max={5}
+                className="field"
+                value={form.maxRetries ?? 2}
+                onChange={(e) => updateField("maxRetries", Number(e.target.value))}
+              />
+            </Field>
+            <Field label="Agrupamento (ms)">
+              <input
+                type="number"
+                min={100}
+                max={10000}
+                className="field"
+                value={form.groupingWindowMs || 1500}
+                onChange={(e) => updateField("groupingWindowMs", Number(e.target.value))}
+              />
+            </Field>
+            <Field label="Limite de Contexto">
+              <input
+                type="number"
+                min={1}
+                max={30}
+                className="field"
+                value={form.contextLimit || 8}
+                onChange={(e) => updateField("contextLimit", Number(e.target.value))}
+              />
+            </Field>
+            <Field label="Máx Tokens de Saída">
+              <input
+                type="number"
+                min={10}
+                max={2000}
+                className="field"
+                value={form.maxResponseTokens || 220}
+                onChange={(e) => updateField("maxResponseTokens", Number(e.target.value))}
+              />
+            </Field>
+            <Field label="Circuit Breaker Cooldown (s)">
+              <input
+                type="number"
+                min={5}
+                max={3600}
+                className="field"
+                value={form.circuitBreakerCooldownSeconds || 60}
+                onChange={(e) => updateField("circuitBreakerCooldownSeconds", Number(e.target.value))}
+              />
+            </Field>
+          </div>
+        </div>
+
+        <div className="mt-6 grid gap-3 md:grid-cols-2">
+          <CheckField
+            label="Habilitar Provedor Fallback"
+            checked={form.fallbackEnabled}
+            onChange={(checked) => updateField("fallbackEnabled", checked)}
+          />
+          <CheckField
+            label="Habilitar Contingência sem IA"
+            checked={form.contingencyEnabled}
+            onChange={(checked) => updateField("contingencyEnabled", checked)}
+          />
+          <CheckField
+            label="Habilitar Cache de Respostas Rápidas"
+            checked={form.cacheEnabled}
+            onChange={(checked) => updateField("cacheEnabled", checked)}
+          />
+          <CheckField
+            label="Habilitar Transferência Humana"
+            checked={form.humanTransferEnabled}
+            onChange={(checked) => updateField("humanTransferEnabled", checked)}
+          />
+        </div>
+
+        <button disabled={saving === "settings"} className="btn-primary mt-6">
+          <ShieldCheck size={15} />
+          {saving === "settings" ? "Salvando…" : "Salvar Configurações de Performance"}
+        </button>
+      </form>
+
+      <aside className="space-y-5">
+        <section className="surface p-6">
+          <SectionHeading title="Circuit Breaker Status" />
+          <div className="space-y-3 mt-4">
+            <div className="flex items-center justify-between rounded-2xl bg-warm p-4 text-xs font-bold text-stone-600">
+              <span>Gemini CB</span>
+              <Badge tone={isGeminiCbActive ? "rose" : "green"}>
+                {isGeminiCbActive ? "COOLDOWN" : "NORMAL"}
+              </Badge>
+            </div>
+            {isGeminiCbActive && (
+              <p className="text-[10px] text-rose-700 font-semibold">
+                Bloqueado até: {new Date(form.geminiCircuitBreakerUntil!).toLocaleString("pt-BR")}
+              </p>
+            )}
+
+            <div className="flex items-center justify-between rounded-2xl bg-warm p-4 text-xs font-bold text-stone-600">
+              <span>Groq CB</span>
+              <Badge tone={isGroqCbActive ? "rose" : "green"}>
+                {isGroqCbActive ? "COOLDOWN" : "NORMAL"}
+              </Badge>
+            </div>
+            {isGroqCbActive && (
+              <p className="text-[10px] text-rose-700 font-semibold">
+                Bloqueado até: {new Date(form.groqCircuitBreakerUntil!).toLocaleString("pt-BR")}
+              </p>
+            )}
+          </div>
+        </section>
+        <section className="surface p-6">
+          <SectionHeading title="Instruções de Roteamento" />
+          <ul className="space-y-3 text-xs text-stone-600">
+            <li>• <b>Agrupamento:</b> Une mensagens da cliente na mesma janela (ex: 1,5s) em uma única requisição.</li>
+            <li>• <b>Circuit Breaker:</b> Se Gemini falhar por erro 429, desvia imediatamente para Groq pelo tempo configurado.</li>
+          </ul>
+        </section>
+      </aside>
+    </div>
+  );
+}
+
+function LogsAndPerformanceTab({
   panel,
   reload,
 }: {
   panel: AiPanelData;
   reload: () => Promise<void>;
 }) {
+  const metrics = panel.base.metricsSummary || {};
+  const requestLogs = panel.base.requestLogs || [];
+
+  const total = Number(metrics.total_requests || 0);
+  const success = Number(metrics.success_requests || 0);
+  const successRate = total > 0 ? (success / total) * 100 : 100;
+  const rateLimitCount = Number(metrics.rate_limit_errors || 0);
+  const rateLimitRate = total > 0 ? (rateLimitCount / total) * 100 : 0;
+
+  const settings = panel.settings || {};
+  const isGeminiCbActive = settings.geminiCircuitBreakerUntil && new Date(settings.geminiCircuitBreakerUntil) > new Date();
+
+  const alerts = [];
+  if (total > 0 && Number(metrics.avg_total_latency || 0) > 8000) {
+    alerts.push({ text: "Latência média de resposta está acima de 8 segundos nos últimos 7 dias!", type: "warning" });
+  }
+  if (rateLimitCount > 3) {
+    alerts.push({ text: "Mais de 3 erros Gemini 429 detectados nos últimos 7 dias. Verifique cotas!", type: "rose" });
+  }
+  if (isGeminiCbActive) {
+    alerts.push({ text: "Gemini Circuit Breaker ativo (em cooldown). Roteador usando Groq fallback.", type: "amber" });
+  }
+
   return (
-    <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
-      <section className="surface p-6">
-        <SectionHeading title="Diagnóstico" />
-        <div className="space-y-3">
-          <StatusLine
-            label="Gemini configurado"
-            ok={panel.status.gemini.configured}
-          />
-          <StatusLine label="Gemini habilitado" ok={panel.status.gemini.enabled} />
-          <StatusLine label="Banco preparado" ok={panel.status.database.configured} />
-          <StatusLine label="IA ativa" ok={panel.status.ai.active} />
+    <div className="space-y-6">
+      {alerts.length > 0 && (
+        <div className="space-y-2">
+          {alerts.map((alert, idx) => (
+            <div
+              key={idx}
+              className={`rounded-2xl p-4 text-xs font-bold ${
+                alert.type === "rose"
+                  ? "bg-rose-50 text-rose-800"
+                  : "bg-amber-50 text-amber-800"
+              }`}
+            >
+              ⚠️ {alert.text}
+            </div>
+          ))}
         </div>
-        <button onClick={reload} className="btn-secondary mt-5 w-full">
-          <RefreshCw size={15} />
-          Atualizar diagnóstico
-        </button>
-      </section>
-      <section className="surface p-6">
-        <SectionHeading title="Logs recentes" />
-        {panel.base.logs.length ? (
-          <div className="space-y-3">
-            {panel.base.logs.map((log) => (
-              <div key={log.id} className="rounded-2xl bg-warm p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <b className="text-sm">{log.event_type}</b>
-                  <Badge tone={statusTone(log.status)}>{log.status}</Badge>
-                </div>
-                {log.error_message && (
-                  <p className="mt-2 text-xs text-rose-700">{log.error_message}</p>
-                )}
-                <p className="mt-2 text-[11px] text-stone-400">
-                  {formatDate(log.created_at)}
-                </p>
-              </div>
-            ))}
+      )}
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="surface p-4">
+          <span className="text-[10px] uppercase font-bold text-stone-400">Tempo de Resposta Médio</span>
+          <b className="mt-1 block text-xl text-stone-850">
+            {(Number(metrics.avg_total_latency || 0) / 1000).toFixed(2)}s
+          </b>
+        </div>
+        <div className="surface p-4">
+          <span className="text-[10px] uppercase font-bold text-stone-400">Tempo Médio da IA</span>
+          <b className="mt-1 block text-xl text-stone-850">
+            {(Number(metrics.avg_provider_latency || 0) / 1000).toFixed(2)}s
+          </b>
+        </div>
+        <div className="surface p-4">
+          <span className="text-[10px] uppercase font-bold text-stone-400 font-bold">Taxa de Sucesso</span>
+          <b className="mt-1 block text-xl text-stone-850">{successRate.toFixed(1)}%</b>
+        </div>
+        <div className="surface p-4">
+          <span className="text-[10px] uppercase font-bold text-stone-400">Erros 429 (Rate Limit)</span>
+          <b className="mt-1 block text-xl text-rose-700">{rateLimitCount} ({rateLimitRate.toFixed(1)}%)</b>
+        </div>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
+        <section className="surface p-6 self-start">
+          <SectionHeading title="Diagnóstico dos Provedores" />
+          <div className="space-y-3 mt-4">
+            <StatusLine label="Gemini configurado" ok={panel.status.gemini.configured} />
+            <StatusLine label="Gemini habilitado" ok={panel.status.gemini.enabled} />
+            <StatusLine label="Groq configurado" ok={panel.status.groq?.configured || false} />
+            <StatusLine label="Groq habilitado" ok={panel.status.groq?.enabled || false} />
+            <StatusLine label="IA ativa" ok={panel.status.ai.active} />
           </div>
-        ) : (
-          <EmptyState
-            title="Sem logs de IA"
-            text="Nenhum evento do Atendimento IA foi registrado ainda."
-          />
-        )}
-      </section>
+          <button onClick={reload} className="btn-secondary mt-5 w-full">
+            <RefreshCw size={15} />
+            Atualizar Métricas
+          </button>
+        </section>
+
+        <section className="surface p-6">
+          <SectionHeading title="Logs de Requisições Recentes" />
+          {requestLogs.length ? (
+            <div className="space-y-3 mt-4">
+              {requestLogs.map((req: any) => (
+                <div key={req.id} className="rounded-2xl bg-warm p-4 text-xs space-y-1 text-stone-700">
+                  <div className="flex items-center justify-between font-bold">
+                    <span>{req.provider || "Desconhecido"} • {req.model || "—"}</span>
+                    <Badge tone={req.status === "success" ? "green" : "rose"}>
+                      {req.status}
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[11px] text-stone-500 pt-1">
+                    <span>Latência Total: {(Number(req.total_latency_ms || 0) / 1000).toFixed(2)}s</span>
+                    <span>Retries: {req.retry_count || 0}</span>
+                  </div>
+                  {req.fallback_used && (
+                    <span className="inline-block bg-amber-50 text-amber-800 rounded px-1.5 py-0.5 text-[10px] font-bold">
+                      Fallback usado
+                    </span>
+                  )}
+                  {req.error_message && (
+                    <p className="text-rose-700 pt-1 border-t border-black/5 mt-1 font-semibold">{req.error_message}</p>
+                  )}
+                  <p className="text-[10px] text-stone-400 pt-1">
+                    {formatDate(req.created_at)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              title="Sem logs de roteador de IA"
+              text="Nenhum log de requisição foi registrado nos últimos dias."
+            />
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+type KnowledgeArticleForm = {
+  id?: string;
+  title: string;
+  category: string;
+  questionVariations: string;
+  shortAnswer: string;
+  fullAnswer: string;
+  recommendedFollowupQuestions: string;
+  requiresEvaluation: boolean;
+  requiresHumanHandoff: boolean;
+  medicalSafetyLevel: string;
+  status: string;
+  priority: number;
+};
+
+function KnowledgeTab({
+  panel,
+  onPanel,
+  notify,
+}: {
+  panel: AiPanelData;
+  onPanel: (panel: AiPanelData) => void;
+  notify: (message: string) => void;
+}) {
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [savingArticle, setSavingArticle] = useState(false);
+
+  const [form, setForm] = useState<KnowledgeArticleForm>({
+    title: "",
+    category: "Perguntas frequentes",
+    questionVariations: "",
+    shortAnswer: "",
+    fullAnswer: "",
+    recommendedFollowupQuestions: "",
+    requiresEvaluation: false,
+    requiresHumanHandoff: false,
+    medicalSafetyLevel: "normal",
+    status: "active",
+    priority: 100,
+  });
+
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const articles = (panel.base as any).knowledgeArticles || [];
+
+  const filteredArticles = articles.filter((art: any) => {
+    const q = searchQuery.toLowerCase();
+    return (
+      art.title.toLowerCase().includes(q) ||
+      art.category.toLowerCase().includes(q) ||
+      art.full_answer.toLowerCase().includes(q)
+    );
+  });
+
+  const groupedArticles = filteredArticles.reduce((acc: Record<string, any[]>, article: any) => {
+    const cat = article.category || "Geral";
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(article);
+    return acc;
+  }, {});
+
+  const saveArticle = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!form.title || !form.shortAnswer || !form.fullAnswer) {
+      notify("Preencha o título, a resposta curta e a resposta completa.");
+      return;
+    }
+    setSavingArticle(true);
+    try {
+      const variationsArray = form.questionVariations
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const followupsArray = form.recommendedFollowupQuestions
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const payload = {
+        ...form,
+        question_variations: JSON.stringify(variationsArray),
+        recommended_followup_questions: JSON.stringify(followupsArray),
+      };
+
+      const result = await apiFetch<{ data: { panel: AiPanelData } }>(
+        "/api/ai-whatsapp?resource=save-knowledge-article",
+        { method: "POST", body: JSON.stringify(payload) },
+      );
+      onPanel(result.data.panel);
+      notify("Artigo de conhecimento salvo.");
+
+      setForm({
+        title: "",
+        category: "Perguntas frequentes",
+        questionVariations: "",
+        shortAnswer: "",
+        fullAnswer: "",
+        recommendedFollowupQuestions: "",
+        requiresEvaluation: false,
+        requiresHumanHandoff: false,
+        medicalSafetyLevel: "normal",
+        status: "active",
+        priority: 100,
+      });
+      setIsFormOpen(false);
+    } catch (error) {
+      console.error(error);
+      notify("Erro ao salvar o artigo.");
+    } finally {
+      setSavingArticle(false);
+    }
+  };
+
+  const deleteArticle = async (id: string) => {
+    if (!confirm("Tem certeza que deseja remover este artigo?")) return;
+    try {
+      const result = await apiFetch<{ data: { panel: AiPanelData } }>(
+        `/api/ai-whatsapp?resource=delete-knowledge-article`,
+        { method: "POST", body: JSON.stringify({ id }) },
+      );
+      onPanel(result.data.panel);
+      notify("Artigo de conhecimento removido.");
+    } catch (error) {
+      console.error(error);
+      notify("Erro ao remover o artigo.");
+    }
+  };
+
+  const handleEdit = (art: any) => {
+    const variationsArray = Array.isArray(art.question_variations)
+      ? art.question_variations
+      : JSON.parse(art.question_variations || "[]");
+    const followupsArray = Array.isArray(art.recommended_followup_questions)
+      ? art.recommended_followup_questions
+      : JSON.parse(art.recommended_followup_questions || "[]");
+
+    setForm({
+      id: art.id,
+      title: art.title,
+      category: art.category,
+      questionVariations: variationsArray.join(", "),
+      shortAnswer: art.short_answer,
+      fullAnswer: art.full_answer,
+      recommendedFollowupQuestions: followupsArray.join(", "),
+      requiresEvaluation: Boolean(art.requires_evaluation),
+      requiresHumanHandoff: Boolean(art.requires_human_handoff),
+      medicalSafetyLevel: art.medical_safety_level || "normal",
+      status: art.status || "active",
+      priority: Number(art.priority || 100),
+    });
+    setIsFormOpen(true);
+    notify("Editando artigo.");
+  };
+
+  const transformToFAQ = (messageText: string) => {
+    setForm({
+      title: messageText.length > 60 ? messageText.slice(0, 60) + "..." : messageText,
+      category: "Perguntas frequentes",
+      questionVariations: messageText,
+      shortAnswer: "",
+      fullAnswer: "",
+      recommendedFollowupQuestions: "",
+      requiresEvaluation: false,
+      requiresHumanHandoff: false,
+      medicalSafetyLevel: "normal",
+      status: "active",
+      priority: 100,
+    });
+    setIsFormOpen(true);
+    notify("Texto importado para o formulário.");
+  };
+
+  const safetyHandoffs = panel.base.requestLogs?.filter((l: any) => l.provider === "local_safety").length || 0;
+  const handoffsTotal = panel.base.metricsSummary?.handoff_count || 0;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="surface p-4">
+          <span className="text-[10px] uppercase font-bold text-stone-400">Total de Artigos</span>
+          <b className="mt-1 block text-xl text-stone-850">{articles.length} ativos/cadastrados</b>
+        </div>
+        <div className="surface p-4">
+          <span className="text-[10px] uppercase font-bold text-stone-400 font-bold">Alertas Médicos & Triagem</span>
+          <b className="mt-1 block text-xl text-rose-700">{safetyHandoffs} acionados</b>
+        </div>
+        <div className="surface p-4">
+          <span className="text-[10px] uppercase font-bold text-stone-400 font-bold">Handoffs para Equipe</span>
+          <b className="mt-1 block text-xl text-stone-850">{handoffsTotal} transferências</b>
+        </div>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-3">
+        <div className="xl:col-span-2 space-y-5">
+          <section className="surface p-6">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <SectionHeading title="Base de Conhecimento Mega Hair" />
+              <button
+                type="button"
+                onClick={() => setIsFormOpen(!isFormOpen)}
+                className="btn-secondary"
+              >
+                {isFormOpen ? "Fechar Formulário" : "Novo Artigo"}
+              </button>
+            </div>
+
+            <p className="muted text-sm mb-5">
+              Estes artigos guiam as respostas educativas da IA no WhatsApp. Dúvidas que corresponderem às variações cadastradas usarão a resposta correspondente. Condições de Nível 4 (dor, ferida, coceira intensa) causam encaminhamento médico e humano automático.
+            </p>
+
+            {isFormOpen && (
+              <form onSubmit={saveArticle} className="mb-6 rounded-[24px] bg-warm p-5 border border-stone-200">
+                <h3 className="font-bold text-sm text-stone-800 mb-3">
+                  {form.id ? "Editar Artigo de Conhecimento" : "Criar Novo Artigo de Conhecimento"}
+                </h3>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Field label="Título principal">
+                    <input
+                      className="field bg-white"
+                      value={form.title}
+                      onChange={(e) => setForm({ ...form, title: e.target.value })}
+                      placeholder="Ex: Durabilidade do alongamento"
+                      required
+                    />
+                  </Field>
+
+                  <Field label="Categoria">
+                    <select
+                      className="field bg-white"
+                      value={form.category}
+                      onChange={(e) => setForm({ ...form, category: e.target.value })}
+                    >
+                      <option value="Perguntas frequentes">Perguntas frequentes</option>
+                      <option value="Métodos e técnicas">Métodos e técnicas</option>
+                      <option value="Cuidados gerais">Cuidados gerais</option>
+                      <option value="Triagem inteligente">Triagem inteligente</option>
+                      <option value="Contraindicações e segurança">Contraindicações e segurança</option>
+                    </select>
+                  </Field>
+                </div>
+
+                <Field label="Variações de perguntas (separadas por vírgula)">
+                  <textarea
+                    className="field min-h-16 bg-white"
+                    value={form.questionVariations}
+                    onChange={(e) => setForm({ ...form, questionVariations: e.target.value })}
+                    placeholder="Ex: quanto tempo dura, durabilidade do mega, quanto dura, de quanto em quanto tempo faz manutencao"
+                  />
+                </Field>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Field label="Resposta curta (para resumos/templates)">
+                    <textarea
+                      className="field min-h-20 bg-white"
+                      value={form.shortAnswer}
+                      onChange={(e) => setForm({ ...form, shortAnswer: e.target.value })}
+                      placeholder="Ex: A durabilidade é de 2 a 3 meses conforme a técnica."
+                      required
+                    />
+                  </Field>
+
+                  <Field label="Resposta completa (para IA ou envio completo)">
+                    <textarea
+                      className="field min-h-20 bg-white"
+                      value={form.fullAnswer}
+                      onChange={(e) => setForm({ ...form, fullAnswer: e.target.value })}
+                      placeholder="Ex: A durabilidade varia conforme a técnica escolhida e os cuidados domésticos. Geralmente de 2 a 3 meses para a próxima manutenção."
+                      required
+                    />
+                  </Field>
+                </div>
+
+                <Field label="Perguntas de triagem recomendadas (separadas por vírgula)">
+                  <input
+                    className="field bg-white"
+                    value={form.recommendedFollowupQuestions}
+                    onChange={(e) => setForm({ ...form, recommendedFollowupQuestions: e.target.value })}
+                    placeholder="Ex: Qual técnica você usa atualmente?, Você tem o couro cabeludo sensível?"
+                  />
+                </Field>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <CheckField
+                    label="Requer avaliação"
+                    checked={form.requiresEvaluation}
+                    onChange={(checked) => setForm({ ...form, requiresEvaluation: checked })}
+                  />
+                  <CheckField
+                    label="Handoff humano imediato"
+                    checked={form.requiresHumanHandoff}
+                    onChange={(checked) => setForm({ ...form, requiresHumanHandoff: checked })}
+                  />
+                  <Field label="Nível de segurança médica">
+                    <select
+                      className="field bg-white"
+                      value={form.medicalSafetyLevel}
+                      onChange={(e) => setForm({ ...form, medicalSafetyLevel: e.target.value })}
+                    >
+                      <option value="normal">Normal (Sem restrição)</option>
+                      <option value="alert">Alerta (Nível 4 - Médico/Humano)</option>
+                    </select>
+                  </Field>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <Field label="Status">
+                    <select
+                      className="field bg-white"
+                      value={form.status}
+                      onChange={(e) => setForm({ ...form, status: e.target.value })}
+                    >
+                      <option value="active">Ativo</option>
+                      <option value="inactive">Inativo</option>
+                    </select>
+                  </Field>
+                  <Field label="Prioridade">
+                    <input
+                      type="number"
+                      className="field bg-white"
+                      value={form.priority}
+                      onChange={(e) => setForm({ ...form, priority: Number(e.target.value || 100) })}
+                    />
+                  </Field>
+                </div>
+
+                <div className="mt-4 flex gap-2">
+                  <button type="submit" disabled={savingArticle} className="btn-primary">
+                    {savingArticle ? "Salvando..." : "Salvar Artigo"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm({
+                        title: "",
+                        category: "Perguntas frequentes",
+                        questionVariations: "",
+                        shortAnswer: "",
+                        fullAnswer: "",
+                        recommendedFollowupQuestions: "",
+                        requiresEvaluation: false,
+                        requiresHumanHandoff: false,
+                        medicalSafetyLevel: "normal",
+                        status: "active",
+                        priority: 100,
+                      });
+                      setIsFormOpen(false);
+                    }}
+                    className="btn-secondary"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            )}
+
+            <div className="mb-4">
+              <input
+                className="field"
+                type="text"
+                placeholder="🔍 Filtrar artigos por título, categoria ou resposta..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+
+            {Object.keys(groupedArticles).length ? (
+              <div className="space-y-6">
+                {Object.entries(groupedArticles).map(([category, list]) => {
+                  const articlesList = list as any[];
+                  return (
+                    <div key={category} className="space-y-3">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-stone-400 mt-4">
+                        {category}
+                      </h3>
+                      <div className="space-y-3">
+                        {articlesList.map((art: any) => {
+                          const variations = Array.isArray(art.question_variations)
+                            ? art.question_variations
+                            : JSON.parse(art.question_variations || "[]");
+                          const followups = Array.isArray(art.recommended_followup_questions)
+                            ? art.recommended_followup_questions
+                            : JSON.parse(art.recommended_followup_questions || "[]");
+
+                          return (
+                            <div key={art.id} className="rounded-[24px] bg-warm p-5 border border-black/5">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <b className="text-sm text-stone-800">{art.title}</b>
+                                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                    <Badge tone={art.status === "active" ? "green" : "neutral"}>
+                                      {art.status === "active" ? "Ativo" : "Inativo"}
+                                    </Badge>
+                                    {art.medical_safety_level === "alert" && (
+                                      <Badge tone="rose">Nível 4 - Alerta Segurança</Badge>
+                                    )}
+                                    {art.requires_evaluation && (
+                                      <Badge tone="amber">Requer Avaliação</Badge>
+                                    )}
+                                    {art.requires_human_handoff && (
+                                      <Badge tone="rose">Handoff Humano</Badge>
+                                    )}
+                                    <Badge tone="gold">Prioridade {art.priority}</Badge>
+                                  </div>
+                                </div>
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => handleEdit(art)}
+                                    className="btn-secondary py-1 px-2 text-xs font-bold"
+                                  >
+                                    Editar
+                                  </button>
+                                  <button
+                                    onClick={() => deleteArticle(art.id)}
+                                    className="btn-secondary py-1 px-2 text-xs text-rose-700 font-bold"
+                                  >
+                                    Excluir
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="mt-3 grid gap-3 text-xs text-stone-600">
+                                <div>
+                                  <span className="font-bold text-stone-700 block">Resposta Curta:</span>
+                                  <p className="bg-white/50 rounded-xl p-2 mt-1 border border-black/5">{art.short_answer}</p>
+                                </div>
+                                <div>
+                                  <span className="font-bold text-stone-700 block">Resposta Completa (IA):</span>
+                                  <p className="bg-white/50 rounded-xl p-2 mt-1 border border-black/5">{art.full_answer}</p>
+                                </div>
+                                {variations.length > 0 && (
+                                  <div>
+                                    <span className="font-bold text-stone-500 block">Palavras-chave / Variações:</span>
+                                    <p className="mt-1 text-[11px] text-stone-500 font-medium">
+                                      {variations.join(" • ")}
+                                    </p>
+                                  </div>
+                                )}
+                                {followups.length > 0 && (
+                                  <div>
+                                    <span className="font-bold text-stone-500 block">Dúvidas sugeridas para a IA:</span>
+                                    <p className="mt-1 text-[11px] text-stone-500 font-medium">
+                                      {followups.join(" • ")}
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <EmptyState
+                title="Nenhum artigo encontrado"
+                text="Experimente limpar o filtro ou cadastre novos artigos."
+              />
+            )}
+          </section>
+        </div>
+
+        <div className="space-y-5">
+          <section className="surface p-6">
+            <SectionHeading title="Histórico de Mensagens Recentes" />
+            <p className="muted text-xs mb-4">
+              Mensagens reais enviadas pelas clientes. Transforme qualquer dúvida frequente em FAQ na base de conhecimento com um clique.
+            </p>
+            {panel.base.conversations && panel.base.conversations.filter((c: any) => c.last_message_preview).length > 0 ? (
+              <div className="space-y-3 mt-4">
+                {panel.base.conversations
+                  .filter((c: any) => c.last_message_preview)
+                  .slice(0, 10)
+                  .map((conv: any) => (
+                    <div key={conv.id} className="rounded-2xl bg-warm p-4 text-xs space-y-2 border border-black/5">
+                      <div className="flex items-center justify-between font-bold text-stone-700">
+                        <span>{conv.client || "Cliente Novo"}</span>
+                        <span className="text-[10px] text-stone-400 font-normal">
+                          {formatDate(conv.last_message_at)}
+                        </span>
+                      </div>
+                      <p className="italic text-stone-600 bg-white/40 p-2 rounded-xl border border-black/5">
+                        "{conv.last_message_preview}"
+                      </p>
+                      <button
+                        onClick={() => transformToFAQ(conv.last_message_preview)}
+                        className="btn-primary w-full text-[11px] py-1.5"
+                      >
+                        Transformar em FAQ
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            ) : (
+              <EmptyState
+                title="Sem mensagens no histórico"
+                text="Conecte seu WhatsApp e envie mensagens para popular este histórico."
+              />
+            )}
+          </section>
+        </div>
+      </div>
     </div>
   );
 }
