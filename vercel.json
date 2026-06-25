@@ -17,6 +17,10 @@
   ],
   "rewrites": [
     {
+      "source": "/api/webhooks/baileys/carolsol",
+      "destination": "/api/whatsapp?resource=webhook"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

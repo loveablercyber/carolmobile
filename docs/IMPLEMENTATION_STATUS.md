@@ -549,7 +549,7 @@ Trabalhar somente em **pareamento final do WhatsApp**: tentar primeiro o QR novo
 ## Resultado desta etapa (Motor de mensagens recebidas WhatsApp + Gemini)
 
 - **Webhook real conectado:** `/api/whatsapp?resource=webhook` agora diferencia payload de mensagem recebida e payload de status. Mensagens recebidas não atualizam mais a sessão como `disconnected` por falta de campo `status`.
-- **Rota compatível adicionada:** criada `/api/webhooks/baileys/carolsol`, apontando para o mesmo handler seguro do webhook WhatsApp. Essa rota facilita configurar o `WEBHOOK_URL` no Render como URL direta do PWA.
+- **Rota compatível adicionada:** criado rewrite em `vercel.json` para `/api/webhooks/baileys/carolsol`, apontando para o mesmo handler seguro do webhook WhatsApp sem criar Serverless Function extra. Essa rota facilita configurar o `WEBHOOK_URL` no Render como URL direta do PWA.
 - **Persistência de conversas:** mensagens inbound válidas são normalizadas, vinculadas por telefone e registradas em `whatsapp_conversations`, `whatsapp_messages` e `whatsapp_message_logs`.
 - **IA sob controle:** o Gemini só responde quando `ai_settings.enabled=true`, `GEMINI_ENABLED=true`, `GEMINI_API_KEY` existe, conversa está com `ai_enabled=true`, telefone é válido e a mensagem não veio do próprio bot.
 - **Sem sucesso falso:** se IA estiver desativada, Gemini indisponível, conversa pausada, telefone inválido, grupo/status ou texto vazio, o webhook responde `200` para evitar retry duplicado, mas registra o motivo quando há conversa válida.
