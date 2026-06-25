@@ -49,6 +49,19 @@ const expectedTables = [
   "audit_logs",
   "card_tokenization_sessions",
   "subscription_renewal_attempts",
+  "ai_settings",
+  "ai_prompt_versions",
+  "ai_service_settings",
+  "ai_plan_settings",
+  "ai_automation_flows",
+  "whatsapp_conversations",
+  "whatsapp_messages",
+  "whatsapp_message_logs",
+  "ai_interactions",
+  "ai_tool_calls",
+  "human_handoff_tickets",
+  "conversation_tags",
+  "conversation_tag_links",
 ];
 
 const client = new Client({
@@ -123,6 +136,10 @@ async function setup() {
   );
   const cloudinaryRotationMigration = await readFile(
     resolve("database/neon-cloudinary-rotation.sql"),
+    "utf8",
+  );
+  const aiWhatsappMigration = await readFile(
+    resolve("database/neon-ai-whatsapp.sql"),
     "utf8",
   );
 
@@ -237,6 +254,15 @@ async function setup() {
       await client.query(cloudinaryRotationMigration);
       await client.query(
         "insert into public._luxe_migrations(version, description) values ('010_cloudinary_rotation', 'Rotação global de uploads entre contas Cloudinary')",
+      );
+    }
+    const { rowCount: aiWhatsappApplied } = await client.query(
+      "select 1 from public._luxe_migrations where version = '011_ai_whatsapp'",
+    );
+    if (!aiWhatsappApplied) {
+      await client.query(aiWhatsappMigration);
+      await client.query(
+        "insert into public._luxe_migrations(version, description) values ('011_ai_whatsapp', 'Atendimento IA WhatsApp Gemini')",
       );
     }
     await client.query("commit");
