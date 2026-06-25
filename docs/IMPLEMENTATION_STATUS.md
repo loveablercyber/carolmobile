@@ -545,3 +545,22 @@ Trabalhar somente em **pareamento final do WhatsApp**: tentar primeiro o QR novo
 - **Validação técnica:** `node --check` passou nos arquivos Node alterados, `npm test` passou com 59/59 testes, `npm run lint` passou e `npm run build` passou local e remoto.
 - **Funcionalidades pendentes:** webhook de mensagens recebidas, gravação de conversas reais, chamada automática Gemini por mensagem, ferramentas reais de agenda/serviços/cupons/pagamentos, pré-agendamento com confirmação explícita, transferência humana operacional e edição fina da Base de Atendimento/Fluxos.
 - **Próxima etapa recomendada:** trabalhar somente em **motor de mensagens recebidas do WhatsApp + Gemini**, conectando o webhook Baileys ao registro de conversa, chamando Gemini com o prompt salvo e respondendo texto simples apenas quando a IA estiver ativa, sem ainda criar agendamentos ou links de pagamento automáticos.
+
+## Resultado desta etapa (Motor de mensagens recebidas WhatsApp + Gemini)
+
+- **Webhook real conectado:** `/api/whatsapp?resource=webhook` agora diferencia payload de mensagem recebida e payload de status. Mensagens recebidas não atualizam mais a sessão como `disconnected` por falta de campo `status`.
+- **Rota compatível adicionada:** criada `/api/webhooks/baileys/carolsol`, apontando para o mesmo handler seguro do webhook WhatsApp. Essa rota facilita configurar o `WEBHOOK_URL` no Render como URL direta do PWA.
+- **Persistência de conversas:** mensagens inbound válidas são normalizadas, vinculadas por telefone e registradas em `whatsapp_conversations`, `whatsapp_messages` e `whatsapp_message_logs`.
+- **IA sob controle:** o Gemini só responde quando `ai_settings.enabled=true`, `GEMINI_ENABLED=true`, `GEMINI_API_KEY` existe, conversa está com `ai_enabled=true`, telefone é válido e a mensagem não veio do próprio bot.
+- **Sem sucesso falso:** se IA estiver desativada, Gemini indisponível, conversa pausada, telefone inválido, grupo/status ou texto vazio, o webhook responde `200` para evitar retry duplicado, mas registra o motivo quando há conversa válida.
+- **Comandos operacionais:** `atendente` pausa a IA, cria ticket em `human_handoff_tickets` e envia a mensagem de transferência; `parar` fecha/pausa a conversa; `voltar ao bot` reativa a IA naquela conversa.
+- **Limite de segurança:** respeita horário configurado, atendimento 24h, novos contatos/clientes existentes e limite máximo de mensagens automáticas por conversa.
+- **Resposta Gemini inicial:** o prompt enviado ao Gemini inclui contexto comercial real liberado para IA, histórico recente e regra explícita para não criar agendamento, não confirmar horário e não enviar link de pagamento nesta etapa.
+- **Dados reais:** serviços só entram no contexto da IA quando estão ativos e liberados em `ai_service_settings.ai_active`; planos e cupons vêm das tabelas reais.
+- **Segurança:** payloads gravados em logs são podados e chaves/tokens são mascarados por nome de campo. Nenhuma chave Gemini, Baileys, SumUp ou service role é enviada ao frontend ou ao Gemini.
+- **Validação técnica:** `node --check` passou nos arquivos novos/alterados, `npm test` passou com 65/65 testes, `npm run lint` passou e o build local passou.
+- **Funcionalidades pendentes:** configurar/confirmar o `WEBHOOK_URL` do Render apontando para `https://carolmobile.vercel.app/api/webhooks/baileys/carolsol`, validar com uma mensagem real do WhatsApp conectado, liberar serviços na Base de Atendimento e só depois avançar para consulta real de agenda.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **validação real do webhook Baileys em produção**, apontando o `WEBHOOK_URL` do Render para `https://carolmobile.vercel.app/api/webhooks/baileys/carolsol`, ativando a IA no painel admin, liberando no máximo um serviço teste na Base de Atendimento e enviando uma única mensagem de WhatsApp para confirmar registro de conversa, log e resposta Gemini. Não implementar agenda, pagamento ou mídia nesta etapa.

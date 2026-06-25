@@ -16,6 +16,10 @@ import {
   methodNotAllowed,
   send,
 } from "../server/lib/http.js";
+import {
+  isMessageWebhookPayload,
+  processIncomingWhatsAppWebhook,
+} from "../server/lib/whatsapp-ai-engine.js";
 
 async function context(user) {
   if (!["admin", "professional"].includes(user.role))
@@ -168,6 +172,10 @@ async function webhook(req, res, body) {
   )
     throw appError("Webhook não autorizado.", 401);
   const payload = body || {};
+  if (isMessageWebhookPayload(payload)) {
+    const result = await processIncomingWhatsAppWebhook(payload);
+    return send(res, 200, { ok: true, ...result });
+  }
   const sessionName =
     payload.session_name ||
     payload.instance ||
