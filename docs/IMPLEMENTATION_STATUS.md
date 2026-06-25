@@ -579,7 +579,7 @@ Trabalhar somente em **validação real do webhook Baileys em produção**, ativ
 - **Logs e auditoria:** alterações em serviço IA registram `audit_logs` quando a tabela está disponível, sem gravar segredos.
 - **Validação técnica:** `node --check` passou, `npm test` passou com 67/67 testes, `npm run lint` passou e `npm run build` passou.
 - **Correção pós-produção:** a primeira validação real encontrou `400 Serviço inválido` porque os IDs seedados no banco usam UUID aceito pelo PostgreSQL, mas sem bits estritos de versão RFC. O validador do backend foi ajustado para aceitar o formato real do banco sem aceitar texto livre, e o teste automatizado cobre esse ID.
-- **Deploy:** publicado em Production no Vercel no deployment `dpl_8WGvV5txoRfebmUdnxfmATwhDz7S`, com alias `https://carolmobile.vercel.app`.
+- **Deploy:** publicado em Production no Vercel no deployment `dpl_FkxrGezchM1kWpEW8k8NcwJjhthp`, com alias `https://carolmobile.vercel.app`.
 - **Validação em produção:** login admin validou `/api/ai-whatsapp?resource=panel` e `POST /api/ai-whatsapp?resource=service-settings`. O serviço real **Avaliação personalizada** foi salvo em `ai_service_settings`, voltou no painel como `ai_active=true` e manteve `allow_auto_booking=false`, sem liberar agendamento automático.
 - **Funcionalidades pendentes:** ativar a IA para uma mensagem real controlada do WhatsApp e conferir conversa, mensagem, log, interação Gemini e resposta. Agenda, pagamento, mídia, edição de cupons e fluxos avançados continuam fora desta etapa.
 
