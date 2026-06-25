@@ -170,6 +170,35 @@ async function loadRecentHistory(conversationId) {
   return rows.reverse();
 }
 
+async function recordIgnoredWebhook(normalized, reason) {
+  try {
+    await ensureAiWhatsappSchema();
+    await query(
+      `insert into public.whatsapp_message_logs(
+        conversation_id,message_id,event_type,status,details
+      ) values(null,null,'webhook_ignored','info',$1)`,
+      [
+        JSON.stringify({
+          reason,
+          chatType: normalized.isGroup
+            ? "group"
+            : normalized.isStatus
+              ? "status"
+              : "private",
+          isFromMe: normalized.isFromMe,
+          hasText: Boolean(normalized.text),
+          hasPhone: Boolean(normalized.phoneNumber),
+        }),
+      ],
+    );
+  } catch (error) {
+    console.error("WhatsApp ignored webhook log error", {
+      reason,
+      message: error.message,
+    });
+  }
+}
+
 export function summarizeAiCommercialContext(base) {
   const services = (base.services || [])
     .filter((service) => service.active && service.ai_active)
@@ -383,12 +412,22 @@ async function pauseConversationForHuman({ conversationId, messageId, reason, re
 
 export async function processIncomingWhatsAppWebhook(payload = {}) {
   const normalized = normalizeIncomingWhatsappPayload(payload);
-  if (normalized.isGroup || normalized.isStatus)
+  if (normalized.isGroup || normalized.isStatus) {
+    await recordIgnoredWebhook(normalized, "unsupported_chat");
     return { ignored: true, reason: "unsupported_chat" };
-  if (normalized.isFromMe) return { ignored: true, reason: "from_me" };
-  if (!normalized.phoneNumber || !/^55\d{10,11}$/.test(normalized.phoneNumber))
+  }
+  if (normalized.isFromMe) {
+    await recordIgnoredWebhook(normalized, "from_me");
+    return { ignored: true, reason: "from_me" };
+  }
+  if (!normalized.phoneNumber || !/^55\d{10,11}$/.test(normalized.phoneNumber)) {
+    await recordIgnoredWebhook(normalized, "invalid_phone");
     return { ignored: true, reason: "invalid_phone" };
-  if (!normalized.text) return { ignored: true, reason: "empty_text" };
+  }
+  if (!normalized.text) {
+    await recordIgnoredWebhook(normalized, "empty_text");
+    return { ignored: true, reason: "empty_text" };
+  }
 
   const recorded = await recordInboundMessage(normalized);
   const settings = await getAiSettings();

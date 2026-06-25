@@ -602,3 +602,15 @@ Trabalhar somente em **validação real controlada da IA no WhatsApp**, salvando
 ## Próxima etapa recomendada (Módulo específico)
 
 Trabalhar somente em **teste real de inbound WhatsApp após deploy do Render**: enviar uma mensagem a partir de um número diferente do número conectado como bot, atualizar o painel e conferir `provider.webhook.lastIncomingFromMe=false`, `lastWebhookStatus=200`, conversa registrada e resposta Gemini enviada. Se `lastIncomingFromMe=true`, repetir usando outro número; se `lastWebhookStatus` não for `200`, corrigir somente a URL/entrega do webhook.
+
+## Resultado desta etapa (Diagnóstico de mensagem sem resposta em grupo)
+
+- **Estado encontrado:** o webhook do Render já aponta corretamente para `carolmobile.vercel.app`, retornou `lastWebhookStatus=200`, WhatsApp segue `connected` e IA/Gemini seguem ativos.
+- **Causa do novo silêncio:** o último inbound registrado pelo bot externo veio com JID terminado em `@g.us`, que indica grupo do WhatsApp. O motor IA ignora grupos e status por segurança, antes de criar conversa/resposta, para evitar auto-respostas em grupos.
+- **Log enganoso identificado:** o erro `ai_processing_failed / Não foi possível conectar ao servidor do WhatsApp` exibido no painel era de um payload técnico/fictício anterior usado para validar a rota, não da última mensagem real. Como mensagens de grupo eram ignoradas antes de gravar log, o painel mantinha o erro antigo como item mais recente.
+- **Correção aplicada:** mensagens ignoradas por `unsupported_chat`, `from_me`, `invalid_phone` ou `empty_text` agora gravam `webhook_ignored` em `whatsapp_message_logs` com motivo e tipo de chat, sem expor segredos. Assim o painel passa a diferenciar grupo ignorado de falha real da IA.
+- **Validação técnica:** `node --check server/lib/whatsapp-ai-engine.js` passou; `npm test` passou com 67/67 testes; `npm run lint` passou; `npm run build` passou.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Testar novamente em **conversa privada**, não em grupo: envie uma mensagem direta para o número conectado como bot usando outro WhatsApp. O esperado é `lastIncomingFromMe=false`, `lastWebhookStatus=200`, conversa registrada, interação Gemini e mensagem de resposta enviada.
