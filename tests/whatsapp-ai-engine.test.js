@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildLocalIntentResponse,
   buildGeminiConversationMessage,
   isMessageWebhookPayload,
   isWithinAiHours,
@@ -143,4 +144,31 @@ test("builds Gemini message without leaking sensitive environment names", () => 
   assert.match(prompt, /Cliente já cadastrada: sim/);
   assert.doesNotMatch(prompt, /GEMINI_API_KEY/i);
   assert.doesNotMatch(prompt, /BAILEYS_API_KEY/i);
+});
+
+test("builds local response for today's availability without promising schedule", () => {
+  const response = buildLocalIntentResponse("Tem horário disponível pra hj?", {});
+
+  assert.match(response, /horário de hoje/i);
+  assert.match(response, /não vou prometer disponibilidade/i);
+  assert.match(response, /agenda real/i);
+  assert.match(response, /manhã, tarde ou noite/i);
+});
+
+test("builds local response for fibra russa keyword and asks next intent", () => {
+  const response = buildLocalIntentResponse("Você faz aplicação de fibra russa?", {
+    services: [
+      {
+        name: "Aplicação Fibra Russa",
+        commercial_name: "Fibra Russa",
+        active: true,
+        ai_active: true,
+      },
+    ],
+  });
+
+  assert.match(response, /Fibra Russa/i);
+  assert.match(response, /aplicação, manutenção/i);
+  assert.match(response, /explicação rápida/i);
+  assert.match(response, /volume, comprimento/i);
 });

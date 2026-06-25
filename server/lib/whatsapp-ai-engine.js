@@ -7,7 +7,7 @@ import {
   invalidateAiSettingsCache,
 } from "./ai-whatsapp.js";
 import { generateGeminiText, geminiPublicStatus } from "./gemini-client.js";
-import { generateGroqText } from "./groq-client.js";
+import { generateGroqText, groqPublicStatus } from "./groq-client.js";
 import { sendBaileysTextMessage, sendBaileysPresence } from "./baileys-client.js";
 
 const MAX_GEMINI_MESSAGE_CHARS = 4000;
@@ -464,6 +464,80 @@ function isSimpleGreeting(text) {
   return greetings.includes(normalized);
 }
 
+function includesAny(normalizedText, terms) {
+  return terms.some((term) => normalizedText.includes(term));
+}
+
+function findAiService(base, terms) {
+  const normalizedTerms = terms.map(normalizeText).filter(Boolean);
+  return (base.services || []).find((service) => {
+    if (!service.active) return false;
+    const text = normalizeText(
+      [
+        service.commercial_name,
+        service.name,
+        service.short_description,
+        service.detailed_description,
+        service.description,
+        service.recommended_message,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+    return normalizedTerms.some((term) => text.includes(term));
+  });
+}
+
+function serviceName(service, fallback) {
+  return clean(service?.commercial_name || service?.name || fallback);
+}
+
+export function buildLocalIntentResponse(text, base = {}) {
+  const normalized = normalizeText(text);
+  if (!normalized) return null;
+
+  const asksTodayAvailability =
+    includesAny(normalized, [
+      "horario",
+      "agenda",
+      "disponivel",
+      "disponibilidade",
+      "vaga",
+      "encaixe",
+      "atende hoje",
+      "tem hora",
+    ]) &&
+    includesAny(normalized, ["hoje", "hj", "agora", "ainda hoje"]);
+
+  if (asksTodayAvailability) {
+    return [
+      "Consigo te ajudar com isso 😊",
+      "Para horário de hoje, eu não vou prometer disponibilidade sem consultar a agenda real.",
+      "Me diga qual serviço você quer fazer — aplicação, manutenção ou avaliação — e qual período fica melhor para você: manhã, tarde ou noite. A equipe confirma o encaixe certinho.",
+    ].join("\n\n");
+  }
+
+  const mentionsFibraRussa =
+    normalized.includes("fibra russa") ||
+    normalized.includes("fibrarussa") ||
+    (normalized.includes("fibra") && normalized.includes("russa"));
+
+  if (mentionsFibraRussa) {
+    const service = findAiService(base, ["fibra russa"]);
+    const intro = service
+      ? `Sim, temos ${serviceName(service, "Fibra Russa")} no catálogo da Carol Sol.`
+      : "Sim, posso te orientar sobre Fibra Russa por aqui.";
+
+    return [
+      `${intro} ✨`,
+      "Você quer fazer aplicação, manutenção ou prefere uma explicação rápida de como funciona o serviço?",
+      "Se for aplicação, me diga também se é sua primeira vez com Mega Hair e se você busca mais volume, comprimento ou os dois.",
+    ].join("\n\n");
+  }
+
+  return null;
+}
+
 async function activateCircuitBreaker(provider, cooldownSeconds = 60) {
   const until = new Date(Date.now() + cooldownSeconds * 1000).toISOString();
   if (provider === "gemini") {
@@ -896,6 +970,34 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     };
   }
 
+  const localIntentResponse = buildLocalIntentResponse(concatenatedText, base);
+  if (localIntentResponse) {
+    await sendTextAndRecord({
+      normalized,
+      conversationId,
+      text: localIntentResponse,
+      reason: "local_intent_reply",
+    });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+
+    await logAiRequest({
+      conversationId,
+      messageId: inboundMessageId,
+      provider: "local_intent",
+      model: "basic_commercial_intent",
+      status: "success",
+      retryCount: 0,
+      fallbackUsed: false,
+      queueLatencyMs,
+      providerLatencyMs: 0,
+      totalLatencyMs: Date.now() - receivedAt.getTime(),
+      inputTokens: Math.round(concatenatedText.length / 4),
+      outputTokens: Math.round(localIntentResponse.length / 4),
+    });
+
+    return { ok: true, replied: true, reason: "local_intent_reply", conversationId };
+  }
+
   // 7. Local template greeting reply
   if (settings.cacheEnabled && isSimpleGreeting(concatenatedText)) {
     const responseText = settings.welcomeMessage;
@@ -994,6 +1096,23 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     // Skip if fallback disabled
     if (isFallbackStep && !settings.fallbackEnabled) {
       break;
+    }
+
+    const runtimeStatus = currentProvider === "gemini" ? geminiPublicStatus() : groqPublicStatus();
+    if (!runtimeStatus.enabled || !runtimeStatus.configured) {
+      const missingReason = !runtimeStatus.enabled ? "disabled" : "not_configured";
+      console.warn(`AI provider ${currentProvider} skipped: ${missingReason}.`, {
+        enabled: runtimeStatus.enabled,
+        configured: runtimeStatus.configured,
+        model: runtimeStatus.model,
+      });
+      errorMsg =
+        currentProvider === "gemini"
+          ? "Gemini não está habilitado/configurado no ambiente."
+          : "Groq não está habilitado/configurado no ambiente.";
+      errorCode = `${currentProvider.toUpperCase()}_${missingReason.toUpperCase()}`;
+      if (!isFallbackStep) fallbackUsed = true;
+      continue;
     }
 
     // Check circuit breaker

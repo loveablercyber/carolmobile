@@ -736,3 +736,17 @@ Trabalhar somente em **saúde dos provedores IA em produção**: verificar por q
 ## Próxima etapa recomendada (Módulo específico)
 
 Trabalhar somente em **saúde dos provedores IA em produção**: corrigir a falha atual do Gemini e habilitar Groq como fallback real no Vercel, para que mensagens generativas respondam com IA em vez de cair na contingência de instabilidade.
+
+## Resultado desta etapa (Saúde dos provedores IA e respostas locais básicas)
+
+- **Causa confirmada em produção:** logs do Vercel mostram o Gemini falhando por alta demanda/quota do free tier (`generate_content_free_tier_requests`, limite 20) e timeouts ocasionais. Por isso o roteador caía na mensagem padrão de instabilidade.
+- **Fallback Groq ainda bloqueado por configuração:** no Vercel Production não existem variáveis `GROQ_API_KEY`, `GROQ_ENABLED` nem `GROQ_MODEL`; portanto o Groq não consegue atuar como fallback real até a chave ser adicionada ao ambiente.
+- **Roteador otimizado:** provedores desabilitados ou sem chave agora são pulados sem três tentativas inúteis, reduzindo atraso e deixando logs mais claros.
+- **Respostas locais básicas adicionadas:** perguntas como `Tem horário disponível pra hj?` e mensagens com a palavra-chave `fibra russa` passam a ser respondidas localmente antes de chamar Gemini/Groq, sem consumir quota e sem inventar agenda real.
+- **Regra de agenda preservada:** a IA não promete disponibilidade nem confirma horário; ela pede serviço e período preferido para a equipe confirmar o encaixe.
+- **Fluxo Fibra Russa adicionado:** ao detectar `fibra russa`, a IA pergunta se a cliente quer aplicação, manutenção ou explicação rápida do serviço.
+- **Validação técnica:** `npm test` passou com 92/92; `node --check server/lib/whatsapp-ai-engine.js` passou; `npm run lint` passou; `npm run build` passou.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **configuração Groq no Vercel Production**: adicionar `GROQ_API_KEY`, `GROQ_ENABLED=true` e `GROQ_MODEL=llama-3.1-8b-instant` ou outro modelo válido, publicar novo deploy e testar uma pergunta generativa que não esteja coberta pelas respostas locais.
