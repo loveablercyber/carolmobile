@@ -586,3 +586,17 @@ Trabalhar somente em **validação real do webhook Baileys em produção**, ativ
 ## Próxima etapa recomendada (Módulo específico)
 
 Trabalhar somente em **validação real controlada da IA no WhatsApp**, salvando um único serviço ativo na Base de Atendimento, ativando a IA no painel, enviando uma mensagem real curta pelo WhatsApp e conferindo conversa, mensagem, log, interação Gemini e resposta. Não avançar para agenda ou pagamento ainda.
+
+## Resultado desta etapa (Diagnóstico de ausência de resposta do bot)
+
+- **Estado encontrado em produção:** WhatsApp interno conectado, Baileys habilitado, IA global ativa, Gemini configurado/habilitado, atendimento 24h ativo e um serviço real liberado para IA. Antes do teste técnico não havia conversas nem logs reais no painel, indicando que a mensagem da usuária não chegou ao webhook do PWA.
+- **Webhook PWA validado:** `POST /api/webhooks/baileys/carolsol` respondeu `200` com payload controlado e registrou conversa/log, provando que a rota do PWA está ativa. O payload de diagnóstico usou número fictício e não representa cliente real.
+- **Falha observada no payload controlado:** a IA chegou ao processamento, mas o envio de resposta para o número fictício falhou com `Não foi possível conectar ao servidor do WhatsApp`, esperado como diagnóstico limitado porque o número não era um destinatário real confirmado.
+- **Correção no bot externo:** o repositório `loveablercyber/whats` recebeu diagnóstico de inbound/webhook no `/api/status`, com alvo do webhook sem segredo, último inbound, se veio de `fromMe`, tentativa/status/erro do webhook e fallback mais seguro quando `WEBHOOK_URL` aponta para a própria API Render.
+- **Correção no PWA:** `/api/whatsapp?resource=panel` agora retorna `provider` sanitizado com diagnóstico do bot externo, sem expor `BAILEYS_API_KEY`, QR bruto extra ou segredos.
+- **Hipótese operacional importante:** se a mensagem for enviada a partir do mesmo número conectado como bot, o Baileys marca `fromMe=true` e o servidor não encaminha ao PWA para evitar auto-resposta. O teste real deve ser feito a partir de outro número de WhatsApp.
+- **Validação técnica:** `node --check` passou no bot externo e em `api/whatsapp.js`; `npm test` passou com 67/67 testes; `npm run lint` passou; `npm run build` passou.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **teste real de inbound WhatsApp após deploy do Render**: enviar uma mensagem a partir de um número diferente do número conectado como bot, atualizar o painel e conferir `provider.webhook.lastIncomingFromMe=false`, `lastWebhookStatus=200`, conversa registrada e resposta Gemini enviada. Se `lastIncomingFromMe=true`, repetir usando outro número; se `lastWebhookStatus` não for `200`, corrigir somente a URL/entrega do webhook.

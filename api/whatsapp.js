@@ -65,6 +65,43 @@ export function qrValue(data) {
   );
 }
 
+function maskPhoneLike(value) {
+  const text = String(value || "");
+  return text.replace(/\d(?=\d{4})/g, "•");
+}
+
+function providerDiagnostics(data) {
+  if (!data) return null;
+  const webhook = data.webhook || null;
+  return {
+    engine: data.engine || null,
+    status: normalizeStatus(data),
+    hasQr: Boolean(data.hasQr || qrValue(data)),
+    lastReadyAt: data.lastReadyAt || null,
+    lastSessionSavedAt: data.lastSessionSavedAt || null,
+    lastQrGeneratedAt: data.lastQrGeneratedAt || null,
+    lastDisconnectReason: data.lastDisconnectReason || null,
+    lastDisconnectAt: data.lastDisconnectAt || null,
+    webhook: webhook
+      ? {
+          configured: Boolean(webhook.configured),
+          usingFallback: Boolean(webhook.usingFallback),
+          target: webhook.target || null,
+          lastIncomingMessageAt: webhook.lastIncomingMessageAt || null,
+          lastIncomingFrom: webhook.lastIncomingFrom
+            ? maskPhoneLike(webhook.lastIncomingFrom)
+            : null,
+          lastIncomingFromMe: webhook.lastIncomingFromMe ?? null,
+          lastIncomingHasText: webhook.lastIncomingHasText ?? null,
+          lastWebhookAttemptAt: webhook.lastWebhookAttemptAt || null,
+          lastWebhookTarget: webhook.lastWebhookTarget || null,
+          lastWebhookStatus: webhook.lastWebhookStatus || null,
+          lastWebhookError: webhook.lastWebhookError || null,
+        }
+      : null,
+  };
+}
+
 async function saveSession(ctx, data, error = null) {
   const status = error ? "error" : normalizeStatus(data);
   const qr = qrValue(data);
@@ -126,6 +163,7 @@ async function getPanel(user) {
       connection_status: "disconnected",
     },
     liveStatus: live ? normalizeStatus(live) : null,
+    provider: providerDiagnostics(live),
     error,
   };
 }
