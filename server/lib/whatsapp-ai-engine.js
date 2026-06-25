@@ -832,16 +832,19 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     [conversationId, settings.resumeKeyword],
   );
   if (Number(count.rows[0]?.total || 0) >= settings.maxAutoMessages) {
-    const responseText = settings.humanHandoffMessage;
-    await pauseConversationForHuman({
-      conversationId,
-      messageId: inboundMessageId,
-      reason: "max_auto_messages",
-      responseText,
-    });
-    await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "max_auto_messages" });
-    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
-    return { ok: true, replied: true, reason: "max_auto_messages", conversationId };
+    await query(
+      `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+       values($1,$2,'auto_message_limit_reached','warning',$3)`,
+      [
+        conversationId,
+        inboundMessageId,
+        JSON.stringify({
+          total: Number(count.rows[0]?.total || 0),
+          limit: settings.maxAutoMessages,
+          action: "continue_ai",
+        }),
+      ],
+    );
   }
 
   // 6.5. Safety/Medical Classification Check (Nível 4)
@@ -1137,13 +1140,13 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       model: finalModel,
     };
   } else {
-    // BOTH Providers failed! Fallback to Contingency or human handoff
+    // BOTH Providers failed. Reply with a contingency message, but keep AI enabled.
     console.error("All AI providers failed. Triggering contingency response.");
 
     let contingencyReplied = false;
     if (settings.contingencyEnabled) {
       const contingencyText =
-        "Olá! Recebi sua mensagem, mas nosso atendimento automático está com uma instabilidade momentânea. Vou encaminhar você para nossa equipe continuar o atendimento.";
+        "Olá! Recebi sua mensagem, mas nosso atendimento automático está com uma instabilidade momentânea. Pode tentar me enviar de novo em instantes, por favor?";
       await sendTextAndRecord({
         normalized,
         conversationId,
@@ -1153,14 +1156,19 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       contingencyReplied = true;
     }
 
-    if (settings.humanTransferEnabled) {
-      await pauseConversationForHuman({
+    await query(
+      `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+       values($1,$2,'ai_contingency','warning',$3)`,
+      [
         conversationId,
-        messageId: inboundMessageId,
-        reason: "contingency_fallback",
-        responseText: contingencyReplied ? "contingency_reply" : "no_reply",
-      });
-    }
+        inboundMessageId,
+        JSON.stringify({
+          reason: "providers_failed",
+          action: "keep_ai_enabled",
+          replied: contingencyReplied,
+        }),
+      ],
+    );
 
     // Log the failure metrics
     await logAiRequest({
@@ -1168,7 +1176,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       messageId: inboundMessageId,
       provider: providersOrder[0],
       model: settings.model,
-      status: "human_handoff",
+      status: contingencyReplied ? "contingency_reply" : "provider_error",
       retryCount: retryCountTotal,
       fallbackUsed: settings.fallbackEnabled,
       queueLatencyMs,
@@ -1181,7 +1189,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     return {
       ok: true,
       replied: contingencyReplied,
-      reason: "contingency_handoff",
+      reason: contingencyReplied ? "contingency_reply" : "providers_failed",
       conversationId,
     };
   }
