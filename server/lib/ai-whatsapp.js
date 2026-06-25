@@ -1220,7 +1220,7 @@ export async function getAiBase() {
        limit 20`,
     ),
     query(
-      `select id,event_type,status,error_message,created_at
+      `select id,conversation_id,message_id,event_type,status,error_message,details,created_at
        from public.whatsapp_message_logs order by created_at desc limit 30`,
     ),
     query(
