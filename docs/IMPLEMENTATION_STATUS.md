@@ -707,3 +707,20 @@ Testar novamente em **conversa privada real** enviando uma mensagem a partir de 
 ## Próxima etapa recomendada (Módulo específico)
 
 Trabalhar somente em **validação operacional em produção do inbound privado WhatsApp IA**: aplicar/confirmar a migração IA, enviar uma mensagem privada real de outro número para o WhatsApp Business conectado e conferir conversa, fila, log, métrica em `ai_request_logs`, resposta Gemini/Groq e envio Baileys. Não avançar para agenda, pagamento ou mídia ainda.
+
+## Resultado desta etapa (Validação operacional do inbound privado WhatsApp IA)
+
+- **Inbound privado validado:** mensagens privadas reais do WhatsApp pessoal chegaram ao WhatsApp Business conectado como `private_lid`, `fromMe=false`, `hasText=true` e `lastWebhookStatus=200`.
+- **Persistência validada:** cada mensagem privada criou `inbound_received` em `whatsapp_message_logs` e atualizou `whatsapp_conversations`, confirmando que webhook, normalização LID e registro de conversa estão funcionando em produção.
+- **Causa do não atendimento encontrada:** a conversa estava em `status='human'` e `ai_enabled=false` por handoff automático anterior. Por isso, mensagens novas eram registradas, mas geravam `ai_skipped` com `reason='conversation_paused'`.
+- **Bug corrigido no limite automático:** `max_auto_messages` não altera mais a conversa para humano nem desliga `ai_enabled`. Ao atingir o limite, o backend registra `auto_message_limit_reached` com `action='continue_ai'` e mantém o atendimento automático ativo.
+- **Bug corrigido na contingência:** falha temporária dos provedores de IA não chama mais `pauseConversationForHuman`, não cria ticket humano e não muda `ai_enabled=false`. Agora registra `ai_contingency` com `action='keep_ai_enabled'` e mantém `status='ai'`.
+- **Mensagem de contingência ajustada:** a resposta de instabilidade deixou de dizer que encaminharia para equipe humana; agora orienta tentar novamente em instantes, sem aparentar handoff.
+- **Ação administrativa segura adicionada:** criada ação backend `POST /api/ai-whatsapp?resource=conversation-action` com `resume_ai`/`pause_ai`, restrita a admin, para reativar ou pausar uma conversa sem acesso direto ao banco.
+- **Validação pós-correção:** conversa real reativada com `resume_ai`; novo inbound privado foi recebido; mensagem de contingência foi enviada com `providerMessageId`; a conversa permaneceu `status='ai'` e `ai_enabled=true`.
+- **Pendência de provedor:** o roteador registrou `provider='gemini'`, `status='contingency_reply'`, `fallbackUsed=true` e erro `Groq está desativado no ambiente.`. Ou seja, o fluxo WhatsApp funciona, mas respostas inteligentes dependem de corrigir a falha atual do Gemini ou habilitar Groq em produção.
+- **Validação técnica:** `npm test` passou com 90/90 testes; `npm run lint` passou; `npm run build` passou; deploys Production foram publicados e aliasados em `https://carolmobile.vercel.app`.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **saúde dos provedores IA em produção**: verificar por que o Gemini está falhando nas mensagens reais, configurar/habilitar Groq como fallback real no Vercel e repetir uma mensagem privada que exija IA generativa. Não avançar para agenda, pagamento ou mídia ainda.
