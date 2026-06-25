@@ -77,6 +77,8 @@ function providerDiagnostics(data) {
     engine: data.engine || null,
     status: normalizeStatus(data),
     hasQr: Boolean(data.hasQr || qrValue(data)),
+    accountName: data.account_name || data.name || null,
+    accountNumber: data.phone_number ? maskPhoneLike(data.phone_number) : null,
     lastReadyAt: data.lastReadyAt || null,
     lastSessionSavedAt: data.lastSessionSavedAt || null,
     lastQrGeneratedAt: data.lastQrGeneratedAt || null,
@@ -98,10 +100,15 @@ function providerDiagnostics(data) {
           lastWebhookStatus: webhook.lastWebhookStatus || null,
           lastWebhookError: webhook.lastWebhookError || null,
           lastUpsertCount: webhook.lastUpsertCount ?? null,
+          lastUpsertType: webhook.lastUpsertType || null,
           recentEvents: Array.isArray(webhook.recentEvents)
             ? webhook.recentEvents.slice(0, 10).map((event) => ({
                 ...event,
                 from: event.from ? maskPhoneLike(event.from) : null,
+                participant: event.participant
+                  ? maskPhoneLike(event.participant)
+                  : null,
+                phone: event.phone ? maskPhoneLike(event.phone) : null,
               }))
             : [],
         }

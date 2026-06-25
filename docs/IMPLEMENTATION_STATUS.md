@@ -641,3 +641,14 @@ Testar em **conversa privada real** usando outro número de WhatsApp: confirmar 
 ## Próxima etapa recomendada (Módulo específico)
 
 Após o auto-deploy do Render, enviar uma nova mensagem privada de outro número para o WhatsApp Business conectado e conferir `recentEvents`, `lastIncomingFromMe=false`, `lastIncomingHasText=true`, conversa criada e resposta Gemini. Se ainda aparecer apenas `@g.us`, o problema está no teste chegando como grupo ou na conta conectada recebendo eventos de grupo antes do privado.
+
+## Resultado desta etapa (Diagnóstico do número conectado no Baileys)
+
+- **Estado após novo teste:** produção continuou mostrando todos os eventos recentes como `@g.us`, com `webhook_ignored`, apesar do relato de teste privado. Nenhum evento privado `@s.whatsapp.net` apareceu no diagnóstico.
+- **Correção diagnóstica no bot externo:** o `/api/status` do Render agora expõe `phone_number`, `number`, `account_name` e `connectedJid` do WhatsApp conectado, além de `lastUpsertType`, `chatType`, `participant` e `phone` por evento recente. O PWA mascara esses dados antes de retornar ao frontend.
+- **Objetivo:** confirmar se o número Business conectado no bot é exatamente o mesmo número/contato que está recebendo o teste privado no celular. Se o número conectado estiver diferente, o Gemini nunca receberá a conversa privada esperada.
+- **Validação técnica:** `node --check` passou no bot externo e em `api/whatsapp.js`; `npm test` passou com 70/70 testes; `npm run lint` passou; `npm run build` passou.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Depois do auto-deploy do Render, conferir no painel/diagnóstico o `accountNumber` mascarado e comparar com o WhatsApp Business que está sendo testado. Em seguida, enviar nova mensagem privada; o evento precisa aparecer como `chatType=private` ou `private_lid`, não `group`.
