@@ -614,3 +614,16 @@ Trabalhar somente em **teste real de inbound WhatsApp após deploy do Render**: 
 ## Próxima etapa recomendada (Módulo específico)
 
 Testar novamente em **conversa privada**, não em grupo: envie uma mensagem direta para o número conectado como bot usando outro WhatsApp. O esperado é `lastIncomingFromMe=false`, `lastWebhookStatus=200`, conversa registrada, interação Gemini e mensagem de resposta enviada.
+
+## Resultado desta etapa (Fluxos de automação selecionáveis)
+
+- **Diagnóstico do silêncio atual:** a produção mostrou WhatsApp conectado, IA/Gemini ativos e webhook correto, mas o último inbound chegou como `lastIncomingFromMe=true` e `lastIncomingHasText=false`. Isso indica mensagem enviada pelo próprio número conectado como bot, ou sem texto útil; nesse cenário o bot não encaminha para a IA para evitar loop. A aba de fluxos não era a causa direta desse silêncio.
+- **Problema real corrigido:** a aba **Fluxos e Automação** exibia dados reais de `ai_automation_flows`, mas era somente leitura. Agora cada fluxo pode ser ativado/pausado, marcar se exige aprovação humana e configurar atraso do gatilho em minutos.
+- **Persistência real:** criada ação `POST /api/ai-whatsapp?resource=flow-settings`, restrita a admin, salvando em `ai_automation_flows` e retornando o painel atualizado somente após resposta da API.
+- **Sem sucesso falso:** o card de fluxo só atualiza depois do retorno do backend; se falhar, restaura o estado anterior, exibe erro e registra `console.error`.
+- **Limite de escopo:** ativar fluxos nesta etapa apenas salva a configuração. Agenda automática, pagamento, mídia e execução avançada dos fluxos continuam fora do escopo até implementação própria.
+- **Validação técnica:** `node --check` passou em `server/lib/ai-whatsapp.js` e `api/ai-whatsapp.js`; `npm test` passou com 69/69 testes; `npm run lint` passou; `npm run build` passou.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Testar em **conversa privada real** usando outro número de WhatsApp: confirmar `lastIncomingFromMe=false`, `lastIncomingHasText=true`, `lastWebhookStatus=200`, conversa registrada e resposta Gemini enviada. Só depois avançar para usar os fluxos ativados como regras reais de atendimento.

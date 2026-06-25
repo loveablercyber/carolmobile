@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildRuntimePrompt,
   defaultAiSettings,
+  normalizeAiFlowSettingsInput,
   normalizeAiServiceSettingsInput,
   normalizeAiSettingsInput,
 } from "../server/lib/ai-whatsapp.js";
@@ -153,5 +154,34 @@ test("rejects enabling AI for inactive or malformed service", () => {
         },
       ),
     /serviço inativo/i,
+  );
+});
+
+test("normalizes AI automation flow settings", () => {
+  const normalized = normalizeAiFlowSettingsInput(
+    {
+      flowKey: "consulta_valores",
+      enabled: "true",
+      requiresHumanApproval: "false",
+      triggerDelayMinutes: "9999",
+    },
+    {
+      flow_key: "consulta_valores",
+      enabled: false,
+      requires_human_approval: true,
+      trigger_delay_minutes: 10,
+    },
+  );
+
+  assert.equal(normalized.flowKey, "consulta_valores");
+  assert.equal(normalized.enabled, true);
+  assert.equal(normalized.requiresHumanApproval, false);
+  assert.equal(normalized.triggerDelayMinutes, 1440);
+});
+
+test("rejects malformed AI automation flow key", () => {
+  assert.throws(
+    () => normalizeAiFlowSettingsInput({ flowKey: "../consulta", enabled: true }),
+    /Fluxo inv/i,
   );
 });

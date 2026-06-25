@@ -4,6 +4,7 @@ import {
   defaultAiSettings,
   getAiPanel,
   getAiSettings,
+  saveAiFlowSettings,
   saveAiServiceSettings,
   saveAiSettings,
 } from "../server/lib/ai-whatsapp.js";
@@ -31,6 +32,10 @@ async function mutate(user, resource, body) {
   if (resource === "service-settings") {
     const service = await saveAiServiceSettings(user, body);
     return { service, panel: await getAiPanel() };
+  }
+  if (resource === "flow-settings") {
+    const flow = await saveAiFlowSettings(user, body);
+    return { flow, panel: await getAiPanel() };
   }
   if (resource === "action") {
     const action = clean(body.action);

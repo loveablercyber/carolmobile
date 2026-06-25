@@ -108,6 +108,9 @@ type AiTestResponse = {
 type AiServiceMutationResponse = {
   data: { service: Record<string, any>; panel: AiPanelData };
 };
+type AiFlowMutationResponse = {
+  data: { flow: Record<string, any>; panel: AiPanelData };
+};
 
 type ServiceForm = {
   serviceId: string;
@@ -126,6 +129,13 @@ type ServiceForm = {
   allowAutoBooking: boolean;
   recommendedMessage: string;
   priorityOrder: string;
+};
+
+type FlowForm = {
+  flowKey: string;
+  enabled: boolean;
+  requiresHumanApproval: boolean;
+  triggerDelayMinutes: string;
 };
 
 const adminTabs = [
@@ -605,7 +615,8 @@ function AiAdminPanel({
     return (
       <BaseKnowledgeTab panel={panel} onPanel={applyPanel} notify={notify} />
     );
-  if (activeTab === "flows") return <FlowsTab panel={panel} />;
+  if (activeTab === "flows")
+    return <FlowsTab panel={panel} onPanel={applyPanel} notify={notify} />;
   if (activeTab === "conversations") return <ConversationsTab panel={panel} />;
   if (activeTab === "logs") return <LogsTab panel={panel} reload={load} />;
 
@@ -1219,28 +1230,66 @@ function ServiceSettingsCard({
   );
 }
 
-function FlowsTab({ panel }: { panel: AiPanelData }) {
+function flowToForm(flow: Record<string, any>): FlowForm {
+  return {
+    flowKey: String(flow.flow_key || ""),
+    enabled: Boolean(flow.enabled),
+    requiresHumanApproval: Boolean(flow.requires_human_approval),
+    triggerDelayMinutes: String(flow.trigger_delay_minutes ?? 0),
+  };
+}
+
+function FlowsTab({
+  panel,
+  onPanel,
+  notify,
+}: {
+  panel: AiPanelData;
+  onPanel: (panel: AiPanelData) => void;
+  notify: (message: string) => void;
+}) {
+  const [savingFlowKey, setSavingFlowKey] = useState("");
+
+  const saveFlow = async (form: FlowForm) => {
+    setSavingFlowKey(form.flowKey);
+    try {
+      const result = await apiFetch<AiFlowMutationResponse>(
+        "/api/ai-whatsapp?resource=flow-settings",
+        { method: "POST", body: JSON.stringify(form) },
+      );
+      onPanel(result.data.panel);
+      notify("Fluxo salvo no banco.");
+      return true;
+    } catch (error) {
+      console.error("AI WhatsApp flow settings error", error);
+      notify(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível salvar o fluxo.",
+      );
+      return false;
+    } finally {
+      setSavingFlowKey("");
+    }
+  };
   return (
     <section className="surface p-6">
       <SectionHeading title="Fluxos e Automação" />
+      <p className="muted mb-5 text-sm">
+        Escolha quais fluxos ficam ativos. Nesta etapa, ativar um fluxo libera
+        somente a configuração salva; agenda, pagamento e mídia continuam
+        exigindo implementação própria.
+      </p>
       {panel.base.flows.length ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {panel.base.flows.map((flow) => (
-            <div key={flow.id} className="rounded-2xl bg-warm p-4">
-              <div className="flex items-start justify-between gap-2">
-                <b className="text-sm">{flow.name}</b>
-                <Badge tone={flow.enabled ? "green" : "neutral"}>
-                  {flow.enabled ? "ativo" : "pausado"}
-                </Badge>
-              </div>
-              <p className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-stone-400">
-                {flow.flow_key}
-              </p>
-              <p className="mt-3 text-xs text-stone-500">
-                Aprovação humana: {flow.requires_human_approval ? "sim" : "não"} •
-                atraso: {flow.trigger_delay_minutes || 0} min
-              </p>
-            </div>
+            <FlowSettingsCard
+              key={flow.id}
+              flow={flow}
+              saving={savingFlowKey === flow.flow_key}
+              disabled={!!savingFlowKey}
+              onSave={saveFlow}
+            />
           ))}
         </div>
       ) : (
@@ -1250,6 +1299,81 @@ function FlowsTab({ panel }: { panel: AiPanelData }) {
         />
       )}
     </section>
+  );
+}
+
+function FlowSettingsCard({
+  flow,
+  saving,
+  disabled,
+  onSave,
+}: {
+  flow: Record<string, any>;
+  saving: boolean;
+  disabled: boolean;
+  onSave: (form: FlowForm) => Promise<boolean>;
+}) {
+  const [form, setForm] = useState<FlowForm>(() => flowToForm(flow));
+
+  useEffect(() => {
+    setForm(flowToForm(flow));
+  }, [flow]);
+
+  const update = <K extends keyof FlowForm>(key: K, value: FlowForm[K]) => {
+    setForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const ok = await onSave(form);
+    if (!ok) setForm(flowToForm(flow));
+  };
+
+  const disabledAll = disabled || saving;
+
+  return (
+    <form onSubmit={submit} className="rounded-2xl bg-warm p-4">
+      <div className="flex items-start justify-between gap-2">
+        <b className="text-sm">{flow.name}</b>
+        <Badge tone={form.enabled ? "green" : "neutral"}>
+          {form.enabled ? "ativo" : "pausado"}
+        </Badge>
+      </div>
+      <p className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-stone-400">
+        {flow.flow_key}
+      </p>
+      <div className="mt-4 space-y-3">
+        <CheckField
+          label="Fluxo ativo"
+          checked={form.enabled}
+          disabled={disabledAll}
+          onChange={(checked) => update("enabled", checked)}
+        />
+        <CheckField
+          label="Exigir aprovação humana"
+          checked={form.requiresHumanApproval}
+          disabled={disabledAll}
+          onChange={(checked) => update("requiresHumanApproval", checked)}
+        />
+        <Field label="Atraso do gatilho em minutos">
+          <input
+            type="number"
+            min={0}
+            max={1440}
+            className="field"
+            disabled={disabledAll}
+            value={form.triggerDelayMinutes}
+            onChange={(event) =>
+              update("triggerDelayMinutes", event.target.value)
+            }
+          />
+        </Field>
+      </div>
+      <button disabled={disabledAll} className="btn-primary mt-4 w-full">
+        <ShieldCheck size={15} />
+        {saving ? "Salvando fluxo…" : "Salvar fluxo"}
+      </button>
+    </form>
   );
 }
 

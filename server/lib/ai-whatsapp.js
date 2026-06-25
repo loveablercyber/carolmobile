@@ -481,6 +481,25 @@ export function normalizeAiServiceSettingsInput(input = {}, service = {}) {
   };
 }
 
+export function normalizeAiFlowSettingsInput(input = {}, flow = {}) {
+  const flowKey = clean(input.flowKey || input.flow_key || flow.flow_key);
+  if (!/^[a-z0-9_]{3,80}$/.test(flowKey)) throw appError("Fluxo inválido.");
+  return {
+    flowKey,
+    enabled: bool(input.enabled, flow.enabled || false),
+    requiresHumanApproval: bool(
+      input.requiresHumanApproval ?? input.requires_human_approval,
+      flow.requires_human_approval ?? true,
+    ),
+    triggerDelayMinutes: intRange(
+      input.triggerDelayMinutes ?? input.trigger_delay_minutes,
+      Number(flow.trigger_delay_minutes || 0),
+      0,
+      1440,
+    ),
+  };
+}
+
 function dbToSettings(row) {
   if (!row) return defaultSettingsInput();
   return {
@@ -745,6 +764,48 @@ export async function saveAiServiceSettings(user, input) {
     await client.query(
       `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
        values($1,'update','ai_service_settings',$2,$3)`,
+      [user.id, rows[0].id, JSON.stringify(value)],
+    ).catch(() => null);
+    return rows[0];
+  });
+}
+
+export async function saveAiFlowSettings(user, input) {
+  await ensureAiWhatsappSchema();
+  const flowKey = clean(input.flowKey || input.flow_key);
+  if (!/^[a-z0-9_]{3,80}$/.test(flowKey)) throw appError("Fluxo inválido.");
+
+  const { rows: flows } = await query(
+    `select id,flow_key,name,enabled,requires_human_approval,trigger_delay_minutes
+       from public.ai_automation_flows
+      where flow_key=$1
+      limit 1`,
+    [flowKey],
+  );
+  if (!flows[0]) throw appError("Fluxo não encontrado.", 404);
+
+  const value = normalizeAiFlowSettingsInput(input, flows[0]);
+  return transaction(async (client) => {
+    const { rows } = await client.query(
+      `update public.ai_automation_flows
+          set enabled=$2,
+              requires_human_approval=$3,
+              trigger_delay_minutes=$4,
+              updated_by=$5,
+              updated_at=now()
+        where flow_key=$1
+        returning id,flow_key,name,enabled,channel,requires_human_approval,trigger_delay_minutes,updated_at`,
+      [
+        value.flowKey,
+        value.enabled,
+        value.requiresHumanApproval,
+        value.triggerDelayMinutes,
+        user.id,
+      ],
+    );
+    await client.query(
+      `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
+       values($1,'update','ai_automation_flow',$2,$3)`,
       [user.id, rows[0].id, JSON.stringify(value)],
     ).catch(() => null);
     return rows[0];
