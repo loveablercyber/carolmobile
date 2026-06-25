@@ -567,3 +567,19 @@ Trabalhar somente em **pareamento final do WhatsApp**: tentar primeiro o QR novo
 ## Próxima etapa recomendada (Módulo específico)
 
 Trabalhar somente em **validação real do webhook Baileys em produção**, ativando a IA no painel admin, liberando no máximo um serviço teste na Base de Atendimento e enviando uma única mensagem de WhatsApp para confirmar registro de conversa, log e resposta Gemini. Não implementar agenda, pagamento ou mídia nesta etapa.
+
+## Resultado desta etapa (Base de Atendimento — Serviços liberados para IA)
+
+- **Escopo mantido:** foi trabalhada somente a configuração de serviços na aba **Base de Atendimento**. Não foram implementados agenda automática, pagamento, mídia, cupons editáveis ou fluxos avançados nesta etapa.
+- **Persistência real:** criada ação `POST /api/ai-whatsapp?resource=service-settings`, restrita a admin, salvando em `ai_service_settings` com retorno do painel atualizado após resposta real da API.
+- **Campos configuráveis por serviço:** ativo no WhatsApp, nome comercial, descrição curta, descrição detalhada, valor inicial, duração estimada, exige avaliação, exige fotos, permite pré-orçamento, permite pré-agendamento, exige sinal, tipo/valor do sinal, mensagem recomendada e prioridade.
+- **Sem sucesso falso:** a tela só atualiza o painel após a API retornar sucesso. Se a API falhar, o card volta ao último estado persistido e mostra erro.
+- **Bloqueio de catálogo inativo:** o backend não permite ativar IA para serviço inativo no catálogo real. A interface também sinaliza `catálogo inativo` e bloqueia ativação.
+- **Dados reais no Gemini:** o contexto comercial do motor WhatsApp agora prefere `ai_service_settings.initial_price` e `estimated_duration_minutes` quando configurados, caindo para `services.base_price`/`duration_minutes` apenas como fallback real.
+- **Logs e auditoria:** alterações em serviço IA registram `audit_logs` quando a tabela está disponível, sem gravar segredos.
+- **Validação técnica:** `node --check` passou, `npm test` passou com 67/67 testes, `npm run lint` passou e `npm run build` passou.
+- **Funcionalidades pendentes:** validar em produção salvando um serviço real pela UI/admin e, depois, ativar a IA para uma mensagem real controlada do WhatsApp.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **validação real controlada da IA no WhatsApp**, salvando um único serviço ativo na Base de Atendimento, ativando a IA no painel, enviando uma mensagem real curta pelo WhatsApp e conferindo conversa, mensagem, log, interação Gemini e resposta. Não avançar para agenda ou pagamento ainda.

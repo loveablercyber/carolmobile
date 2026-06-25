@@ -175,9 +175,9 @@ export function summarizeAiCommercialContext(base) {
     .filter((service) => service.active && service.ai_active)
     .slice(0, 10)
     .map((service) => {
-      const price = Number(service.base_price || 0);
+      const price = Number(service.initial_price || service.base_price || 0);
       const priceText = price > 0 ? `valor inicial R$ ${price.toFixed(2)}` : "valor sob consulta";
-      return `- ${service.commercial_name || service.name}: ${priceText}, duração ${service.duration_minutes || "sob consulta"} min.`;
+      return `- ${service.commercial_name || service.name}: ${priceText}, duração ${service.estimated_duration_minutes || service.duration_minutes || "sob consulta"} min.`;
     });
   const plans = (base.plans || [])
     .filter((plan) => plan.active)

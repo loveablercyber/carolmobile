@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildRuntimePrompt,
   defaultAiSettings,
+  normalizeAiServiceSettingsInput,
   normalizeAiSettingsInput,
 } from "../server/lib/ai-whatsapp.js";
 import { geminiPublicStatus } from "../server/lib/gemini-client.js";
@@ -86,4 +87,71 @@ test("Gemini public status never exposes API key", () => {
     if (previousModel === undefined) delete process.env.GEMINI_MODEL;
     else process.env.GEMINI_MODEL = previousModel;
   }
+});
+
+test("normalizes AI service settings using real service fallbacks", () => {
+  const service = {
+    id: "52000000-0000-4000-8000-000000000001",
+    name: "Aplicação Fita Adesiva",
+    description: "Aplicação premium personalizada.",
+    active: true,
+    base_price: 950,
+    duration_minutes: 210,
+    deposit_amount: 190,
+  };
+
+  const normalized = normalizeAiServiceSettingsInput(
+    {
+      serviceId: service.id,
+      active: "true",
+      commercialName: "Mega Hair Fita Premium",
+      initialPrice: "980,50",
+      estimatedDurationMinutes: "999",
+      requiresDeposit: "true",
+      depositType: "amount",
+      depositValue: "200",
+      allowAutoQuote: "true",
+      allowAutoBooking: "false",
+      priorityOrder: "0",
+    },
+    service,
+  );
+
+  assert.equal(normalized.serviceId, service.id);
+  assert.equal(normalized.active, true);
+  assert.equal(normalized.commercialName, "Mega Hair Fita Premium");
+  assert.equal(normalized.initialPrice, 980.5);
+  assert.equal(normalized.estimatedDurationMinutes, 720);
+  assert.equal(normalized.requiresDeposit, true);
+  assert.equal(normalized.depositValue, 200);
+  assert.equal(normalized.allowAutoQuote, true);
+  assert.equal(normalized.allowAutoBooking, false);
+  assert.equal(normalized.priorityOrder, 1);
+});
+
+test("rejects enabling AI for inactive or malformed service", () => {
+  assert.throws(
+    () =>
+      normalizeAiServiceSettingsInput(
+        { serviceId: "not-a-uuid", active: true },
+        { active: true },
+      ),
+    /Serviço inválido/,
+  );
+
+  assert.throws(
+    () =>
+      normalizeAiServiceSettingsInput(
+        {
+          serviceId: "52000000-0000-4000-8000-000000000001",
+          active: true,
+        },
+        {
+          id: "52000000-0000-4000-8000-000000000001",
+          active: false,
+          name: "Serviço inativo",
+        },
+      ),
+    /serviço inativo/i,
+  );
 });

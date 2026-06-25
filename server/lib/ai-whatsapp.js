@@ -286,6 +286,21 @@ const intRange = (value, fallback, min, max) => {
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, parsed));
 };
+const moneyOrNull = (value, fallback = null) => {
+  if (value === "" || value === null || value === undefined) return fallback;
+  const parsed = Number(String(value).replace(",", "."));
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(999999, Math.round(parsed * 100) / 100));
+};
+const textLimit = (value, fallback, max) => {
+  const current = clean(value);
+  if (!current) return clean(fallback).slice(0, max);
+  return current.slice(0, max);
+};
+const uuidLike = (value) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    clean(value),
+  );
 const timeOrNull = (value) => {
   const v = clean(value);
   return /^\d{2}:\d{2}$/.test(v) ? v : null;
@@ -380,6 +395,89 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
       clean(input.resumeKeyword || fallback.resumeKeyword) || "voltar ao bot",
     stopKeyword: clean(input.stopKeyword || fallback.stopKeyword) || "parar",
     timezone: clean(input.timezone || fallback.timezone) || "America/Sao_Paulo",
+  };
+}
+
+export function normalizeAiServiceSettingsInput(input = {}, service = {}) {
+  const serviceId = clean(input.serviceId || input.service_id || service.id);
+  if (!uuidLike(serviceId)) throw appError("Serviço inválido.");
+
+  const active = bool(input.active ?? input.aiActive, service.ai_active || false);
+  if (active && service.active === false)
+    throw appError("Não é possível ativar IA para um serviço inativo.");
+
+  const initialPrice = moneyOrNull(
+    input.initialPrice ?? input.initial_price,
+    moneyOrNull(service.initial_price ?? service.base_price, null),
+  );
+  const depositValue = moneyOrNull(
+    input.depositValue ?? input.deposit_value,
+    moneyOrNull(service.deposit_value ?? service.deposit_amount, 0),
+  );
+  const estimatedDurationMinutes = intRange(
+    input.estimatedDurationMinutes ?? input.estimated_duration_minutes,
+    Number(service.estimated_duration_minutes || service.duration_minutes || 60),
+    5,
+    720,
+  );
+  const priorityOrder = intRange(
+    input.priorityOrder ?? input.priority_order,
+    Number(service.priority_order || 100),
+    1,
+    999,
+  );
+  const depositType = clean(input.depositType || input.deposit_type || service.deposit_type || "amount");
+  if (!["amount", "percentage"].includes(depositType))
+    throw appError("Tipo de sinal inválido.");
+
+  return {
+    serviceId,
+    active,
+    commercialName: textLimit(
+      input.commercialName ?? input.commercial_name,
+      service.commercial_name || service.name,
+      120,
+    ),
+    shortDescription: textLimit(
+      input.shortDescription ?? input.short_description,
+      service.short_description || service.description,
+      240,
+    ),
+    detailedDescription: textLimit(
+      input.detailedDescription ?? input.detailed_description,
+      service.detailed_description || service.description,
+      1200,
+    ),
+    initialPrice,
+    estimatedDurationMinutes,
+    requiresAssessment: bool(
+      input.requiresAssessment ?? input.requires_assessment,
+      service.requires_assessment || false,
+    ),
+    requiresDeposit: bool(
+      input.requiresDeposit ?? input.requires_deposit,
+      service.requires_deposit || false,
+    ),
+    depositType,
+    depositValue,
+    referencePhotosRequired: bool(
+      input.referencePhotosRequired ?? input.reference_photos_required,
+      service.reference_photos_required || false,
+    ),
+    allowAutoQuote: bool(
+      input.allowAutoQuote ?? input.allow_auto_quote,
+      service.allow_auto_quote || false,
+    ),
+    allowAutoBooking: bool(
+      input.allowAutoBooking ?? input.allow_auto_booking,
+      service.allow_auto_booking || false,
+    ),
+    recommendedMessage: textLimit(
+      input.recommendedMessage ?? input.recommended_message,
+      service.recommended_message || "",
+      800,
+    ),
+    priorityOrder,
   };
 }
 
@@ -576,14 +674,93 @@ export async function saveAiSettings(user, input) {
   });
 }
 
+export async function saveAiServiceSettings(user, input) {
+  await ensureAiWhatsappSchema();
+  const serviceId = clean(input.serviceId || input.service_id);
+  if (!uuidLike(serviceId)) throw appError("Serviço inválido.");
+
+  const { rows: services } = await query(
+    `select s.id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
+        ais.id as ai_service_settings_id,ais.active as ai_active,ais.commercial_name,ais.short_description,
+        ais.detailed_description,ais.initial_price,ais.estimated_duration_minutes,ais.requires_assessment,
+        ais.requires_deposit,ais.deposit_type,ais.deposit_value,ais.reference_photos_required,
+        ais.allow_auto_quote,ais.allow_auto_booking,ais.recommended_message,ais.priority_order
+       from public.services s
+       left join public.ai_service_settings ais on ais.service_id=s.id
+      where s.id=$1
+      limit 1`,
+    [serviceId],
+  );
+  if (!services[0]) throw appError("Serviço não encontrado.", 404);
+
+  const value = normalizeAiServiceSettingsInput(input, services[0]);
+  return transaction(async (client) => {
+    const { rows } = await client.query(
+      `insert into public.ai_service_settings(
+        service_id,active,commercial_name,short_description,detailed_description,initial_price,
+        estimated_duration_minutes,requires_assessment,requires_deposit,deposit_type,deposit_value,
+        reference_photos_required,allow_auto_quote,allow_auto_booking,recommended_message,priority_order,
+        updated_by,updated_at
+      ) values(
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now()
+      ) on conflict(service_id) do update set
+        active=excluded.active,
+        commercial_name=excluded.commercial_name,
+        short_description=excluded.short_description,
+        detailed_description=excluded.detailed_description,
+        initial_price=excluded.initial_price,
+        estimated_duration_minutes=excluded.estimated_duration_minutes,
+        requires_assessment=excluded.requires_assessment,
+        requires_deposit=excluded.requires_deposit,
+        deposit_type=excluded.deposit_type,
+        deposit_value=excluded.deposit_value,
+        reference_photos_required=excluded.reference_photos_required,
+        allow_auto_quote=excluded.allow_auto_quote,
+        allow_auto_booking=excluded.allow_auto_booking,
+        recommended_message=excluded.recommended_message,
+        priority_order=excluded.priority_order,
+        updated_by=excluded.updated_by,
+        updated_at=now()
+      returning *`,
+      [
+        value.serviceId,
+        value.active,
+        value.commercialName,
+        value.shortDescription,
+        value.detailedDescription,
+        value.initialPrice,
+        value.estimatedDurationMinutes,
+        value.requiresAssessment,
+        value.requiresDeposit,
+        value.depositType,
+        value.depositValue,
+        value.referencePhotosRequired,
+        value.allowAutoQuote,
+        value.allowAutoBooking,
+        value.recommendedMessage,
+        value.priorityOrder,
+        user.id,
+      ],
+    );
+    await client.query(
+      `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
+       values($1,'update','ai_service_settings',$2,$3)`,
+      [user.id, rows[0].id, JSON.stringify(value)],
+    ).catch(() => null);
+    return rows[0];
+  });
+}
+
 export async function getAiBase() {
   await ensureAiWhatsappSchema();
   const [services, plans, coupons, flows, conversations, logs] = await Promise.all([
     query(
       `select s.id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
+        ais.id as ai_service_settings_id,
         coalesce(ais.active,false) as ai_active,coalesce(ais.commercial_name,s.name) as commercial_name,
-        ais.short_description,ais.allow_auto_quote,ais.allow_auto_booking,ais.requires_assessment,ais.requires_deposit,
-        ais.priority_order
+        ais.short_description,ais.detailed_description,ais.initial_price,ais.estimated_duration_minutes,
+        ais.allow_auto_quote,ais.allow_auto_booking,ais.requires_assessment,ais.requires_deposit,
+        ais.deposit_type,ais.deposit_value,ais.reference_photos_required,ais.recommended_message,ais.priority_order
        from public.services s
        left join public.ai_service_settings ais on ais.service_id=s.id
        order by s.active desc,coalesce(ais.priority_order,100),s.name`,

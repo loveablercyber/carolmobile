@@ -4,6 +4,7 @@ import {
   defaultAiSettings,
   getAiPanel,
   getAiSettings,
+  saveAiServiceSettings,
   saveAiSettings,
 } from "../server/lib/ai-whatsapp.js";
 import { generateGeminiText } from "../server/lib/gemini-client.js";
@@ -26,6 +27,10 @@ async function mutate(user, resource, body) {
   if (resource === "settings") {
     const settings = await saveAiSettings(user, body);
     return { settings, panel: await getAiPanel() };
+  }
+  if (resource === "service-settings") {
+    const service = await saveAiServiceSettings(user, body);
+    return { service, panel: await getAiPanel() };
   }
   if (resource === "action") {
     const action = clean(body.action);

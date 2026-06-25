@@ -105,6 +105,28 @@ type AiTestResponse = {
     usage?: Record<string, any> | null;
   };
 };
+type AiServiceMutationResponse = {
+  data: { service: Record<string, any>; panel: AiPanelData };
+};
+
+type ServiceForm = {
+  serviceId: string;
+  active: boolean;
+  commercialName: string;
+  shortDescription: string;
+  detailedDescription: string;
+  initialPrice: string;
+  estimatedDurationMinutes: string;
+  requiresAssessment: boolean;
+  requiresDeposit: boolean;
+  depositType: string;
+  depositValue: string;
+  referencePhotosRequired: boolean;
+  allowAutoQuote: boolean;
+  allowAutoBooking: boolean;
+  recommendedMessage: string;
+  priorityOrder: string;
+};
 
 const adminTabs = [
   { id: "connection", label: "Conexão", icon: MessageCircle },
@@ -579,7 +601,10 @@ function AiAdminPanel({
       />
     );
 
-  if (activeTab === "base") return <BaseKnowledgeTab panel={panel} />;
+  if (activeTab === "base")
+    return (
+      <BaseKnowledgeTab panel={panel} onPanel={applyPanel} notify={notify} />
+    );
   if (activeTab === "flows") return <FlowsTab panel={panel} />;
   if (activeTab === "conversations") return <ConversationsTab panel={panel} />;
   if (activeTab === "logs") return <LogsTab panel={panel} reload={load} />;
@@ -870,30 +895,58 @@ function AiAdminPanel({
   );
 }
 
-function BaseKnowledgeTab({ panel }: { panel: AiPanelData }) {
+function BaseKnowledgeTab({
+  panel,
+  onPanel,
+  notify,
+}: {
+  panel: AiPanelData;
+  onPanel: (panel: AiPanelData) => void;
+  notify: (message: string) => void;
+}) {
+  const [savingServiceId, setSavingServiceId] = useState("");
+
+  const saveService = async (form: ServiceForm) => {
+    setSavingServiceId(form.serviceId);
+    try {
+      const result = await apiFetch<AiServiceMutationResponse>(
+        "/api/ai-whatsapp?resource=service-settings",
+        { method: "POST", body: JSON.stringify(form) },
+      );
+      onPanel(result.data.panel);
+      notify("Serviço salvo na Base de Atendimento.");
+      return true;
+    } catch (error) {
+      console.error("AI WhatsApp service settings error", error);
+      notify(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível salvar o serviço para a IA.",
+      );
+      return false;
+    } finally {
+      setSavingServiceId("");
+    }
+  };
+
   return (
     <div className="grid gap-5 xl:grid-cols-3">
       <section className="surface p-6 xl:col-span-2">
         <SectionHeading title="Serviços usados pela IA" />
+        <p className="muted mb-5 text-sm">
+          Libere apenas serviços reais do catálogo. A IA só pode citar valores e
+          descrições salvos aqui.
+        </p>
         {panel.base.services.length ? (
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-4">
             {panel.base.services.map((service) => (
-              <div key={service.id} className="rounded-2xl bg-warm p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <b className="text-sm">{service.commercial_name || service.name}</b>
-                  <Badge tone={service.ai_active ? "green" : "neutral"}>
-                    {service.ai_active ? "IA ativa" : "não usado"}
-                  </Badge>
-                </div>
-                <p className="mt-2 line-clamp-3 text-xs text-stone-500">
-                  {service.short_description || service.description || "Sem descrição cadastrada."}
-                </p>
-                <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-stone-500">
-                  <span>{formatMoney(service.base_price)}</span>
-                  <span>{service.duration_minutes || service.estimated_duration_minutes || "—"} min</span>
-                  {service.requires_assessment && <span>Avaliação obrigatória</span>}
-                </div>
-              </div>
+              <ServiceSettingsCard
+                key={service.id}
+                service={service}
+                saving={savingServiceId === service.id}
+                disabled={!!savingServiceId}
+                onSave={saveService}
+              />
             ))}
           </div>
         ) : (
@@ -930,6 +983,239 @@ function BaseKnowledgeTab({ panel }: { panel: AiPanelData }) {
         </div>
       </section>
     </div>
+  );
+}
+
+function serviceToForm(service: Record<string, any>): ServiceForm {
+  return {
+    serviceId: String(service.id || ""),
+    active: Boolean(service.ai_active),
+    commercialName: String(service.commercial_name || service.name || ""),
+    shortDescription: String(
+      service.short_description || service.description || "",
+    ),
+    detailedDescription: String(
+      service.detailed_description || service.description || "",
+    ),
+    initialPrice: String(service.initial_price ?? service.base_price ?? ""),
+    estimatedDurationMinutes: String(
+      service.estimated_duration_minutes ?? service.duration_minutes ?? "",
+    ),
+    requiresAssessment: Boolean(service.requires_assessment),
+    requiresDeposit: Boolean(service.requires_deposit),
+    depositType: String(service.deposit_type || "amount"),
+    depositValue: String(service.deposit_value ?? service.deposit_amount ?? 0),
+    referencePhotosRequired: Boolean(service.reference_photos_required),
+    allowAutoQuote: Boolean(service.allow_auto_quote),
+    allowAutoBooking: Boolean(service.allow_auto_booking),
+    recommendedMessage: String(service.recommended_message || ""),
+    priorityOrder: String(service.priority_order || 100),
+  };
+}
+
+function ServiceSettingsCard({
+  service,
+  saving,
+  disabled,
+  onSave,
+}: {
+  service: Record<string, any>;
+  saving: boolean;
+  disabled: boolean;
+  onSave: (form: ServiceForm) => Promise<boolean>;
+}) {
+  const [form, setForm] = useState<ServiceForm>(() => serviceToForm(service));
+
+  useEffect(() => {
+    setForm(serviceToForm(service));
+  }, [service]);
+
+  const set = <K extends keyof ServiceForm>(key: K, value: ServiceForm[K]) => {
+    setForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const ok = await onSave(form);
+    if (!ok) setForm(serviceToForm(service));
+  };
+
+  const disabledAll = disabled || saving;
+  const catalogInactive = service.active === false;
+
+  return (
+    <form onSubmit={submit} className="rounded-[24px] bg-warm p-4">
+      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <b className="text-sm">{service.name}</b>
+            <Badge tone={form.active ? "green" : "neutral"}>
+              {form.active ? "IA ativa" : "não usado"}
+            </Badge>
+            {catalogInactive && <Badge tone="rose">catálogo inativo</Badge>}
+          </div>
+          <p className="mt-1 text-xs text-stone-500">
+            Catálogo: {formatMoney(service.base_price)} •{" "}
+            {service.duration_minutes || "—"} min
+          </p>
+        </div>
+        <label className="flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-xs font-bold text-stone-600">
+          <input
+            type="checkbox"
+            checked={form.active}
+            disabled={disabledAll || (catalogInactive && !form.active)}
+            onChange={(event) => set("active", event.target.checked)}
+          />
+          Ativo no WhatsApp
+        </label>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <Field label="Nome comercial">
+          <input
+            className="field bg-white"
+            value={form.commercialName}
+            disabled={disabledAll}
+            onChange={(event) => set("commercialName", event.target.value)}
+          />
+        </Field>
+        <Field label="Valor inicial">
+          <input
+            className="field bg-white"
+            type="number"
+            min={0}
+            step="0.01"
+            value={form.initialPrice}
+            disabled={disabledAll}
+            onChange={(event) => set("initialPrice", event.target.value)}
+          />
+        </Field>
+        <Field label="Duração estimada em minutos">
+          <input
+            className="field bg-white"
+            type="number"
+            min={5}
+            max={720}
+            value={form.estimatedDurationMinutes}
+            disabled={disabledAll}
+            onChange={(event) =>
+              set("estimatedDurationMinutes", event.target.value)
+            }
+          />
+        </Field>
+        <Field label="Ordem de prioridade">
+          <input
+            className="field bg-white"
+            type="number"
+            min={1}
+            max={999}
+            value={form.priorityOrder}
+            disabled={disabledAll}
+            onChange={(event) => set("priorityOrder", event.target.value)}
+          />
+        </Field>
+      </div>
+
+      <Field label="Descrição curta para WhatsApp">
+        <textarea
+          className="field min-h-20 bg-white"
+          value={form.shortDescription}
+          disabled={disabledAll}
+          onChange={(event) => set("shortDescription", event.target.value)}
+        />
+      </Field>
+
+      <Field label="Descrição detalhada">
+        <textarea
+          className="field min-h-24 bg-white"
+          value={form.detailedDescription}
+          disabled={disabledAll}
+          onChange={(event) => set("detailedDescription", event.target.value)}
+        />
+      </Field>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <CheckField
+          label="Exige avaliação"
+          checked={form.requiresAssessment}
+          disabled={disabledAll}
+          onChange={(checked) => set("requiresAssessment", checked)}
+        />
+        <CheckField
+          label="Fotos de referência obrigatórias"
+          checked={form.referencePhotosRequired}
+          disabled={disabledAll}
+          onChange={(checked) => set("referencePhotosRequired", checked)}
+        />
+        <CheckField
+          label="Permitir pré-orçamento automático"
+          checked={form.allowAutoQuote}
+          disabled={disabledAll}
+          onChange={(checked) => set("allowAutoQuote", checked)}
+        />
+        <CheckField
+          label="Permitir pré-agendamento automático"
+          checked={form.allowAutoBooking}
+          disabled={disabledAll}
+          onChange={(checked) => set("allowAutoBooking", checked)}
+        />
+        <CheckField
+          label="Exige sinal"
+          checked={form.requiresDeposit}
+          disabled={disabledAll}
+          onChange={(checked) => set("requiresDeposit", checked)}
+        />
+      </div>
+
+      {form.requiresDeposit && (
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <Field label="Tipo do sinal">
+            <select
+              className="field bg-white"
+              value={form.depositType}
+              disabled={disabledAll}
+              onChange={(event) => set("depositType", event.target.value)}
+            >
+              <option value="amount">Valor fixo</option>
+              <option value="percentage">Percentual</option>
+            </select>
+          </Field>
+          <Field label="Valor do sinal">
+            <input
+              className="field bg-white"
+              type="number"
+              min={0}
+              step="0.01"
+              value={form.depositValue}
+              disabled={disabledAll}
+              onChange={(event) => set("depositValue", event.target.value)}
+            />
+          </Field>
+        </div>
+      )}
+
+      <Field label="Mensagem recomendada">
+        <textarea
+          className="field min-h-20 bg-white"
+          value={form.recommendedMessage}
+          disabled={disabledAll}
+          onChange={(event) => set("recommendedMessage", event.target.value)}
+          placeholder="Ex.: Ideal para quem busca mais volume com acabamento discreto."
+        />
+      </Field>
+
+      {catalogInactive && (
+        <p className="mt-3 rounded-xl bg-rose-50 p-3 text-xs font-semibold text-rose-700">
+          Este serviço está inativo no catálogo real. Reative no cadastro de
+          serviços antes de liberar para a IA.
+        </p>
+      )}
+
+      <button disabled={disabledAll} className="btn-primary mt-4">
+        <ShieldCheck size={15} />
+        {saving ? "Salvando serviço…" : "Salvar serviço"}
+      </button>
+    </form>
   );
 }
 
@@ -1105,10 +1391,12 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function CheckField({
   label,
   checked,
+  disabled = false,
   onChange,
 }: {
   label: string;
   checked: boolean;
+  disabled?: boolean;
   onChange: (checked: boolean) => void;
 }) {
   return (
@@ -1116,6 +1404,7 @@ function CheckField({
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
       />
       {label}
