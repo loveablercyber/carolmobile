@@ -1132,7 +1132,10 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     }
 
     let success = false;
-    let retries = currentProvider === "gemini" ? settings.maxRetries ?? 2 : 2;
+    let retries =
+      currentProvider === "gemini"
+        ? settings.maxRetries ?? 2
+        : Math.max(0, (runtimeStatus.keyCount || 1) - 1);
     let currentAttempt = 0;
 
     providerStartedAt = new Date();
@@ -1164,7 +1167,6 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
             model: settings.primaryProvider === "groq" ? settings.model : settings.fallbackModel,
             timeoutMs: settings.timeoutMs || 7000,
             maxTokens: settings.maxResponseTokens || 220,
-            apiKeyIndex: currentAttempt, // Rotate key index on retry
           });
           finalResponse = result.text;
           finalModel = result.model;
@@ -1183,6 +1185,10 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
         errorCode = err.code || null;
 
         if (err.code === "RESOURCE_EXHAUSTED" || err.status === 429) {
+          if (currentProvider === "groq" && currentAttempt < retries) {
+            currentAttempt++;
+            continue;
+          }
           // Open circuit breaker for this provider
           console.log(`Rate limit detected on ${currentProvider}. Opening circuit breaker.`);
           await activateCircuitBreaker(

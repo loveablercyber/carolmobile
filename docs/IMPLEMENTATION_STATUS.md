@@ -750,3 +750,14 @@ Trabalhar somente em **saúde dos provedores IA em produção**: corrigir a falh
 ## Próxima etapa recomendada (Módulo específico)
 
 Trabalhar somente em **configuração Groq no Vercel Production**: adicionar `GROQ_API_KEY`, `GROQ_ENABLED=true` e `GROQ_MODEL=llama-3.1-8b-instant` ou outro modelo válido, publicar novo deploy e testar uma pergunta generativa que não esteja coberta pelas respostas locais.
+
+## Resultado desta etapa (Fallback Groq com rotação de chaves)
+
+- **Groq configurado em produção:** quatro chaves foram armazenadas como segredos separados no Vercel Production, usando `GROQ_API_KEY` e `GROQ_API_KEY_1` a `GROQ_API_KEY_3`.
+- **Rotação habilitada e corrigida:** o cliente Groq carrega a chave principal e as chaves numeradas, remove duplicatas e passa à próxima chave a cada chamada. Se uma chave retornar quota/limite 429, o motor tenta as demais antes de abrir o circuit breaker do provedor.
+- **Provider habilitado:** `GROQ_ENABLED=true` e `GROQ_MODEL=llama-3.1-8b-instant` foram adicionados ao ambiente Production.
+- **Segurança:** as chaves não foram adicionadas ao repositório, ao frontend nem ao arquivo de status; permanecem somente como variáveis criptografadas no Vercel.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **validação real do fallback Groq no WhatsApp**: enviar uma pergunta privada generativa que não corresponda aos templates locais e confirmar em `ai_request_logs` o provider `groq`, resposta enviada pelo Baileys e conversa ainda com `ai_enabled=true`.

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { afterEach, beforeEach } from "node:test";
 import { getGeminiKeys } from "../server/lib/gemini-client.js";
-import { getGroqKeys } from "../server/lib/groq-client.js";
+import { generateGroqText, getGroqKeys } from "../server/lib/groq-client.js";
 import { pool } from "../server/lib/db.js";
 import { processIncomingWhatsAppWebhook } from "../server/lib/whatsapp-ai-engine.js";
 import { invalidateAiSettingsCache } from "../server/lib/ai-whatsapp.js";
@@ -60,6 +60,26 @@ test("getGroqKeys reads comma-separated and numbered variables correctly", () =>
 
   const keys = getGroqKeys();
   assert.deepEqual(keys, ["gkey1", "gkey2", "gkey3", "gkey5"]);
+});
+
+test("generateGroqText rotates numbered keys between calls", async () => {
+  process.env.GROQ_ENABLED = "true";
+  process.env.GROQ_API_KEY = "gkey-primary";
+  process.env.GROQ_API_KEY_1 = "gkey-secondary";
+  const authorizations = [];
+
+  globalThis.fetch = async (_url, options) => {
+    authorizations.push(options.headers.Authorization);
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content: "Resposta Groq" } }] }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  await generateGroqText({ systemPrompt: "Sistema", message: "Mensagem" });
+  await generateGroqText({ systemPrompt: "Sistema", message: "Mensagem" });
+
+  assert.equal(new Set(authorizations).size, 2);
 });
 
 test("processIncomingWhatsAppWebhook responds with simple greeting template immediately", async () => {
@@ -151,10 +171,11 @@ test("processIncomingWhatsAppWebhook responds with simple greeting template imme
   assert.equal(result.reason, "greeting_template");
 });
 
-test("processIncomingWhatsAppWebhook falls back to Groq when Gemini rate limits with 429 and triggers Circuit Breaker", async () => {
+test("processIncomingWhatsAppWebhook falls back to Groq and rotates its key after a 429", async () => {
   let cbUpdated = false;
   let geminiCalled = false;
-  let groqCalled = false;
+  let groqCalls = 0;
+  const groqAuthorizations = [];
 
   const mockSettings = {
     id: "settings-123",
@@ -251,7 +272,14 @@ test("processIncomingWhatsAppWebhook falls back to Groq when Gemini rate limits 
 
     // Groq API
     if (url.includes("api.groq.com")) {
-      groqCalled = true;
+      groqCalls++;
+      groqAuthorizations.push(options.headers.Authorization);
+      if (groqCalls === 1) {
+        return new Response(
+          JSON.stringify({ error: { message: "Rate limit for this key." } }),
+          { status: 429, headers: { "content-type": "application/json" } },
+        );
+      }
       return new Response(JSON.stringify({
         choices: [{ message: { content: "Olá! Sou o assistente via Llama (Groq)." } }],
         usage: { prompt_tokens: 10, completion_tokens: 5 }
@@ -267,6 +295,7 @@ test("processIncomingWhatsAppWebhook falls back to Groq when Gemini rate limits 
   process.env.GEMINI_API_KEY = "gemini-key";
   process.env.GROQ_ENABLED = "true";
   process.env.GROQ_API_KEY = "groq-key";
+  process.env.GROQ_API_KEY_1 = "groq-key-2";
 
   const payload = {
     from: "5511999999999@s.whatsapp.net",
@@ -280,7 +309,8 @@ test("processIncomingWhatsAppWebhook falls back to Groq when Gemini rate limits 
   assert.equal(result.replied, true);
   assert.equal(result.reason, "groq_reply");
   assert.equal(geminiCalled, true);
-  assert.equal(groqCalled, true);
+  assert.equal(groqCalls, 2);
+  assert.equal(new Set(groqAuthorizations).size, 2);
   assert.equal(cbUpdated, true);
 });
 

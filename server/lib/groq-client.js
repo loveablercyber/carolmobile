@@ -8,6 +8,8 @@ export class GroqClientError extends Error {
   }
 }
 
+let nextGroqKeyIndex = 0;
+
 export function getGroqKeys() {
   const keys = [];
   const primaryKey = String(process.env.GROQ_API_KEY || "").trim();
@@ -74,7 +76,13 @@ export async function generateGroqText({
     });
 
   const keys = config.keys;
-  const idx = apiKeyIndex !== null ? apiKeyIndex % keys.length : Math.floor(Math.random() * keys.length);
+  const idx =
+    apiKeyIndex !== null
+      ? ((apiKeyIndex % keys.length) + keys.length) % keys.length
+      : nextGroqKeyIndex % keys.length;
+  if (apiKeyIndex === null) {
+    nextGroqKeyIndex = (idx + 1) % keys.length;
+  }
   const apiKey = keys[idx];
   const selectedModel = String(model || config.model).trim();
   const endpoint = "https://api.groq.com/openai/v1/chat/completions";
