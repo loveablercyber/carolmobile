@@ -761,3 +761,10 @@ Trabalhar somente em **configuração Groq no Vercel Production**: adicionar `GR
 ## Próxima etapa recomendada (Módulo específico)
 
 Trabalhar somente em **validação real do fallback Groq no WhatsApp**: enviar uma pergunta privada generativa que não corresponda aos templates locais e confirmar em `ai_request_logs` o provider `groq`, resposta enviada pelo Baileys e conversa ainda com `ai_enabled=true`.
+
+## Resultado desta etapa (Respostas inteligentes sem bloqueio em Fibra Russa)
+
+- **Resposta fixa removida:** a menção a Fibra Russa não encerra mais o processamento com um template local repetitivo; a pergunta segue para Gemini/Groq usando o catálogo, a base de conhecimento e o contexto da conversa.
+- **Mensagem atual priorizada:** o prompt agora determina explicitamente que uma mudança de assunto deve ser respondida sem repetir o serviço anterior e que Fibra Russa só pode ser assumida quando mencionada ou quando houver continuação inequívoca.
+- **Histórico descontaminado:** a mensagem atual deixou de ser duplicada no histórico enviado ao provedor e mensagens temporárias de espera deixaram de entrar no contexto.
+- **Regra local preservada:** somente a consulta de disponibilidade para hoje continua com resposta determinística, para não inventar vagas sem consultar uma agenda real.

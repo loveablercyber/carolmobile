@@ -155,7 +155,7 @@ test("builds local response for today's availability without promising schedule"
   assert.match(response, /manhã, tarde ou noite/i);
 });
 
-test("builds local response for fibra russa keyword and asks next intent", () => {
+test("routes fibra russa questions to the AI provider instead of a fixed local reply", () => {
   const response = buildLocalIntentResponse("Você faz aplicação de fibra russa?", {
     services: [
       {
@@ -167,8 +167,5 @@ test("builds local response for fibra russa keyword and asks next intent", () =>
     ],
   });
 
-  assert.match(response, /Fibra Russa/i);
-  assert.match(response, /aplicação, manutenção/i);
-  assert.match(response, /explicação rápida/i);
-  assert.match(response, /volume, comprimento/i);
+  assert.equal(response, null);
 });

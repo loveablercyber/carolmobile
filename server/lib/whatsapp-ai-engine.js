@@ -180,14 +180,17 @@ async function logMessage(client, { conversationId, messageId, eventType, status
   );
 }
 
-async function loadRecentHistory(conversationId) {
+async function loadRecentHistory(conversationId, currentMessageId = null) {
   const { rows } = await query(
     `select direction,sender_type,body,created_at
        from public.whatsapp_messages
-      where conversation_id=$1 and body is not null
+      where conversation_id=$1
+        and body is not null
+        and ($2::uuid is null or id <> $2::uuid)
+        and coalesce(payload->>'reason','') <> 'typing_placeholder'
       order by created_at desc
       limit 8`,
-    [conversationId],
+    [conversationId, currentMessageId],
   );
   return rows.reverse();
 }
@@ -272,6 +275,7 @@ export function buildGeminiConversationMessage({
     `Cliente já cadastrada: ${knownClient ? "sim" : "não"}.`,
     historyText ? `Histórico recente:\n${historyText}` : "Histórico recente: primeira mensagem desta conversa.",
     `Mensagem atual da cliente:\n${clean(incomingText)}`,
+    "A mensagem atual é a prioridade. Use o histórico apenas para continuidade; se a cliente mudar de assunto, responda ao novo assunto sem repetir o serviço anterior. Não presuma que a dúvida é sobre Fibra Russa quando a mensagem atual não mencionar essa técnica nem for uma continuação inequívoca dela.",
     "Nesta etapa, não crie agendamento, não prometa horário e não envie link de pagamento. Oriente e diga que a equipe confirma quando necessário. Responda em até 700 caracteres, em português do Brasil, sem inventar dados. Se a cliente perguntar algo sobre técnicas ou dúvidas de Mega Hair, use a resposta aprovada e faça até duas perguntas curtas para personalização. Se for recomendado avaliação, sugira agendar de forma natural.",
   ]
     .filter(Boolean)
@@ -468,30 +472,6 @@ function includesAny(normalizedText, terms) {
   return terms.some((term) => normalizedText.includes(term));
 }
 
-function findAiService(base, terms) {
-  const normalizedTerms = terms.map(normalizeText).filter(Boolean);
-  return (base.services || []).find((service) => {
-    if (!service.active) return false;
-    const text = normalizeText(
-      [
-        service.commercial_name,
-        service.name,
-        service.short_description,
-        service.detailed_description,
-        service.description,
-        service.recommended_message,
-      ]
-        .filter(Boolean)
-        .join(" "),
-    );
-    return normalizedTerms.some((term) => text.includes(term));
-  });
-}
-
-function serviceName(service, fallback) {
-  return clean(service?.commercial_name || service?.name || fallback);
-}
-
 export function buildLocalIntentResponse(text, base = {}) {
   const normalized = normalizeText(text);
   if (!normalized) return null;
@@ -514,24 +494,6 @@ export function buildLocalIntentResponse(text, base = {}) {
       "Consigo te ajudar com isso 😊",
       "Para horário de hoje, eu não vou prometer disponibilidade sem consultar a agenda real.",
       "Me diga qual serviço você quer fazer — aplicação, manutenção ou avaliação — e qual período fica melhor para você: manhã, tarde ou noite. A equipe confirma o encaixe certinho.",
-    ].join("\n\n");
-  }
-
-  const mentionsFibraRussa =
-    normalized.includes("fibra russa") ||
-    normalized.includes("fibrarussa") ||
-    (normalized.includes("fibra") && normalized.includes("russa"));
-
-  if (mentionsFibraRussa) {
-    const service = findAiService(base, ["fibra russa"]);
-    const intro = service
-      ? `Sim, temos ${serviceName(service, "Fibra Russa")} no catálogo da Carol Sol.`
-      : "Sim, posso te orientar sobre Fibra Russa por aqui.";
-
-    return [
-      `${intro} ✨`,
-      "Você quer fazer aplicação, manutenção ou prefere uma explicação rápida de como funciona o serviço?",
-      "Se for aplicação, me diga também se é sua primeira vez com Mega Hair e se você busca mais volume, comprimento ou os dois.",
     ].join("\n\n");
   }
 
@@ -1041,7 +1003,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   }, 4000);
 
   // 9. Load AI Context & Prompt
-  const history = await loadRecentHistory(conversationId);
+  const history = await loadRecentHistory(conversationId, inboundMessageId);
   const commercialContext = summarizeAiCommercialContext(base);
   const systemPrompt = buildRuntimePrompt(settings);
 
