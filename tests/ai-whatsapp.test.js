@@ -10,7 +10,7 @@ import {
   normalizeAiServiceSettingsInput,
   normalizeAiSettingsInput,
 } from "../server/lib/ai-whatsapp.js";
-import { geminiPublicStatus } from "../server/lib/gemini-client.js";
+import { openAiPublicStatus } from "../server/lib/openai-client.js";
 
 test("static AI WhatsApp migration includes runtime hardening tables and router columns", () => {
   const migration = readFileSync(
@@ -46,6 +46,8 @@ test("static AI WhatsApp migration includes runtime hardening tables and router 
       new RegExp(`add column if not exists ${column}\\b`, "i"),
     );
   }
+  assert.match(migration, /provider text not null default 'openai'/i);
+  assert.match(migration, /model text not null default 'gpt-5\.4-mini'/i);
 });
 
 test("normalizes AI WhatsApp settings and preserves explicit false values", () => {
@@ -71,6 +73,10 @@ test("normalizes AI WhatsApp settings and preserves explicit false values", () =
   assert.equal(normalized.maxIdleMinutes, 5);
   assert.equal(normalized.aiStartTime, "08:30");
   assert.equal(normalized.aiEndTime, "18:00");
+  assert.equal(normalized.primaryProvider, "openai");
+  assert.equal(normalized.primaryModel, normalized.model);
+  assert.equal(normalized.fallbackProvider, "openai");
+  assert.equal(normalized.fallbackEnabled, false);
 });
 
 test("rejects invalid AI WhatsApp personality and short prompt", () => {
@@ -102,29 +108,29 @@ test("builds runtime prompt with anti-hallucination rules and no secrets", () =>
   assert.doesNotMatch(prompt, /apiKey/i);
 });
 
-test("Gemini public status never exposes API key", () => {
-  const previousKey = process.env.GEMINI_API_KEY;
-  const previousEnabled = process.env.GEMINI_ENABLED;
-  const previousModel = process.env.GEMINI_MODEL;
+test("OpenAI public status never exposes API key", () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousEnabled = process.env.OPENAI_ENABLED;
+  const previousModel = process.env.OPENAI_MODEL;
 
-  process.env.GEMINI_API_KEY = "secret-test-key";
-  process.env.GEMINI_ENABLED = "true";
-  process.env.GEMINI_MODEL = "gemini-test-model";
+  process.env.OPENAI_API_KEY = "secret-test-key";
+  process.env.OPENAI_ENABLED = "true";
+  process.env.OPENAI_MODEL = "gpt-5.4-mini";
 
   try {
-    const status = geminiPublicStatus();
+    const status = openAiPublicStatus();
     assert.equal(status.configured, true);
     assert.equal(status.enabled, true);
-    assert.equal(status.model, "gemini-test-model");
+    assert.equal(status.model, "gpt-5.4-mini");
     assert.equal("apiKey" in status, false);
     assert.equal(JSON.stringify(status).includes("secret-test-key"), false);
   } finally {
-    if (previousKey === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousKey;
-    if (previousEnabled === undefined) delete process.env.GEMINI_ENABLED;
-    else process.env.GEMINI_ENABLED = previousEnabled;
-    if (previousModel === undefined) delete process.env.GEMINI_MODEL;
-    else process.env.GEMINI_MODEL = previousModel;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+    if (previousEnabled === undefined) delete process.env.OPENAI_ENABLED;
+    else process.env.OPENAI_ENABLED = previousEnabled;
+    if (previousModel === undefined) delete process.env.OPENAI_MODEL;
+    else process.env.OPENAI_MODEL = previousModel;
   }
 });
 

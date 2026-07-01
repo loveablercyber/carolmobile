@@ -4,10 +4,8 @@ import {
   ensureAiWhatsappSchema,
   getAiCommercialBase,
   getAiSettings,
-  invalidateAiSettingsCache,
 } from "./ai-whatsapp.js";
-import { generateGeminiText, geminiPublicStatus } from "./gemini-client.js";
-import { generateGroqText, groqPublicStatus } from "./groq-client.js";
+import { generateOpenAiText, openAiPublicStatus } from "./openai-client.js";
 import { sendBaileysTextMessage, sendBaileysPresence } from "./baileys-client.js";
 
 const MAX_GEMINI_MESSAGE_CHARS = 4000;
@@ -254,7 +252,7 @@ export function summarizeAiCommercialContext(base) {
   ].join("\n\n");
 }
 
-export function buildGeminiConversationMessage({
+export function buildAiConversationMessage({
   incomingText,
   history = [],
   commercialContext,
@@ -398,7 +396,7 @@ async function recordAiInteraction({ conversationId, messageId, model, inputSumm
       model || null,
       clean(inputSummary).slice(0, 1000),
       clean(outputSummary).slice(0, 1000),
-      JSON.stringify(usage ? [{ tool: "gemini", usage }] : []),
+      JSON.stringify(usage ? [{ tool: "openai", usage }] : []),
       status,
       errorMessage,
     ],
@@ -498,22 +496,6 @@ export function buildLocalIntentResponse(text, base = {}) {
   }
 
   return null;
-}
-
-async function activateCircuitBreaker(provider, cooldownSeconds = 60) {
-  const until = new Date(Date.now() + cooldownSeconds * 1000).toISOString();
-  if (provider === "gemini") {
-    await query(
-      "update public.ai_settings set gemini_circuit_breaker_until = $1 where business_id = 'default'",
-      [until],
-    );
-  } else if (provider === "groq") {
-    await query(
-      "update public.ai_settings set groq_circuit_breaker_until = $1 where business_id = 'default'",
-      [until],
-    );
-  }
-  invalidateAiSettingsCache();
 }
 
 function getRetryDelay(retryCount) {
@@ -1025,7 +1007,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     ].filter(Boolean).join("\n");
   }
 
-  const promptMessage = buildGeminiConversationMessage({
+  const promptMessage = buildAiConversationMessage({
     incomingText: concatenatedText,
     history: history.slice(-(settings.contextLimit || 8)),
     commercialContext,
@@ -1033,145 +1015,59 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     knownClient: Boolean(recorded.client),
   });
 
-  const providersOrder = [];
-  if (settings.primaryProvider === "groq") {
-    providersOrder.push("groq", "gemini");
-  } else {
-    providersOrder.push("gemini", "groq");
-  }
-
   let finalResponse = null;
-  let finalProvider = null;
+  const finalProvider = "openai";
   let finalModel = null;
   let finalUsage = null;
   let retryCountTotal = 0;
-  let fallbackUsed = false;
+  const fallbackUsed = false;
   let errorMsg = null;
   let errorCode = null;
   let providerStartedAt = null;
   let providerFinishedAt = null;
 
-  for (let pIdx = 0; pIdx < providersOrder.length; pIdx++) {
-    const currentProvider = providersOrder[pIdx];
-    const isFallbackStep = pIdx > 0;
-
-    // Skip if fallback disabled
-    if (isFallbackStep && !settings.fallbackEnabled) {
-      break;
-    }
-
-    const runtimeStatus = currentProvider === "gemini" ? geminiPublicStatus() : groqPublicStatus();
-    if (!runtimeStatus.enabled || !runtimeStatus.configured) {
-      const missingReason = !runtimeStatus.enabled ? "disabled" : "not_configured";
-      console.warn(`AI provider ${currentProvider} skipped: ${missingReason}.`, {
-        enabled: runtimeStatus.enabled,
-        configured: runtimeStatus.configured,
-        model: runtimeStatus.model,
-      });
-      errorMsg =
-        currentProvider === "gemini"
-          ? "Gemini não está habilitado/configurado no ambiente."
-          : "Groq não está habilitado/configurado no ambiente.";
-      errorCode = `${currentProvider.toUpperCase()}_${missingReason.toUpperCase()}`;
-      if (!isFallbackStep) fallbackUsed = true;
-      continue;
-    }
-
-    // Check circuit breaker
-    const isGeminiInCooldown =
-      currentProvider === "gemini" &&
-      settings.geminiCircuitBreakerUntil &&
-      new Date(settings.geminiCircuitBreakerUntil) > new Date();
-    const isGroqInCooldown =
-      currentProvider === "groq" &&
-      settings.groqCircuitBreakerUntil &&
-      new Date(settings.groqCircuitBreakerUntil) > new Date();
-
-    if (isGeminiInCooldown || isGroqInCooldown) {
-      console.log(`Skipping provider ${currentProvider} due to active circuit breaker.`);
-      fallbackUsed = true;
-      continue;
-    }
-
-    let success = false;
-    let retries =
-      currentProvider === "gemini"
-        ? settings.maxRetries ?? 2
-        : Math.max(0, (runtimeStatus.keyCount || 1) - 1);
+  const runtimeStatus = openAiPublicStatus();
+  if (!runtimeStatus.enabled || !runtimeStatus.configured) {
+    const missingReason = !runtimeStatus.enabled ? "disabled" : "not_configured";
+    console.warn(`AI provider openai skipped: ${missingReason}.`, {
+      enabled: runtimeStatus.enabled,
+      configured: runtimeStatus.configured,
+      model: runtimeStatus.model,
+    });
+    errorMsg = "OpenAI não está habilitada/configurada no ambiente.";
+    errorCode = `OPENAI_${missingReason.toUpperCase()}`;
+  } else {
+    const retries = settings.maxRetries ?? 2;
     let currentAttempt = 0;
-
     providerStartedAt = new Date();
 
-    while (currentAttempt <= retries && !success) {
+    while (currentAttempt <= retries && !finalResponse) {
       try {
         if (currentAttempt > 0) {
           retryCountTotal++;
-          const delayTime = getRetryDelay(currentAttempt);
-          await delay(delayTime);
+          await delay(getRetryDelay(currentAttempt));
         }
-
-        if (currentProvider === "gemini") {
-          const result = await generateGeminiText({
-            systemPrompt,
-            message: promptMessage,
-            model: settings.primaryProvider === "gemini" ? settings.model : settings.primaryModel,
-            timeoutMs: settings.timeoutMs || 7000,
-            maxTokens: settings.maxResponseTokens || 220,
-            apiKeyIndex: currentAttempt, // Rotate key index on retry
-          });
-          finalResponse = result.text;
-          finalModel = result.model;
-          finalUsage = result.usage;
-        } else {
-          const result = await generateGroqText({
-            systemPrompt,
-            message: promptMessage,
-            model: settings.primaryProvider === "groq" ? settings.model : settings.fallbackModel,
-            timeoutMs: settings.timeoutMs || 7000,
-            maxTokens: settings.maxResponseTokens || 220,
-          });
-          finalResponse = result.text;
-          finalModel = result.model;
-          finalUsage = result.usage;
-        }
-
-        finalProvider = currentProvider;
-        success = true;
+        const result = await generateOpenAiText({
+          systemPrompt,
+          message: promptMessage,
+          model: settings.primaryModel || settings.model || runtimeStatus.model,
+          timeoutMs: settings.timeoutMs || 12000,
+          maxTokens: settings.maxResponseTokens || 300,
+        });
+        finalResponse = result.text;
+        finalModel = result.model;
+        finalUsage = result.usage;
       } catch (err) {
         console.error(
-          `AI provider ${currentProvider} failed (attempt ${currentAttempt + 1}/${retries + 1}): ${
-            err.message
-          }`,
+          `AI provider openai failed (attempt ${currentAttempt + 1}/${retries + 1}): ${err.message}`,
         );
         errorMsg = err.message;
         errorCode = err.code || null;
-
-        if (err.code === "RESOURCE_EXHAUSTED" || err.status === 429) {
-          if (currentProvider === "groq" && currentAttempt < retries) {
-            currentAttempt++;
-            continue;
-          }
-          // Open circuit breaker for this provider
-          console.log(`Rate limit detected on ${currentProvider}. Opening circuit breaker.`);
-          await activateCircuitBreaker(
-            currentProvider,
-            settings.circuitBreakerCooldownSeconds || 60,
-          );
-          break; // Don't retry, fall through to fallback provider immediately
-        }
-
+        if (err.code === "RESOURCE_EXHAUSTED" || err.status === 429 || err.status === 401) break;
         currentAttempt++;
       }
     }
-
     providerFinishedAt = new Date();
-
-    if (success) {
-      if (isFallbackStep) {
-        fallbackUsed = true;
-      }
-      break;
-    }
   }
 
   // Clear typing indicator placeholder timer
@@ -1200,11 +1096,13 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     const inputTokens = finalUsage
       ? finalUsage.promptTokenCount ||
         finalUsage.prompt_tokens ||
+        finalUsage.input_tokens ||
         Math.round(promptMessage.length / 4)
       : Math.round(promptMessage.length / 4);
     const outputTokens = finalUsage
       ? finalUsage.candidatesTokenCount ||
         finalUsage.completion_tokens ||
+        finalUsage.output_tokens ||
         Math.round(finalResponse.length / 4)
       : Math.round(finalResponse.length / 4);
 
@@ -1231,8 +1129,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       model: finalModel,
     };
   } else {
-    // BOTH Providers failed. Reply with a contingency message, but keep AI enabled.
-    console.error("All AI providers failed. Triggering contingency response.");
+    console.error("OpenAI provider failed. Triggering contingency response.");
 
     let contingencyReplied = false;
     if (settings.contingencyEnabled) {
@@ -1265,16 +1162,16 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     await logAiRequest({
       conversationId,
       messageId: inboundMessageId,
-      provider: providersOrder[0],
-      model: settings.model,
+      provider: "openai",
+      model: runtimeStatus.model,
       status: contingencyReplied ? "contingency_reply" : "provider_error",
       retryCount: retryCountTotal,
-      fallbackUsed: settings.fallbackEnabled,
+      fallbackUsed: false,
       queueLatencyMs,
       providerLatencyMs,
       totalLatencyMs,
-      errorCode: errorCode || "ALL_PROVIDERS_FAILED",
-      errorMessage: errorMsg || "All AI providers failed.",
+      errorCode: errorCode || "OPENAI_PROVIDER_FAILED",
+      errorMessage: errorMsg || "OpenAI provider failed.",
     });
 
     return {

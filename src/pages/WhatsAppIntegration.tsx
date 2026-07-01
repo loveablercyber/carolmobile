@@ -91,19 +91,11 @@ type AiSettings = {
 
 type AiPanelData = {
   status: {
-    gemini: {
+    openai: {
       provider: string;
       configured: boolean;
       enabled: boolean;
       model: string;
-      keyCount?: number;
-    };
-    groq: {
-      provider: string;
-      configured: boolean;
-      enabled: boolean;
-      model: string;
-      keyCount?: number;
     };
     database: { configured: boolean };
     ai: { enabled: boolean; active: boolean };
@@ -608,7 +600,7 @@ function AiAdminPanel({
     }
   };
 
-  const testGemini = async (event: FormEvent) => {
+  const testOpenAi = async (event: FormEvent) => {
     event.preventDefault();
     setSaving("test");
     setTestResult("");
@@ -618,13 +610,13 @@ function AiAdminPanel({
         { method: "POST", body: JSON.stringify({ message: testMessage }) },
       );
       setTestResult(result.data.response);
-      notify("Teste do Gemini concluído.");
+      notify("Teste da OpenAI concluído.");
     } catch (error) {
       console.error("AI WhatsApp test error", error);
       notify(
         error instanceof Error
           ? error.message
-          : "Não foi possível testar o Gemini.",
+          : "Não foi possível testar a OpenAI.",
       );
     } finally {
       setSaving("");
@@ -670,7 +662,7 @@ function AiAdminPanel({
           <div>
             <SectionHeading title="Atendimento IA" />
             <p className="muted max-w-2xl text-sm">
-              Configurações salvas no Supabase/Neon. A chave do Gemini permanece
+              Configurações salvas no Supabase/Neon. A chave da OpenAI permanece
               somente no backend.
             </p>
           </div>
@@ -681,14 +673,14 @@ function AiAdminPanel({
 
         <div className="grid gap-3 sm:grid-cols-3">
           <Info
-            label="Gemini"
-            value={panel.status.gemini.configured ? "configurado" : "sem chave"}
+            label="OpenAI"
+            value={panel.status.openai.configured ? "configurada" : "sem chave"}
           />
           <Info
             label="Ambiente"
-            value={panel.status.gemini.enabled ? "habilitado" : "desativado"}
+            value={panel.status.openai.enabled ? "habilitado" : "desativado"}
           />
-          <Info label="Modelo" value={panel.status.gemini.model} />
+          <Info label="Modelo" value={panel.status.openai.model} />
         </div>
 
         <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -706,7 +698,7 @@ function AiAdminPanel({
               onChange={(event) => updateField("salonName", event.target.value)}
             />
           </Field>
-          <Field label="Modelo Gemini">
+          <Field label="Modelo OpenAI">
             <input
               className="field"
               value={form.model}
@@ -909,23 +901,23 @@ function AiAdminPanel({
       <aside className="space-y-5">
         <section className="surface p-6">
           <SectionHeading title="Teste seguro" />
-          <form onSubmit={testGemini}>
+          <form onSubmit={testOpenAi}>
             <textarea
               className="field min-h-28"
               value={testMessage}
               onChange={(event) => setTestMessage(event.target.value)}
             />
             <button
-              disabled={!!saving || !panel.status.gemini.configured}
+              disabled={!!saving || !panel.status.openai.configured}
               className="btn-primary mt-3 w-full"
             >
               <Send size={15} />
-              {saving === "test" ? "Testando…" : "Testar Gemini"}
+              {saving === "test" ? "Testando…" : "Testar OpenAI"}
             </button>
           </form>
-          {!panel.status.gemini.configured && (
+          {!panel.status.openai.configured && (
             <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs font-semibold text-amber-800">
-              Configure GEMINI_API_KEY no ambiente do Vercel para liberar o
+              Configure OPENAI_API_KEY no ambiente do Vercel para liberar o
               teste real.
             </p>
           )}
@@ -1471,16 +1463,13 @@ function PerformanceSettingsTab({
   saveSettings: (event: FormEvent) => Promise<void>;
   saving: string;
 }) {
-  const isGeminiCbActive = form.geminiCircuitBreakerUntil && new Date(form.geminiCircuitBreakerUntil) > new Date();
-  const isGroqCbActive = form.groqCircuitBreakerUntil && new Date(form.groqCircuitBreakerUntil) > new Date();
-
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
       <form onSubmit={saveSettings} className="surface p-6">
         <div className="mb-5">
           <SectionHeading title="Configurações de Provedor e Performance" />
           <p className="muted text-sm">
-            Configure as opções do roteador de IA, limites de tokens, timeouts e políticas de contingência.
+            Configure a OpenAI, os limites de tokens, timeouts e a política de contingência.
           </p>
         </div>
 
@@ -1491,8 +1480,7 @@ function PerformanceSettingsTab({
               value={form.primaryProvider}
               onChange={(e) => updateField("primaryProvider", e.target.value)}
             >
-              <option value="gemini">Gemini (Google)</option>
-              <option value="groq">Groq (Llama)</option>
+              <option value="openai">OpenAI (GPT)</option>
             </select>
           </Field>
           <Field label="Modelo Principal">
@@ -1500,17 +1488,17 @@ function PerformanceSettingsTab({
               className="field"
               value={form.primaryModel}
               onChange={(e) => updateField("primaryModel", e.target.value)}
-              placeholder="gemini-2.5-flash-lite"
+              placeholder="gpt-5.4-mini"
             />
           </Field>
-          <Field label="Provedor Fallback">
+          <Field label="Fallback externo">
             <select
               className="field"
               value={form.fallbackProvider}
               onChange={(e) => updateField("fallbackProvider", e.target.value)}
+              disabled
             >
-              <option value="groq">Groq (Llama)</option>
-              <option value="gemini">Gemini (Google)</option>
+              <option value="openai">Desativado — somente OpenAI</option>
             </select>
           </Field>
           <Field label="Modelo Fallback">
@@ -1518,7 +1506,8 @@ function PerformanceSettingsTab({
               className="field"
               value={form.fallbackModel}
               onChange={(e) => updateField("fallbackModel", e.target.value)}
-              placeholder="llama-3.1-8b-instant"
+              placeholder="Sem fallback externo"
+              disabled
             />
           </Field>
         </div>
@@ -1591,11 +1580,6 @@ function PerformanceSettingsTab({
 
         <div className="mt-6 grid gap-3 md:grid-cols-2">
           <CheckField
-            label="Habilitar Provedor Fallback"
-            checked={form.fallbackEnabled}
-            onChange={(checked) => updateField("fallbackEnabled", checked)}
-          />
-          <CheckField
             label="Habilitar Contingência sem IA"
             checked={form.contingencyEnabled}
             onChange={(checked) => updateField("contingencyEnabled", checked)}
@@ -1620,38 +1604,26 @@ function PerformanceSettingsTab({
 
       <aside className="space-y-5">
         <section className="surface p-6">
-          <SectionHeading title="Circuit Breaker Status" />
+          <SectionHeading title="Status do provedor" />
           <div className="space-y-3 mt-4">
             <div className="flex items-center justify-between rounded-2xl bg-warm p-4 text-xs font-bold text-stone-600">
-              <span>Gemini CB</span>
-              <Badge tone={isGeminiCbActive ? "rose" : "green"}>
-                {isGeminiCbActive ? "COOLDOWN" : "NORMAL"}
+              <span>OpenAI API</span>
+              <Badge tone={panel.status.openai.configured && panel.status.openai.enabled ? "green" : "rose"}>
+                {panel.status.openai.configured && panel.status.openai.enabled ? "ATIVA" : "INATIVA"}
               </Badge>
             </div>
-            {isGeminiCbActive && (
-              <p className="text-[10px] text-rose-700 font-semibold">
-                Bloqueado até: {new Date(form.geminiCircuitBreakerUntil!).toLocaleString("pt-BR")}
-              </p>
-            )}
-
             <div className="flex items-center justify-between rounded-2xl bg-warm p-4 text-xs font-bold text-stone-600">
-              <span>Groq CB</span>
-              <Badge tone={isGroqCbActive ? "rose" : "green"}>
-                {isGroqCbActive ? "COOLDOWN" : "NORMAL"}
-              </Badge>
+              <span>Modelo</span>
+              <b>{panel.status.openai.model}</b>
             </div>
-            {isGroqCbActive && (
-              <p className="text-[10px] text-rose-700 font-semibold">
-                Bloqueado até: {new Date(form.groqCircuitBreakerUntil!).toLocaleString("pt-BR")}
-              </p>
-            )}
           </div>
         </section>
         <section className="surface p-6">
           <SectionHeading title="Instruções de Roteamento" />
           <ul className="space-y-3 text-xs text-stone-600">
             <li>• <b>Agrupamento:</b> Une mensagens da cliente na mesma janela (ex: 1,5s) em uma única requisição.</li>
-            <li>• <b>Circuit Breaker:</b> Se Gemini falhar por erro 429, desvia imediatamente para Groq pelo tempo configurado.</li>
+            <li>• <b>Provedor único:</b> Todas as respostas generativas usam somente a OpenAI.</li>
+            <li>• <b>Contingência:</b> Se a OpenAI falhar, o bot mantém a conversa ativa e envia a mensagem local de instabilidade.</li>
           </ul>
         </section>
       </aside>
@@ -1675,18 +1647,12 @@ function LogsAndPerformanceTab({
   const rateLimitCount = Number(metrics.rate_limit_errors || 0);
   const rateLimitRate = total > 0 ? (rateLimitCount / total) * 100 : 0;
 
-  const settings = panel.settings || {};
-  const isGeminiCbActive = settings.geminiCircuitBreakerUntil && new Date(settings.geminiCircuitBreakerUntil) > new Date();
-
   const alerts = [];
   if (total > 0 && Number(metrics.avg_total_latency || 0) > 8000) {
     alerts.push({ text: "Latência média de resposta está acima de 8 segundos nos últimos 7 dias!", type: "warning" });
   }
   if (rateLimitCount > 3) {
-    alerts.push({ text: "Mais de 3 erros Gemini 429 detectados nos últimos 7 dias. Verifique cotas!", type: "rose" });
-  }
-  if (isGeminiCbActive) {
-    alerts.push({ text: "Gemini Circuit Breaker ativo (em cooldown). Roteador usando Groq fallback.", type: "amber" });
+    alerts.push({ text: "Mais de 3 erros OpenAI 429 detectados nos últimos 7 dias. Verifique limites e faturamento!", type: "rose" });
   }
 
   return (
@@ -1735,10 +1701,8 @@ function LogsAndPerformanceTab({
         <section className="surface p-6 self-start">
           <SectionHeading title="Diagnóstico dos Provedores" />
           <div className="space-y-3 mt-4">
-            <StatusLine label="Gemini configurado" ok={panel.status.gemini.configured} />
-            <StatusLine label="Gemini habilitado" ok={panel.status.gemini.enabled} />
-            <StatusLine label="Groq configurado" ok={panel.status.groq?.configured || false} />
-            <StatusLine label="Groq habilitado" ok={panel.status.groq?.enabled || false} />
+            <StatusLine label="OpenAI configurada" ok={panel.status.openai.configured} />
+            <StatusLine label="OpenAI habilitada" ok={panel.status.openai.enabled} />
             <StatusLine label="IA ativa" ok={panel.status.ai.active} />
           </div>
           <button onClick={reload} className="btn-secondary mt-5 w-full">

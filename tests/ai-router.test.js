@@ -18,6 +18,7 @@ beforeEach(() => {
   const envKeys = [
     "GEMINI_API_KEY", "GEMINI_ENABLED", "GEMINI_MODEL",
     "GROQ_API_KEY", "GROQ_ENABLED", "GROQ_MODEL",
+    "OPENAI_API_KEY", "OPENAI_ENABLED", "OPENAI_MODEL",
     "GEMINI_API_KEY_1", "GEMINI_API_KEY_2",
     "GROQ_API_KEY_1", "GROQ_API_KEY_2"
   ];
@@ -171,11 +172,10 @@ test("processIncomingWhatsAppWebhook responds with simple greeting template imme
   assert.equal(result.reason, "greeting_template");
 });
 
-test("processIncomingWhatsAppWebhook falls back to Groq and rotates its key after a 429", async () => {
-  let cbUpdated = false;
+test("processIncomingWhatsAppWebhook uses OpenAI as the only generative provider", async () => {
   let geminiCalled = false;
-  let groqCalls = 0;
-  const groqAuthorizations = [];
+  let groqCalled = false;
+  let openAiCalled = false;
 
   const mockSettings = {
     id: "settings-123",
@@ -235,9 +235,6 @@ test("processIncomingWhatsAppWebhook falls back to Groq and rotates its key afte
     if (text.includes("public.clients") && text.includes("select")) {
       return { rowCount: 0, rows: [] };
     }
-    if (text.includes("ai_settings") && text.includes("update") && text.includes("gemini_circuit_breaker_until")) {
-      cbUpdated = true;
-    }
     return { rowCount: 1, rows: [{ id: "inserted-id" }] };
   };
 
@@ -270,19 +267,17 @@ test("processIncomingWhatsAppWebhook falls back to Groq and rotates its key afte
       }), { status: 429, headers: { "content-type": "application/json" } });
     }
 
-    // Groq API
     if (url.includes("api.groq.com")) {
-      groqCalls++;
-      groqAuthorizations.push(options.headers.Authorization);
-      if (groqCalls === 1) {
-        return new Response(
-          JSON.stringify({ error: { message: "Rate limit for this key." } }),
-          { status: 429, headers: { "content-type": "application/json" } },
-        );
-      }
+      groqCalled = true;
+      return new Response(JSON.stringify({ success: false }), { status: 500 });
+    }
+
+    if (url.includes("api.openai.com/v1/responses")) {
+      openAiCalled = true;
       return new Response(JSON.stringify({
-        choices: [{ message: { content: "Olá! Sou o assistente via Llama (Groq)." } }],
-        usage: { prompt_tokens: 10, completion_tokens: 5 }
+        id: "resp_test",
+        output: [{ type: "message", content: [{ type: "output_text", text: "Resposta inteligente da OpenAI." }] }],
+        usage: { input_tokens: 10, output_tokens: 5 }
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
@@ -291,11 +286,9 @@ test("processIncomingWhatsAppWebhook falls back to Groq and rotates its key afte
 
   process.env.BAILEYS_API_URL = "https://baileys.example.com";
   process.env.BAILEYS_API_KEY = "test-key";
-  process.env.GEMINI_ENABLED = "true";
-  process.env.GEMINI_API_KEY = "gemini-key";
-  process.env.GROQ_ENABLED = "true";
-  process.env.GROQ_API_KEY = "groq-key";
-  process.env.GROQ_API_KEY_1 = "groq-key-2";
+  process.env.OPENAI_ENABLED = "true";
+  process.env.OPENAI_API_KEY = "openai-key";
+  process.env.OPENAI_MODEL = "gpt-5.4-mini";
 
   const payload = {
     from: "5511999999999@s.whatsapp.net",
@@ -307,16 +300,16 @@ test("processIncomingWhatsAppWebhook falls back to Groq and rotates its key afte
   const result = await processIncomingWhatsAppWebhook(payload);
   assert.equal(result.ok, true);
   assert.equal(result.replied, true);
-  assert.equal(result.reason, "groq_reply");
-  assert.equal(geminiCalled, true);
-  assert.equal(groqCalls, 2);
-  assert.equal(new Set(groqAuthorizations).size, 2);
-  assert.equal(cbUpdated, true);
+  assert.equal(result.reason, "openai_reply");
+  assert.equal(openAiCalled, true);
+  assert.equal(geminiCalled, false);
+  assert.equal(groqCalled, false);
 });
 
-test("processIncomingWhatsAppWebhook skips Gemini immediately if Gemini Circuit Breaker is active", async () => {
+test("processIncomingWhatsAppWebhook ignores legacy provider settings and still uses OpenAI", async () => {
   let geminiCalled = false;
   let groqCalled = false;
+  let openAiCalled = false;
 
   // Set Circuit Breaker active until a future date
   const futureCb = new Date(Date.now() + 30000).toISOString();
@@ -406,8 +399,13 @@ test("processIncomingWhatsAppWebhook skips Gemini immediately if Gemini Circuit 
 
     if (url.includes("api.groq.com")) {
       groqCalled = true;
+      return new Response(JSON.stringify({ success: false }), { status: 500 });
+    }
+
+    if (url.includes("api.openai.com/v1/responses")) {
+      openAiCalled = true;
       return new Response(JSON.stringify({
-        choices: [{ message: { content: "Olá! Resposta direta do Groq (Gemini offline)." } }]
+        output: [{ type: "message", content: [{ type: "output_text", text: "Resposta OpenAI." }] }]
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
@@ -416,10 +414,9 @@ test("processIncomingWhatsAppWebhook skips Gemini immediately if Gemini Circuit 
 
   process.env.BAILEYS_API_URL = "https://baileys.example.com";
   process.env.BAILEYS_API_KEY = "test-key";
-  process.env.GEMINI_ENABLED = "true";
-  process.env.GEMINI_API_KEY = "gemini-key";
-  process.env.GROQ_ENABLED = "true";
-  process.env.GROQ_API_KEY = "groq-key";
+  process.env.OPENAI_ENABLED = "true";
+  process.env.OPENAI_API_KEY = "openai-key";
+  process.env.OPENAI_MODEL = "gpt-5.4-mini";
 
   const payload = {
     from: "5511999999999@s.whatsapp.net",
@@ -431,7 +428,8 @@ test("processIncomingWhatsAppWebhook skips Gemini immediately if Gemini Circuit 
   const result = await processIncomingWhatsAppWebhook(payload);
   assert.equal(result.ok, true);
   assert.equal(result.replied, true);
-  assert.equal(result.reason, "groq_reply");
-  assert.equal(geminiCalled, false); // GEMINI MUST BE SKIPPED
-  assert.equal(groqCalled, true);
+  assert.equal(result.reason, "openai_reply");
+  assert.equal(openAiCalled, true);
+  assert.equal(geminiCalled, false);
+  assert.equal(groqCalled, false);
 });

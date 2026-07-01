@@ -768,3 +768,18 @@ Trabalhar somente em **validação real do fallback Groq no WhatsApp**: enviar u
 - **Mensagem atual priorizada:** o prompt agora determina explicitamente que uma mudança de assunto deve ser respondida sem repetir o serviço anterior e que Fibra Russa só pode ser assumida quando mencionada ou quando houver continuação inequívoca.
 - **Histórico descontaminado:** a mensagem atual deixou de ser duplicada no histórico enviado ao provedor e mensagens temporárias de espera deixaram de entrar no contexto.
 - **Regra local preservada:** somente a consulta de disponibilidade para hoje continua com resposta determinística, para não inventar vagas sem consultar uma agenda real.
+
+## Resultado desta etapa (OpenAI como único provedor do WhatsApp)
+
+- **Migração concluída para Responses API:** o motor generativo agora chama somente `https://api.openai.com/v1/responses`, com `instructions`, `input`, limite de saída e `store=false`.
+- **Modelo ativo:** `gpt-5.4-mini`, configurado por `OPENAI_MODEL` para equilibrar qualidade, latência e custo no atendimento pelo WhatsApp.
+- **Segredo protegido:** `OPENAI_API_KEY` foi validada e armazenada como variável sensível no Vercel Production; a chave não foi adicionada ao frontend, banco, logs ou repositório.
+- **Provedores antigos desativados:** `GEMINI_ENABLED=false` e `GROQ_ENABLED=false` no Vercel. O runtime não importa nem chama os clientes Gemini/Groq.
+- **Conteúdo preservado:** Baileys, histórico, fila, base de conhecimento, serviços reais, regras médicas, handoff e contingência continuam ativos sem recriação do módulo.
+- **Painel atualizado:** indicadores, teste seguro e configurações agora mostram somente OpenAI; fallback externo permanece desabilitado.
+- **Persistência migrada:** registros existentes de `ai_settings` são convertidos para `provider='openai'`, `gpt-5.4-mini` e `fallback_enabled=false` durante a garantia de schema.
+- **Validação técnica:** chave/modelo responderam em chamada real; `npm test` passou com 95/95, `npm run lint` passou e `npm run build` passou.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **validação operacional OpenAI no inbound privado**: enviar perguntas diferentes pelo WhatsApp, confirmar `provider='openai'` e `status='success'` em `ai_request_logs`, revisar qualidade contextual e ajustar apenas o prompt se necessário.

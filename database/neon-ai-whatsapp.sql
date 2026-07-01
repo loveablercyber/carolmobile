@@ -4,8 +4,8 @@ create table if not exists public.ai_settings (
   id uuid primary key default uuid_generate_v4(),
   business_id text not null default 'default',
   enabled boolean not null default false,
-  provider text not null default 'gemini',
-  model text not null default 'gemini-2.5-flash-lite',
+  provider text not null default 'openai',
+  model text not null default 'gpt-5.4-mini',
   assistant_name text not null default 'Carol',
   salon_name text not null default 'Carol Sol Mega Hair',
   personality_mode text not null default 'simpatica_acolhedora',
@@ -37,22 +37,31 @@ create table if not exists public.ai_settings (
   unique(business_id)
 );
 
-alter table public.ai_settings add column if not exists primary_provider text not null default 'gemini';
-alter table public.ai_settings add column if not exists primary_model text not null default 'gemini-2.5-flash-lite';
-alter table public.ai_settings add column if not exists fallback_provider text not null default 'groq';
-alter table public.ai_settings add column if not exists fallback_model text not null default 'llama-3.1-8b-instant';
+alter table public.ai_settings add column if not exists primary_provider text not null default 'openai';
+alter table public.ai_settings add column if not exists primary_model text not null default 'gpt-5.4-mini';
+alter table public.ai_settings add column if not exists fallback_provider text not null default 'openai';
+alter table public.ai_settings add column if not exists fallback_model text not null default 'gpt-5.4-mini';
 alter table public.ai_settings add column if not exists timeout_ms integer not null default 7000;
 alter table public.ai_settings add column if not exists max_retries integer not null default 2;
 alter table public.ai_settings add column if not exists grouping_window_ms integer not null default 1500;
 alter table public.ai_settings add column if not exists context_limit integer not null default 8;
 alter table public.ai_settings add column if not exists max_response_tokens integer not null default 220;
-alter table public.ai_settings add column if not exists fallback_enabled boolean not null default true;
+alter table public.ai_settings add column if not exists fallback_enabled boolean not null default false;
 alter table public.ai_settings add column if not exists contingency_enabled boolean not null default true;
 alter table public.ai_settings add column if not exists cache_enabled boolean not null default true;
 alter table public.ai_settings add column if not exists human_transfer_enabled boolean not null default true;
 alter table public.ai_settings add column if not exists circuit_breaker_cooldown_seconds integer not null default 60;
 alter table public.ai_settings add column if not exists gemini_circuit_breaker_until timestamptz;
 alter table public.ai_settings add column if not exists groq_circuit_breaker_until timestamptz;
+
+update public.ai_settings
+set provider='openai',
+    model=case when model ~* '^(gemini|llama)' or model is null then 'gpt-5.4-mini' else model end,
+    primary_provider='openai',
+    primary_model=case when primary_model ~* '^(gemini|llama)' or primary_model is null then 'gpt-5.4-mini' else primary_model end,
+    fallback_provider='openai',
+    fallback_model='gpt-5.4-mini',
+    fallback_enabled=false;
 
 create table if not exists public.ai_prompt_versions (
   id uuid primary key default uuid_generate_v4(),

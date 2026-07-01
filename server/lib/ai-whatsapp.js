@@ -1,7 +1,6 @@
 import { query, transaction } from "./db.js";
 import { appError } from "./http.js";
-import { geminiPublicStatus } from "./gemini-client.js";
-import { groqPublicStatus } from "./groq-client.js";
+import { openAiPublicStatus } from "./openai-client.js";
 
 let settingsCache = null;
 let settingsCacheTime = 0;
@@ -97,8 +96,8 @@ create table if not exists public.ai_settings (
   id uuid primary key default uuid_generate_v4(),
   business_id text not null default 'default',
   enabled boolean not null default false,
-  provider text not null default 'gemini',
-  model text not null default 'gemini-2.5-flash-lite',
+  provider text not null default 'openai',
+  model text not null default 'gpt-5.4-mini',
   assistant_name text not null default 'Carol',
   salon_name text not null default 'Carol Sol Mega Hair',
   personality_mode text not null default 'simpatica_acolhedora',
@@ -379,8 +378,8 @@ const timeOrNull = (value) => {
 function defaultSettingsInput() {
   return {
     enabled: false,
-    provider: "gemini",
-    model: "gemini-2.5-flash-lite",
+    provider: "openai",
+    model: "gpt-5.4-mini",
     assistantName: "Carol",
     salonName: "Carol Sol Mega Hair",
     personalityMode: "simpatica_acolhedora",
@@ -403,16 +402,16 @@ function defaultSettingsInput() {
     resumeKeyword: "voltar ao bot",
     stopKeyword: "parar",
     timezone: "America/Sao_Paulo",
-    primaryProvider: "gemini",
-    primaryModel: "gemini-2.5-flash-lite",
-    fallbackProvider: "groq",
-    fallbackModel: "llama-3.1-8b-instant",
+    primaryProvider: "openai",
+    primaryModel: "gpt-5.4-mini",
+    fallbackProvider: "openai",
+    fallbackModel: "gpt-5.4-mini",
     timeoutMs: 7000,
     maxRetries: 2,
     groupingWindowMs: 1500,
     contextLimit: 8,
     maxResponseTokens: 220,
-    fallbackEnabled: true,
+    fallbackEnabled: false,
     contingencyEnabled: true,
     cacheEnabled: true,
     humanTransferEnabled: true,
@@ -431,18 +430,28 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
   const personalityMode = clean(input.personalityMode || fallback.personalityMode);
   if (!personalityModes.some((mode) => mode.value === personalityMode))
     throw appError("Modo de humor inválido.");
-  const model = clean(input.model || fallback.model);
+  const inputModel = clean(input.model);
+  const inputPrimaryModel = clean(input.primaryModel);
+  const requestedModel =
+    (inputModel && inputModel !== clean(fallback.model) && inputModel) ||
+    (inputPrimaryModel && inputPrimaryModel !== clean(fallback.primaryModel) && inputPrimaryModel) ||
+    inputPrimaryModel ||
+    inputModel ||
+    clean(fallback.primaryModel || fallback.model);
+  const model = /^(gemini|llama)/i.test(requestedModel)
+    ? "gpt-5.4-mini"
+    : requestedModel || "gpt-5.4-mini";
   const assistantName = clean(input.assistantName || fallback.assistantName);
   const salonName = clean(input.salonName || fallback.salonName);
   const systemPrompt = clean(input.systemPrompt || fallback.systemPrompt);
   if (assistantName.length < 2) throw appError("Informe o nome da assistente.");
   if (salonName.length < 2) throw appError("Informe o nome do salão.");
-  if (!model) throw appError("Informe o modelo Gemini.");
+  if (!model) throw appError("Informe o modelo OpenAI.");
   if (systemPrompt.length < 80)
     throw appError("O prompt base precisa ter pelo menos 80 caracteres.");
   return {
     enabled: bool(input.enabled, fallback.enabled),
-    provider: clean(input.provider || fallback.provider) || "gemini",
+    provider: "openai",
     model,
     assistantName,
     salonName,
@@ -481,16 +490,16 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
       clean(input.resumeKeyword || fallback.resumeKeyword) || "voltar ao bot",
     stopKeyword: clean(input.stopKeyword || fallback.stopKeyword) || "parar",
     timezone: clean(input.timezone || fallback.timezone) || "America/Sao_Paulo",
-    primaryProvider: clean(input.primaryProvider || fallback.primaryProvider) || "gemini",
-    primaryModel: clean(input.primaryModel || fallback.primaryModel) || "gemini-2.5-flash-lite",
-    fallbackProvider: clean(input.fallbackProvider || fallback.fallbackProvider) || "groq",
-    fallbackModel: clean(input.fallbackModel || fallback.fallbackModel) || "llama-3.1-8b-instant",
+    primaryProvider: "openai",
+    primaryModel: model,
+    fallbackProvider: "openai",
+    fallbackModel: model,
     timeoutMs: intRange(input.timeoutMs ?? input.timeout_ms, fallback.timeoutMs, 1000, 30000),
     maxRetries: intRange(input.maxRetries ?? input.max_retries, fallback.maxRetries, 0, 5),
     groupingWindowMs: intRange(input.groupingWindowMs ?? input.grouping_window_ms, fallback.groupingWindowMs, 100, 10000),
     contextLimit: intRange(input.contextLimit ?? input.context_limit, fallback.contextLimit, 1, 30),
     maxResponseTokens: intRange(input.maxResponseTokens ?? input.max_response_tokens, fallback.maxResponseTokens, 10, 2000),
-    fallbackEnabled: bool(input.fallbackEnabled ?? input.fallback_enabled, fallback.fallbackEnabled),
+    fallbackEnabled: false,
     contingencyEnabled: bool(input.contingencyEnabled ?? input.contingency_enabled, fallback.contingencyEnabled),
     cacheEnabled: bool(input.cacheEnabled ?? input.cache_enabled, fallback.cacheEnabled),
     humanTransferEnabled: bool(input.humanTransferEnabled ?? input.human_transfer_enabled, fallback.humanTransferEnabled),
@@ -797,16 +806,16 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
 
   // Add new columns to existing tables
   await query(`
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_provider text not null default 'gemini';
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_model text not null default 'gemini-2.5-flash-lite';
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_provider text not null default 'groq';
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_model text not null default 'llama-3.1-8b-instant';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_provider text not null default 'openai';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_model text not null default 'gpt-5.4-mini';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_provider text not null default 'openai';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_model text not null default 'gpt-5.4-mini';
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS timeout_ms integer not null default 7000;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS max_retries integer not null default 2;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS grouping_window_ms integer not null default 1500;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS context_limit integer not null default 8;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS max_response_tokens integer not null default 220;
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_enabled boolean not null default true;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_enabled boolean not null default false;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS contingency_enabled boolean not null default true;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS cache_enabled boolean not null default true;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS human_transfer_enabled boolean not null default true;
@@ -814,6 +823,23 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS gemini_circuit_breaker_until timestamptz;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS groq_circuit_breaker_until timestamptz;
   `).catch(err => console.error("Failed to alter public.ai_settings table", err));
+
+  await query(`
+    update public.ai_settings
+       set provider='openai',
+           model=case when model ~* '^(gemini|llama)' or model is null then 'gpt-5.4-mini' else model end,
+           primary_provider='openai',
+           primary_model=case when primary_model ~* '^(gemini|llama)' or primary_model is null then 'gpt-5.4-mini' else primary_model end,
+           fallback_provider='openai',
+           fallback_model='gpt-5.4-mini',
+           fallback_enabled=false
+     where provider is distinct from 'openai'
+        or primary_provider is distinct from 'openai'
+        or fallback_provider is distinct from 'openai'
+        or fallback_enabled is distinct from false
+        or model ~* '^(gemini|llama)'
+        or primary_model ~* '^(gemini|llama)'
+  `).catch(err => console.error("Failed to migrate AI provider to OpenAI", err));
 
   await query(
     `insert into public.ai_settings(
@@ -863,7 +889,7 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
 
   await query(
     `insert into public._luxe_migrations(version, description)
-     values ('011_ai_whatsapp', 'Atendimento IA WhatsApp Gemini')
+     values ('011_ai_whatsapp', 'Atendimento IA WhatsApp OpenAI')
      on conflict(version) do nothing`,
   ).catch(() => null);
   schemaEnsured = true;
@@ -1395,17 +1421,14 @@ export async function deleteKnowledgeArticle(user, id) {
 
 export async function getAiPanel() {
   const [settings, base] = await Promise.all([getAiSettings(), getAiBase()]);
+  const openai = openAiPublicStatus();
   return {
     status: {
-      gemini: geminiPublicStatus(),
-      groq: groqPublicStatus(),
+      openai,
       database: { configured: true },
       ai: {
         enabled: settings.enabled,
-        active: settings.enabled && (
-          (geminiPublicStatus().enabled && geminiPublicStatus().configured) ||
-          (groqPublicStatus().enabled && groqPublicStatus().configured)
-        ),
+        active: settings.enabled && openai.enabled && openai.configured,
       },
     },
     personalityModes,

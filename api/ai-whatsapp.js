@@ -11,7 +11,7 @@ import {
   deleteKnowledgeArticle,
   updateAiConversationStatus,
 } from "../server/lib/ai-whatsapp.js";
-import { generateGeminiText } from "../server/lib/gemini-client.js";
+import { generateOpenAiText } from "../server/lib/openai-client.js";
 import {
   appError,
   getBody,
@@ -73,8 +73,8 @@ async function mutate(user, resource, body) {
     const message =
       clean(body.message) ||
       "Oi, gostaria de saber quais serviços de Mega Hair vocês oferecem.";
-    const result = await generateGeminiText({
-      model: settings.model,
+    const result = await generateOpenAiText({
+      model: settings.primaryModel || settings.model,
       systemPrompt: buildRuntimePrompt(settings),
       message:
         `${message}\n\nResponda sem citar preços, horários ou disponibilidade. ` +

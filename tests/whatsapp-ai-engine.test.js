@@ -3,7 +3,7 @@ import test from "node:test";
 
 import {
   buildLocalIntentResponse,
-  buildGeminiConversationMessage,
+  buildAiConversationMessage,
   isMessageWebhookPayload,
   isWithinAiHours,
   keywordInText,
@@ -132,8 +132,8 @@ test("summarizes only real AI-enabled commercial data", () => {
   assert.doesNotMatch(context, /Serviço interno/);
 });
 
-test("builds Gemini message without leaking sensitive environment names", () => {
-  const prompt = buildGeminiConversationMessage({
+test("builds AI message without leaking sensitive environment names", () => {
+  const prompt = buildAiConversationMessage({
     incomingText: "Tem horário amanhã?",
     knownClient: true,
     commercialContext: "Serviços: nenhum serviço foi liberado.",
