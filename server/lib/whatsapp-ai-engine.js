@@ -8,7 +8,7 @@ import {
 import { generateOpenAiText, openAiPublicStatus } from "./openai-client.js";
 import { sendBaileysTextMessage, sendBaileysPresence } from "./baileys-client.js";
 
-const MAX_GEMINI_MESSAGE_CHARS = 4000;
+const MAX_AI_MESSAGE_CHARS = 6000;
 
 const clean = (value) => String(value ?? "").trim();
 
@@ -225,7 +225,7 @@ async function recordIgnoredWebhook(normalized, reason) {
   }
 }
 
-export function summarizeAiCommercialContext(base) {
+export function summarizeAiCommercialContext(base, settings = {}) {
   const services = (base.services || [])
     .filter((service) => service.active && service.ai_active)
     .slice(0, 10)
@@ -242,14 +242,111 @@ export function summarizeAiCommercialContext(base) {
     .filter((coupon) => coupon.active)
     .slice(0, 8)
     .map((coupon) => `- ${coupon.code}: ${coupon.description || "cupom ativo sem descrição"}.`);
+  const enabledFlows = (base.flows || [])
+    .filter((flow) => flow.enabled)
+    .map((flow) => flow.name || flow.flow_key)
+    .slice(0, 12);
 
   return [
     "Dados reais liberados para esta resposta:",
     services.length ? `Serviços:\n${services.join("\n")}` : "Serviços: nenhum serviço foi liberado para atendimento automático.",
     plans.length ? `Planos ativos:\n${plans.join("\n")}` : "Planos ativos: nenhum plano ativo encontrado.",
     coupons.length ? `Cupons ativos:\n${coupons.join("\n")}` : "Cupons ativos: nenhum cupom ativo encontrado.",
-    "Nesta etapa, não crie agendamento, não prometa horário e não envie link de pagamento. Oriente e diga que a equipe confirma quando necessário.",
+    enabledFlows.length
+      ? `Fluxos automáticos habilitados: ${enabledFlows.join(", ")}.`
+      : "Fluxos automáticos: nenhum fluxo específico habilitado.",
+    settings.allowAutoBooking
+      ? "Pré-agendamento automático está permitido, mas exige dados completos e confirmação explícita antes de qualquer gravação."
+      : "A IA pode conduzir e registrar uma solicitação de pré-agendamento; a equipe confirma disponibilidade e horário.",
+    "Nunca prometa horário, pagamento ou agendamento confirmado sem uma gravação bem-sucedida no backend.",
   ].join("\n\n");
+}
+
+function isAffirmativeBookingConfirmation(text) {
+  const normalized = normalizeText(text).replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  return [
+    "sim",
+    "sim pode",
+    "pode sim",
+    "confirmo",
+    "confirmado",
+    "isso",
+    "isso mesmo",
+    "correto",
+    "certo",
+    "ok",
+    "pode confirmar",
+    "pode registrar",
+    "sim pode registrar",
+    "sim pode confirmar",
+  ].includes(normalized);
+}
+
+export function buildBookingGuidance({
+  incomingText,
+  history = [],
+  knownClient = false,
+  settings = {},
+}) {
+  const normalizedCurrent = normalizeText(incomingText);
+  const bookingTerms = [
+    "agendar",
+    "agendamento",
+    "marcar horario",
+    "marcar um horario",
+    "quero fazer",
+    "gostaria de fazer",
+    "tem horario",
+    "disponibilidade",
+    "encaixe",
+    "avaliacao",
+  ];
+  const currentHasIntent = includesAny(normalizedCurrent, bookingTerms);
+  const recentAssistantText = history
+    .filter((item) => item.sender_type === "ai")
+    .slice(-2)
+    .map((item) => normalizeText(item.body))
+    .join(" ");
+  const assistantIsBooking = includesAny(recentAssistantText, [
+    "agend",
+    "qual servico",
+    "qual dia",
+    "qual data",
+    "manha, tarde ou noite",
+    "periodo",
+    "posso encaminhar",
+    "posso registrar",
+    "confirma",
+  ]);
+  const assistantAskedConfirmation = includesAny(recentAssistantText, [
+    "confirma",
+    "posso encaminhar",
+    "posso registrar",
+    "esta correto",
+    "está correto",
+  ]);
+  const active = currentHasIntent || assistantIsBooking;
+  const shouldRegister =
+    active && assistantAskedConfirmation && isAffirmativeBookingConfirmation(incomingText);
+
+  if (!active) return { active: false, shouldRegister: false, text: "" };
+
+  const mode = settings.allowAutoBooking
+    ? "O pré-agendamento está habilitado, mas qualquer confirmação depende de persistência real."
+    : "O horário final será confirmado pela equipe; registre somente uma solicitação de pré-agendamento.";
+  const nextAction = shouldRegister
+    ? "A confirmação explícita foi detectada. O backend registrará a solicitação antes do envio da resposta. Informe que a solicitação foi registrada e que a equipe confirmará a disponibilidade; não diga que o horário já está confirmado."
+    : [
+        "Avance o atendimento sem repetir explicações ou perguntas já respondidas.",
+        "Identifique no histórico o que a cliente já informou e pergunte somente UM dado faltante por mensagem, nesta ordem: serviço desejado, data preferida, período/horário e nome (apenas se a cliente não estiver cadastrada).",
+        "Quando todos os dados estiverem claros, mostre um resumo curto e peça confirmação explícita para registrar a solicitação.",
+      ].join(" ");
+
+  return {
+    active: true,
+    shouldRegister,
+    text: `Fluxo de pré-agendamento ativo. ${mode} Cliente cadastrada: ${knownClient ? "sim" : "não"}. ${nextAction}`,
+  };
 }
 
 export function buildAiConversationMessage({
@@ -257,28 +354,35 @@ export function buildAiConversationMessage({
   history = [],
   commercialContext,
   knowledgeContext = "",
+  bookingGuidance = "",
   knownClient = false,
 }) {
   const historyText = history
-    .slice(-8)
+    .slice(-6)
     .map((item) => {
       const speaker = item.sender_type === "ai" ? "Assistente" : "Cliente";
-      return `${speaker}: ${clean(item.body).slice(0, 600)}`;
+      return `${speaker}: ${clean(item.body).slice(0, 350)}`;
     })
     .join("\n");
 
-  return [
-    commercialContext,
-    knowledgeContext,
-    `Cliente já cadastrada: ${knownClient ? "sim" : "não"}.`,
-    historyText ? `Histórico recente:\n${historyText}` : "Histórico recente: primeira mensagem desta conversa.",
+  const requiredContext = [
     `Mensagem atual da cliente:\n${clean(incomingText)}`,
+    bookingGuidance,
     "A mensagem atual é a prioridade. Use o histórico apenas para continuidade; se a cliente mudar de assunto, responda ao novo assunto sem repetir o serviço anterior. Não presuma que a dúvida é sobre Fibra Russa quando a mensagem atual não mencionar essa técnica nem for uma continuação inequívoca dela.",
-    "Nesta etapa, não crie agendamento, não prometa horário e não envie link de pagamento. Oriente e diga que a equipe confirma quando necessário. Responda em até 700 caracteres, em português do Brasil, sem inventar dados. Se a cliente perguntar algo sobre técnicas ou dúvidas de Mega Hair, use a resposta aprovada e faça até duas perguntas curtas para personalização. Se for recomendado avaliação, sugira agendar de forma natural.",
+    "Responda em até 700 caracteres, em português do Brasil, sem inventar dados. Não repita uma pergunta cuja resposta já esteja no histórico. Se a cliente quiser agendar, avance pelo fluxo de pré-agendamento. Nunca diga que um horário foi confirmado sem persistência real no backend.",
   ]
     .filter(Boolean)
-    .join("\n\n")
-    .slice(0, MAX_GEMINI_MESSAGE_CHARS);
+    .join("\n\n");
+  const optionalContext = [
+    clean(commercialContext).slice(0, 1600),
+    clean(knowledgeContext).slice(0, 1300),
+    `Cliente já cadastrada: ${knownClient ? "sim" : "não"}.`,
+    historyText ? `Histórico recente:\n${historyText}` : "Histórico recente: primeira mensagem desta conversa.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const optionalBudget = Math.max(0, MAX_AI_MESSAGE_CHARS - requiredContext.length - 4);
+  return `${optionalContext.slice(0, optionalBudget)}\n\n${requiredContext}`.trim();
 }
 
 async function recordInboundMessage(normalized) {
@@ -986,7 +1090,13 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
 
   // 9. Load AI Context & Prompt
   const history = await loadRecentHistory(conversationId, inboundMessageId);
-  const commercialContext = summarizeAiCommercialContext(base);
+  const booking = buildBookingGuidance({
+    incomingText: concatenatedText,
+    history,
+    knownClient: Boolean(recorded.client),
+    settings,
+  });
+  const commercialContext = summarizeAiCommercialContext(base, settings);
   const systemPrompt = buildRuntimePrompt(settings);
 
   let knowledgeContext = "";
@@ -1012,6 +1122,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     history: history.slice(-(settings.contextLimit || 8)),
     commercialContext,
     knowledgeContext,
+    bookingGuidance: booking.text,
     knownClient: Boolean(recorded.client),
   });
 
@@ -1084,6 +1195,15 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       : 0;
 
   if (finalResponse) {
+    if (booking.shouldRegister) {
+      await requestHumanAttention({
+        conversationId,
+        messageId: inboundMessageId,
+        reason: "booking_request",
+        responseText: finalResponse,
+      });
+    }
+
     // Send response
     await sendTextAndRecord({
       normalized,

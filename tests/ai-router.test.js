@@ -306,10 +306,11 @@ test("processIncomingWhatsAppWebhook uses OpenAI as the only generative provider
   assert.equal(groqCalled, false);
 });
 
-test("processIncomingWhatsAppWebhook ignores legacy provider settings and still uses OpenAI", async () => {
+test("processIncomingWhatsAppWebhook persists a booking request before replying to confirmation", async () => {
   let geminiCalled = false;
   let groqCalled = false;
   let openAiCalled = false;
+  let bookingTicketCreated = false;
 
   // Set Circuit Breaker active until a future date
   const futureCb = new Date(Date.now() + 30000).toISOString();
@@ -366,7 +367,20 @@ test("processIncomingWhatsAppWebhook ignores legacy provider settings and still 
       return { rowCount: 1, rows: [{ total: 0 }] };
     }
     if (text.includes("whatsapp_messages") && text.includes("select") && text.includes("direction")) {
-      return { rowCount: 0, rows: [] };
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            direction: "outbound",
+            sender_type: "ai",
+            body: "Resumo: aplicação na sexta à tarde. Posso registrar esta solicitação?",
+          },
+        ],
+      };
+    }
+    if (text.includes("insert into public.human_handoff_tickets")) {
+      bookingTicketCreated = true;
+      return { rowCount: 1, rows: [{ id: "ticket-booking" }] };
     }
     if (text.includes("public.clients") && text.includes("select")) {
       return { rowCount: 0, rows: [] };
@@ -405,7 +419,7 @@ test("processIncomingWhatsAppWebhook ignores legacy provider settings and still 
     if (url.includes("api.openai.com/v1/responses")) {
       openAiCalled = true;
       return new Response(JSON.stringify({
-        output: [{ type: "message", content: [{ type: "output_text", text: "Resposta OpenAI." }] }]
+        output: [{ type: "message", content: [{ type: "output_text", text: "Solicitação registrada. A equipe confirmará a disponibilidade." }] }]
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
@@ -420,7 +434,7 @@ test("processIncomingWhatsAppWebhook ignores legacy provider settings and still 
 
   const payload = {
     from: "5511999999999@s.whatsapp.net",
-    text: "Qual valor?",
+    text: "Sim, pode registrar",
     isFromMe: false,
     messageId: "msg-cb-bypass-1",
   };
@@ -430,6 +444,7 @@ test("processIncomingWhatsAppWebhook ignores legacy provider settings and still 
   assert.equal(result.replied, true);
   assert.equal(result.reason, "openai_reply");
   assert.equal(openAiCalled, true);
+  assert.equal(bookingTicketCreated, true);
   assert.equal(geminiCalled, false);
   assert.equal(groqCalled, false);
 });

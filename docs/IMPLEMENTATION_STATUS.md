@@ -783,3 +783,17 @@ Trabalhar somente em **validação real do fallback Groq no WhatsApp**: enviar u
 ## Próxima etapa recomendada (Módulo específico)
 
 Trabalhar somente em **validação operacional OpenAI no inbound privado**: enviar perguntas diferentes pelo WhatsApp, confirmar `provider='openai'` e `status='success'` em `ai_request_logs`, revisar qualidade contextual e ajustar apenas o prompt se necessário.
+
+## Resultado desta etapa (Progressão para pré-agendamento sem repetição)
+
+- **Causa da repetição corrigida:** o contexto era cortado nos primeiros 4.000 caracteres; quando catálogo, artigo e histórico eram longos, a mensagem atual podia ficar fora da requisição. O novo orçamento preserva sempre a mensagem atual e as regras críticas, limitando somente os contextos opcionais.
+- **Bloqueio contraditório removido:** saíram as instruções que proibiam avançar para agendamento. A OpenAI agora pode conduzir o pré-agendamento sem inventar disponibilidade.
+- **Progressão orientada por histórico:** após intenção de agendar, a IA identifica o que já foi respondido e pergunta somente um dado faltante por vez: serviço, data, período/horário e nome quando necessário.
+- **Confirmação explícita:** com os dados completos, a IA deve mostrar resumo e pedir confirmação, sem declarar horário confirmado.
+- **Persistência antes da resposta:** quando a cliente confirma explicitamente o resumo, o backend cria uma solicitação `booking_request` em `human_handoff_tickets` antes de enviar a mensagem de sucesso. A conversa continua com `ai_enabled=true` e a equipe confirma a disponibilidade.
+- **Fluxos reais expostos ao prompt:** configurações de automação habilitadas e `allowAutoBooking` agora entram no contexto do atendimento.
+- **Validação técnica:** `npm test` passou com 98/98, incluindo regressão de truncamento, progressão e persistência; `npm run lint` e `npm run build` passaram.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **agenda real do WhatsApp**: consultar slots do backend após a escolha de serviço/data e converter a solicitação confirmada em `appointments` apenas quando cliente, serviço, profissional e horário válido estiverem resolvidos.

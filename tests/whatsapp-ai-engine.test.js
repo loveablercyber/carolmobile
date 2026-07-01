@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildLocalIntentResponse,
   buildAiConversationMessage,
+  buildBookingGuidance,
   isMessageWebhookPayload,
   isWithinAiHours,
   keywordInText,
@@ -132,7 +133,7 @@ test("summarizes only real AI-enabled commercial data", () => {
   assert.doesNotMatch(context, /Serviço interno/);
 });
 
-test("builds AI message without leaking sensitive environment names", () => {
+test("builds AI message with current input and booking progression rules", () => {
   const prompt = buildAiConversationMessage({
     incomingText: "Tem horário amanhã?",
     knownClient: true,
@@ -140,10 +141,65 @@ test("builds AI message without leaking sensitive environment names", () => {
     history: [{ sender_type: "client", body: "Oi" }],
   });
 
-  assert.match(prompt, /não crie agendamento/i);
+  assert.match(prompt, /Mensagem atual da cliente:\s*Tem horário amanhã/i);
+  assert.match(prompt, /avance pelo fluxo de pré-agendamento/i);
   assert.match(prompt, /Cliente já cadastrada: sim/);
   assert.doesNotMatch(prompt, /GEMINI_API_KEY/i);
   assert.doesNotMatch(prompt, /BAILEYS_API_KEY/i);
+});
+
+test("never truncates the current client message when context is long", () => {
+  const prompt = buildAiConversationMessage({
+    incomingText: "MENSAGEM_ATUAL_UNICA quero agendar na sexta à tarde",
+    commercialContext: "C".repeat(5000),
+    knowledgeContext: "K".repeat(5000),
+    bookingGuidance: "Fluxo de pré-agendamento ativo.",
+    history: Array.from({ length: 10 }, (_, index) => ({
+      sender_type: index % 2 ? "ai" : "client",
+      body: `Histórico ${index} ${"H".repeat(800)}`,
+    })),
+  });
+
+  assert.ok(prompt.length <= 6000);
+  assert.match(prompt, /MENSAGEM_ATUAL_UNICA/);
+  assert.match(prompt, /não repita uma pergunta/i);
+});
+
+test("activates pre-booking and asks only for missing information", () => {
+  const booking = buildBookingGuidance({
+    incomingText: "Quero agendar uma aplicação",
+    history: [],
+    knownClient: false,
+    settings: { allowAutoBooking: false },
+  });
+
+  assert.equal(booking.active, true);
+  assert.equal(booking.shouldRegister, false);
+  assert.match(booking.text, /somente UM dado faltante/i);
+  assert.match(booking.text, /confirmação explícita/i);
+});
+
+test("registers a booking request only after an explicit confirmation", () => {
+  const history = [
+    {
+      sender_type: "ai",
+      body: "Resumo: manutenção na sexta à tarde. Posso registrar esta solicitação?",
+    },
+  ];
+  const confirmed = buildBookingGuidance({
+    incomingText: "Sim, pode registrar",
+    history,
+    knownClient: true,
+    settings: { allowAutoBooking: false },
+  });
+  const unrelated = buildBookingGuidance({
+    incomingText: "Qual a diferença entre fita e queratina?",
+    history: [],
+  });
+
+  assert.equal(confirmed.shouldRegister, true);
+  assert.match(confirmed.text, /backend registrará/i);
+  assert.deepEqual(unrelated, { active: false, shouldRegister: false, text: "" });
 });
 
 test("builds local response for today's availability without promising schedule", () => {
