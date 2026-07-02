@@ -797,3 +797,20 @@ Trabalhar somente em **validação operacional OpenAI no inbound privado**: envi
 ## Próxima etapa recomendada (Módulo específico)
 
 Trabalhar somente em **agenda real do WhatsApp**: consultar slots do backend após a escolha de serviço/data e converter a solicitação confirmada em `appointments` apenas quando cliente, serviço, profissional e horário válido estiverem resolvidos.
+
+## Resultado desta etapa (Pareamento WhatsApp por número e proteção de limite)
+
+- **Causa externa confirmada:** o Baileys `7.0.0-rc13` gerava o código de pareamento, mas o WhatsApp podia recusá-lo e encerrar a tentativa com timeout. O bot externo passou a usar a correção do PR oficial `WhiskeySockets/Baileys#2559`, fixada no commit `834dc742` e empacotada com hash documentado.
+- **Versão do WhatsApp corrigida:** o socket usa `fetchLatestWaWebVersion()` e expõe a versão ativa no diagnóstico, evitando pareamento com a versão obsoleta retornada pelo helper anterior.
+- **Rate limit identificado:** após as tentativas repetidas, o WhatsApp respondeu `rate-overlimit` (429). Esse bloqueio é temporário e não deve ser contornado com reinícios ou novos códigos durante o cooldown.
+- **Proteção adicionada no bot externo:** novas solicitações serão bloqueadas localmente por 30 minutos após um 429 e códigos sucessivos terão intervalo mínimo de 60 segundos, sem reenviar requisições ao WhatsApp.
+- **Erro preservado no PWA:** respostas 429 do bot agora chegam ao painel como `BAILEYS_RATE_LIMITED`, com mensagem clara, em vez de erro genérico 502.
+- **Validação técnica:** instalação limpa do pacote corrigido passou; import do Baileys e verificação de sintaxe passaram; testes do cliente Baileys passaram com 8/8 e o build de produção concluiu sem erros.
+
+## Pendência operacional
+
+- Aguardar o cooldown do WhatsApp terminar antes de gerar um único código novo. O pareamento físico só pode ser confirmado após a entrada desse código no WhatsApp Business.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **validação final do pareamento por número**: após o cooldown, gerar um único código, confirmar `status=ready` no bot externo e validar uma mensagem privada de entrada, sem reiniciar a sessão durante o teste.

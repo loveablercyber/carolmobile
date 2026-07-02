@@ -31,6 +31,11 @@ function friendlyProviderError(response, data) {
       providerMessage || "O WhatsApp ainda não está pronto. Escaneie o QR Code e tente novamente.",
       { status: 503, code: "BAILEYS_UNAVAILABLE", providerStatus: 503 },
     );
+  if (response.status === 429)
+    return new BaileysClientError(
+      providerMessage || "O WhatsApp limitou novas tentativas. Aguarde antes de gerar outro código.",
+      { status: 429, code: "BAILEYS_RATE_LIMITED", providerStatus: 429 },
+    );
   return new BaileysClientError(
     providerMessage || `O servidor WhatsApp respondeu ${response.status}.`,
     { code: "BAILEYS_PROVIDER_ERROR", providerStatus: response.status },

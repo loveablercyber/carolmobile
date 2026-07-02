@@ -141,6 +141,27 @@ test("returns friendly errors for invalid numbers and rejected credentials", asy
   );
 });
 
+test("preserves pairing rate-limit errors from the WhatsApp provider", async () => {
+  configure();
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        code: "PAIRING_RATE_LIMITED",
+        error: "O WhatsApp bloqueou temporariamente novas tentativas. Aguarde 30 minutos.",
+      }),
+      { status: 429, headers: { "content-type": "application/json" } },
+    );
+
+  await assert.rejects(
+    requestBaileysPairingCode({ number: "5514999999999" }),
+    (error) =>
+      error.code === "BAILEYS_RATE_LIMITED" &&
+      error.status === 429 &&
+      error.providerStatus === 429 &&
+      /Aguarde 30 minutos/.test(error.message),
+  );
+});
+
 test("sends text message skipping ready status check", async () => {
   configure();
   const calls = [];
