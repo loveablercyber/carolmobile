@@ -354,6 +354,7 @@ function selectBookingService(text, base = {}, state = {}) {
       serviceId: matched.id,
       serviceName: matched.commercial_name || matched.name,
       requestedServiceName: matched.commercial_name || matched.name,
+      serviceValue: serviceValue(matched),
     };
   }
 
@@ -369,6 +370,7 @@ function selectBookingService(text, base = {}, state = {}) {
         matched?.commercial_name ||
         matched?.name ||
         (asksMaintenance ? "Manutenção" : asksApplication ? "Aplicação de Mega Hair" : evaluation.name),
+      serviceValue: serviceValue(evaluation),
       note:
         matched && !matched.allow_auto_booking
           ? "O serviço solicitado exige validação da equipe; a IA vai registrar uma avaliação primeiro."
@@ -385,6 +387,7 @@ function buildServiceOptions(base = {}) {
     serviceId: service.id,
     serviceName: service.commercial_name || service.name,
     requestedServiceName: service.commercial_name || service.name,
+    serviceValue: serviceValue(service),
   }));
 }
 
@@ -399,6 +402,73 @@ function extractClientName(text) {
   return clean(match[1]).replace(/[.!,?].*$/, "").slice(0, 80);
 }
 
+function extractBookingClientName(text, { allowPlain = false } = {}) {
+  const value = clean(text);
+  const match = value.match(/(?:nome\s*:|meu nome (?:é|e)|sou|me chamo|pode colocar como)\s+([^0-9@,;|]{2,80})/i);
+  if (match) return clean(match[1]).replace(/[.!,?].*$/, "").slice(0, 80);
+  if (!allowPlain) return "";
+  const withoutContacts = value
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, " ")
+    .replace(/(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}[-\s]?\d{4}/g, " ")
+    .replace(/\b(nome|email|e-mail|telefone|celular|whats|whatsapp)\b\s*:?/gi, " ")
+    .replace(/[|,;]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!/^[^\d@,;|]{2,80}$/.test(withoutContacts)) return "";
+  const parts = withoutContacts.split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return "";
+  return withoutContacts.slice(0, 80);
+}
+
+function extractClientEmail(text) {
+  const match = clean(text).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return match ? match[0].toLowerCase().slice(0, 160) : "";
+}
+
+function normalizeBookingPhone(value, fallback = "") {
+  const digits = clean(value).replace(/\D/g, "");
+  const candidate = digits || clean(fallback).replace(/\D/g, "");
+  if (!candidate) return "";
+  if (/^55\d{10,11}$/.test(candidate)) return candidate;
+  if (/^\d{10,11}$/.test(candidate)) return `55${candidate}`;
+  return candidate.slice(0, 16);
+}
+
+function extractClientPhone(text) {
+  const match = clean(text).match(/(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}[-\s]?\d{4}/);
+  if (!match) return "";
+  return normalizeBookingPhone(match[0]);
+}
+
+function applyBookingContactFields(state, text, { allowPlainName = false } = {}) {
+  const email = extractClientEmail(text);
+  const phone = extractClientPhone(text);
+  const name = extractBookingClientName(text, { allowPlain: allowPlainName || Boolean(email || phone) });
+  if (name) state.clientName = name;
+  if (email) state.clientEmail = email;
+  if (phone) state.clientPhone = phone;
+  return state;
+}
+
+function formatBookingCurrency(value) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return "valor sob consulta";
+  return amount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function serviceValue(service = {}) {
+  const amount = Number(service.initial_price || service.base_price || 0);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function missingBookingContactFields(state) {
+  const missing = [];
+  if (!clean(state.clientName)) missing.push("nome completo");
+  if (!clean(state.clientEmail)) missing.push("e-mail");
+  if (!normalizeBookingPhone(state.clientPhone)) missing.push("telefone");
+  return missing;
+}
+
 async function saveBookingState(conversationId, state) {
   await query(
     `update public.whatsapp_conversations
@@ -408,8 +478,9 @@ async function saveBookingState(conversationId, state) {
   );
 }
 
-async function ensureClientForBooking(client, { phoneNumber, clientName }) {
-  const found = await findClientByPhone(client, phoneNumber);
+async function ensureClientForBooking(client, { phoneNumber, clientName, clientEmail = "", clientPhone = "" }) {
+  const contactPhone = normalizeBookingPhone(clientPhone, phoneNumber);
+  const found = await findClientByPhone(client, contactPhone || phoneNumber);
   if (found?.id) {
     const profile = await client.query(
       `select c.id as client_id,p.id as profile_id,p.full_name
@@ -419,6 +490,23 @@ async function ensureClientForBooking(client, { phoneNumber, clientName }) {
         limit 1`,
       [found.id],
     );
+    if (profile.rows[0]?.profile_id) {
+      await client.query(
+        `update public.clients
+            set preferences=coalesce(preferences,'{}'::jsonb) || $2::jsonb
+          where id=$1`,
+        [
+          profile.rows[0].client_id,
+          JSON.stringify({
+            whatsapp_ai_contact: {
+              name: clean(clientName) || profile.rows[0].full_name || "",
+              email: clean(clientEmail),
+              phone: contactPhone || phoneNumber,
+            },
+          }),
+        ],
+      ).catch(() => null);
+    }
     return profile.rows[0] || { client_id: found.id, profile_id: null, full_name: found.full_name };
   }
 
@@ -426,7 +514,7 @@ async function ensureClientForBooking(client, { phoneNumber, clientName }) {
     clean(clientName).length >= 2
       ? clean(clientName).slice(0, 120)
       : `Cliente WhatsApp ${String(phoneNumber || "").slice(-4)}`;
-  const email = `whatsapp+${String(phoneNumber).replace(/\D/g, "")}@carolsol.local`;
+  const email = `whatsapp+${String(contactPhone || phoneNumber).replace(/\D/g, "")}@carolsol.local`;
   const user = await client.query(
     `insert into auth.users(email, phone, encrypted_password, email_confirmed_at, raw_user_meta_data)
      values($1,$2,null,now(),$3)
@@ -435,7 +523,7 @@ async function ensureClientForBooking(client, { phoneNumber, clientName }) {
             raw_user_meta_data=coalesce(nullif(auth.users.raw_user_meta_data,'{}'::jsonb), excluded.raw_user_meta_data),
             updated_at=now()
      returning id`,
-    [email, phoneNumber, JSON.stringify({ name: safeName, source: "whatsapp_ai" })],
+    [email, contactPhone || phoneNumber, JSON.stringify({ name: safeName, email: clean(clientEmail), source: "whatsapp_ai" })],
   );
   const profile = await client.query(
     `insert into public.profiles(id, role, full_name, phone, notification_preferences)
@@ -448,14 +536,25 @@ async function ensureClientForBooking(client, { phoneNumber, clientName }) {
             phone=coalesce(public.profiles.phone, excluded.phone),
             updated_at=now()
      returning id as profile_id, full_name`,
-    [user.rows[0].id, safeName, phoneNumber],
+    [user.rows[0].id, safeName, contactPhone || phoneNumber],
   );
   const insertedClient = await client.query(
     `insert into public.clients(profile_id, source, preferences)
-     values($1,'WhatsApp IA','{}')
-     on conflict(profile_id) do update set source=coalesce(public.clients.source, excluded.source)
+     values($1,'WhatsApp IA',$2)
+     on conflict(profile_id) do update set
+       source=coalesce(public.clients.source, excluded.source),
+       preferences=coalesce(public.clients.preferences,'{}'::jsonb) || excluded.preferences
      returning id as client_id`,
-    [profile.rows[0].profile_id],
+    [
+      profile.rows[0].profile_id,
+      JSON.stringify({
+        whatsapp_ai_contact: {
+          name: safeName,
+          email: clean(clientEmail),
+          phone: contactPhone || phoneNumber,
+        },
+      }),
+    ],
   );
   await client.query(
     `insert into public.consent_logs(profile_id, consent_type, granted, policy_version, source)
@@ -540,13 +639,15 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       [conversationId],
     );
     if (!lockedConversation.rows[0]) throw new Error("Conversa não encontrada para agendamento.");
-    if (lockedConversation.rows[0].appointment_id) {
+    if (lockedConversation.rows[0].appointment_id && !state.previousAppointmentId) {
       return { id: lockedConversation.rows[0].appointment_id, alreadyCreated: true };
     }
 
     const bookingClient = await ensureClientForBooking(client, {
       phoneNumber,
       clientName: state.clientName,
+      clientEmail: state.clientEmail,
+      clientPhone: state.clientPhone,
     });
     if (!bookingClient?.client_id) throw new Error("Cliente não encontrado para o agendamento.");
 
@@ -605,14 +706,26 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       origin: "whatsapp_ai",
       conversation_id: conversationId,
       requested_service: state.requestedServiceName || state.serviceName,
+      service_value: Number(state.serviceValue || service.rows[0].base_price || 0),
+      contact: {
+        name: clean(state.clientName),
+        email: clean(state.clientEmail),
+        phone: normalizeBookingPhone(state.clientPhone, phoneNumber),
+      },
       selected_by_ai: true,
       requires_human_confirmation: true,
     };
     const notes = [
       "Pré-agendamento criado pela IA do WhatsApp.",
+      state.clientName ? `Nome informado: ${state.clientName}.` : "",
+      state.clientEmail ? `E-mail informado: ${state.clientEmail}.` : "",
+      normalizeBookingPhone(state.clientPhone, phoneNumber)
+        ? `Telefone informado: ${normalizeBookingPhone(state.clientPhone, phoneNumber)}.`
+        : "",
       state.requestedServiceName && state.requestedServiceName !== state.serviceName
         ? `Serviço solicitado pela cliente: ${state.requestedServiceName}.`
         : "",
+      `Valor registrado: ${formatBookingCurrency(state.serviceValue || service.rows[0].base_price || 0)}.`,
       "Confirmar disponibilidade e detalhes com a cliente antes do atendimento.",
     ].filter(Boolean).join(" ");
 
@@ -631,7 +744,7 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
         startsAt.toISOString(),
         endsAt.toISOString(),
         notes,
-        service.rows[0].base_price || 0,
+        state.serviceValue || service.rows[0].base_price || 0,
         JSON.stringify(intake),
         bookingClient.profile_id || null,
       ],
@@ -884,10 +997,14 @@ async function nextAvailableSlotOptions({ serviceId, fromDate, period = "" }) {
 
 function buildBookingSummary(state) {
   return [
+    state.clientName ? `Nome: ${state.clientName}` : "",
+    state.clientEmail ? `E-mail: ${state.clientEmail}` : "",
+    state.clientPhone ? `Telefone: ${state.clientPhone}` : "",
     `Serviço: ${state.serviceName}`,
     state.requestedServiceName && state.requestedServiceName !== state.serviceName
       ? `Pedido informado: ${state.requestedServiceName}`
       : "",
+    `Valor: ${formatBookingCurrency(state.serviceValue)}`,
     `Data e horário: ${formatDateLabel(state.date)} às ${state.time}`,
     state.professionalName ? `Profissional: ${state.professionalName}` : "",
   ].filter(Boolean).join("\n");
@@ -908,6 +1025,18 @@ async function handleStructuredBookingFlow({
   if (!flowEnabled(base, "pre_agendamento") && !flowEnabled(base, "verificacao_agenda")) return null;
 
   let currentState = parseJsonObject(recorded.conversation.booking_state);
+  const persistedAppointmentId = recorded.conversation.appointment_id || currentState.appointmentId || "";
+  if (
+    persistedAppointmentId &&
+    currentState.status !== "booked" &&
+    !currentState.previousAppointmentId
+  ) {
+    currentState = {
+      ...currentState,
+      status: "booked",
+      appointmentId: persistedAppointmentId,
+    };
+  }
   if (currentState.status === "booked" && currentState.appointmentId) {
     if (isBookedFollowupHandoffChoice(text)) {
       const responseText =
@@ -970,8 +1099,11 @@ async function handleStructuredBookingFlow({
     ...currentState,
     updatedAt: new Date().toISOString(),
   };
-  const detectedName = extractClientName(text);
-  if (detectedName) state.clientName = detectedName;
+  state.clientPhone = normalizeBookingPhone(state.clientPhone, normalized.phoneNumber);
+  applyBookingContactFields(state, text, { allowPlainName: state.status === "awaiting_contact" });
+  if (!state.clientName && recorded.client?.full_name && !/^Cliente WhatsApp/i.test(recorded.client.full_name)) {
+    state.clientName = recorded.client.full_name;
+  }
 
   const serviceChoice = selectBookingService(text, base, state);
   if (!state.serviceId && serviceChoice) {
@@ -979,6 +1111,7 @@ async function handleStructuredBookingFlow({
       serviceId: serviceChoice.serviceId,
       serviceName: serviceChoice.serviceName,
       requestedServiceName: serviceChoice.requestedServiceName || serviceChoice.serviceName,
+      serviceValue: serviceChoice.serviceValue || 0,
       serviceNote: serviceChoice.note || "",
     });
   }
@@ -991,6 +1124,7 @@ async function handleStructuredBookingFlow({
         serviceId: serviceOptions[0].serviceId,
         serviceName: serviceOptions[0].serviceName,
         requestedServiceName: serviceOptions[0].requestedServiceName,
+        serviceValue: serviceOptions[0].serviceValue || 0,
       });
     } else {
       state.serviceOptions = serviceOptions;
@@ -1129,6 +1263,32 @@ async function handleStructuredBookingFlow({
       });
       return { ok: true, replied: true, reason: "booking_slot_options", conversationId };
     }
+  }
+
+  const missingContact = missingBookingContactFields(state);
+  if (missingContact.length) {
+    state.status = "awaiting_contact";
+    await saveBookingState(conversationId, state);
+    const responseText = [
+      "Perfeito, encontrei o horário. Antes de mostrar o resumo final, preciso dos dados do pré-agendamento:",
+      `Serviço: ${state.serviceName}`,
+      `Valor: ${formatBookingCurrency(state.serviceValue)}`,
+      `Telefone de contato: ${state.clientPhone} (vou usar este WhatsApp; se quiser outro, envie junto).`,
+      `Me envie ${missingContact.join(" e ")}. Exemplo: Maria Silva, maria@email.com`,
+    ].join("\n\n");
+    await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_contact_request" });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    await logAiRequest({
+      conversationId,
+      messageId: inboundMessageId,
+      provider: "local_booking",
+      model: "booking_state_machine",
+      status: "contact_request",
+      queueLatencyMs,
+      providerLatencyMs: 0,
+      totalLatencyMs: Date.now() - receivedAt.getTime(),
+    });
+    return { ok: true, replied: true, reason: "booking_contact_request", conversationId };
   }
 
   if (!isAffirmativeBookingConfirmation(text)) {
@@ -1397,7 +1557,7 @@ export function buildBookingGuidance({
     ? "A confirmação explícita foi detectada. O backend registrará a solicitação antes do envio da resposta. Informe que a solicitação foi registrada e que a equipe confirmará a disponibilidade; não diga que o horário já está confirmado."
     : [
         "Avance o atendimento sem repetir explicações ou perguntas já respondidas.",
-        "Identifique no histórico o que a cliente já informou e pergunte somente UM dado faltante por mensagem, nesta ordem: serviço desejado, data preferida, período/horário e nome (apenas se a cliente não estiver cadastrada).",
+        "Identifique no histórico o que a cliente já informou e pergunte somente UM dado faltante por mensagem, nesta ordem: serviço desejado, data preferida, período/horário, nome completo, e-mail e telefone. Sempre inclua o valor real/inicial do serviço quando o serviço estiver definido.",
         "Quando todos os dados estiverem claros, mostre um resumo curto e peça confirmação explícita para registrar a solicitação.",
       ].join(" ");
 

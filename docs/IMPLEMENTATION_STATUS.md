@@ -843,3 +843,18 @@ Trabalhar somente em **validação operacional da agenda WhatsApp IA**: testar u
 ## Próxima etapa recomendada (Módulo específico)
 
 Trabalhar somente em **validação operacional da agenda WhatsApp IA em produção**: fazer um pré-agendamento real pelo WhatsApp, responder uma dúvida em seguida e confirmar que o bot não repete o comprovante nem bloqueia a conversa.
+
+## Ajuste desta etapa (Questionário completo e opções pós-agendamento)
+
+- **Causa adicional corrigida:** conversas com `appointment_id` gravado, mas `booking_state` antigo ainda em `awaiting_confirmation`, podiam continuar exibindo o “Resumo do pré-agendamento” ao receber `1`, `2` ou `3`.
+- **Fonte de verdade reforçada:** quando `whatsapp_conversations.appointment_id` existe, o motor trata a conversa como pós-agendamento mesmo que o estado JSON esteja defasado.
+- **Opções 1/2/3 protegidas:** opção `1` reinicia novo fluxo de agenda; opção `2` libera dúvida; opção `3` chama equipe. Nenhuma delas deve voltar ao resumo antigo do agendamento já registrado.
+- **Questionário obrigatório antes do resumo:** antes de mostrar o resumo final e aceitar o “sim”, o fluxo agora coleta nome completo e e-mail; o telefone é capturado do WhatsApp e pode ser substituído se a cliente informar outro.
+- **Valor do serviço capturado:** a escolha de serviço grava `serviceValue`, exibe o valor no pedido de dados e no resumo, e persiste o valor em `estimated_value`, `original_value` e `intake_data.service_value`.
+- **Dados do atendimento persistidos:** `appointments.intake_data.contact` passa a receber nome, e-mail e telefone; as observações do agendamento também registram esses dados para leitura rápida no painel.
+- **Segurança preservada:** e-mail informado pelo WhatsApp não sobrescreve credencial de conta existente; para novos clientes, o cadastro técnico continua seguro e os dados informados ficam nas preferências/intake.
+- **Validação técnica:** `node --test tests/ai-router.test.js` passou com 10/10, incluindo regressões para contato obrigatório antes da confirmação e opção pós-agendamento com estado antigo.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **validação real do questionário WhatsApp IA**: fazer um agendamento real informando nome/e-mail, conferir o resumo com valor e confirmar se `intake_data.contact` aparece no painel/admin/profissional.
