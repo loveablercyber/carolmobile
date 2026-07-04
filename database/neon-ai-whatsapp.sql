@@ -139,6 +139,7 @@ create table if not exists public.whatsapp_conversations (
   ai_enabled boolean not null default true,
   last_message_at timestamptz,
   last_message_preview text,
+  booking_state jsonb not null default '{}',
   appointment_id uuid references public.appointments(id),
   payment_id uuid references public.payments(id),
   origin text not null default 'whatsapp_ai',
@@ -282,6 +283,8 @@ create index if not exists whatsapp_incoming_queue_phone_processed_idx on public
 create index if not exists ai_request_logs_created_idx on public.ai_request_logs(created_at desc);
 create index if not exists knowledge_articles_category_idx on public.knowledge_articles(category);
 create index if not exists knowledge_articles_status_idx on public.knowledge_articles(status);
+
+alter table public.whatsapp_conversations add column if not exists booking_state jsonb not null default '{}';
 
 insert into public.ai_settings(business_id, system_prompt, welcome_message, after_hours_message, human_handoff_message, closing_message)
 values(

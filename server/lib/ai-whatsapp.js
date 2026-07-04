@@ -200,6 +200,7 @@ create table if not exists public.whatsapp_conversations (
   ai_enabled boolean not null default true,
   last_message_at timestamptz,
   last_message_preview text,
+  booking_state jsonb not null default '{}',
   appointment_id uuid references public.appointments(id),
   payment_id uuid references public.payments(id),
   origin text not null default 'whatsapp_ai',
@@ -822,6 +823,7 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS circuit_breaker_cooldown_seconds integer not null default 60;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS gemini_circuit_breaker_until timestamptz;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS groq_circuit_breaker_until timestamptz;
+    ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS booking_state jsonb not null default '{}';
   `).catch(err => console.error("Failed to alter public.ai_settings table", err));
 
   await query(`

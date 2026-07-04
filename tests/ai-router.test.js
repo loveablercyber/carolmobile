@@ -448,3 +448,222 @@ test("processIncomingWhatsAppWebhook persists a booking request before replying 
   assert.equal(geminiCalled, false);
   assert.equal(groqCalled, false);
 });
+
+test("processIncomingWhatsAppWebhook creates a real appointment for confirmed WhatsApp pre-booking", async () => {
+  let openAiCalled = false;
+  let appointmentCreated = false;
+  let conversationLinked = false;
+  const queue = [];
+  const ids = {
+    conversation: "11111111-1111-4111-8111-111111111111",
+    inbound: "22222222-2222-4222-8222-222222222222",
+    service: "33333333-3333-4333-8333-333333333333",
+    professional: "44444444-4444-4444-8444-444444444444",
+    professionalProfile: "55555555-5555-4555-8555-555555555555",
+    client: "66666666-6666-4666-8666-666666666666",
+    clientProfile: "77777777-7777-4777-8777-777777777777",
+    location: "88888888-8888-4888-8888-888888888888",
+    appointment: "99999999-9999-4999-8999-999999999999",
+  };
+  const bookingState = {
+    status: "awaiting_confirmation",
+    serviceId: ids.service,
+    serviceName: "Avaliação personalizada",
+    requestedServiceName: "Aplicação de Mega Hair",
+    date: "2026-07-10",
+    time: "09:00",
+    professionalId: ids.professional,
+    professionalName: "Renata Moura",
+  };
+  const mockSettings = {
+    id: "settings-booking",
+    business_id: "default",
+    enabled: true,
+    welcome_message: "Olá!",
+    after_hours_message: "Fora do horário.",
+    human_handoff_message: "Vou chamar a equipe.",
+    closing_message: "Obrigada.",
+    timezone: "America/Sao_Paulo",
+    allow_24h: true,
+    cache_enabled: false,
+    max_auto_messages: 12,
+    grouping_window_ms: 1,
+    allow_new_contacts: true,
+    allow_existing_clients: true,
+    allow_auto_booking: true,
+    require_booking_confirmation: true,
+    primary_provider: "openai",
+    primary_model: "gpt-5.4-mini",
+    fallback_provider: "openai",
+    fallback_model: "gpt-5.4-mini",
+    fallback_enabled: false,
+    max_retries: 0,
+    timeout_ms: 1000,
+  };
+
+  pool.query = async (text, params = []) => {
+    if (text.includes("insert into public.whatsapp_incoming_queue")) {
+      queue.push({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", phone_number: params[0], message_id: params[1], text: params[2], processed: false });
+      return { rowCount: 1, rows: [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }] };
+    }
+    if (text.includes("whatsapp_incoming_queue") && text.includes("select")) {
+      if (text.includes("processed = false")) {
+        const pending = queue.filter(item => item.phone_number === params[0] && !item.processed);
+        return { rowCount: pending.length, rows: pending };
+      }
+      const isDup = queue.some(item => item.message_id === params[0]);
+      return { rowCount: isDup ? 1 : 0, rows: isDup ? [{ 1: 1 }] : [] };
+    }
+    if (text.includes("update public.whatsapp_incoming_queue")) {
+      for (const item of queue) item.processed = true;
+      return { rowCount: queue.length, rows: [] };
+    }
+    if (text.includes("ai_settings") && text.includes("select")) {
+      return { rowCount: 1, rows: [mockSettings] };
+    }
+    if (text.includes("from public.whatsapp_sessions")) {
+      return { rowCount: 1, rows: [{ id: "session-id", professional_id: ids.professional }] };
+    }
+    if (text.includes("from public.whatsapp_conversations") && text.includes("where phone_number")) {
+      return {
+        rowCount: 1,
+        rows: [{
+          id: ids.conversation,
+          phone_number: "5511999999999",
+          status: "ai",
+          ai_enabled: true,
+          booking_state: bookingState,
+          client_id: null,
+          appointment_id: null,
+        }],
+      };
+    }
+    if (text.includes("select id from public.whatsapp_conversations") && text.includes("for update")) {
+      return { rowCount: 1, rows: [{ id: ids.conversation }] };
+    }
+    if (text.includes("select id,appointment_id from public.whatsapp_conversations")) {
+      return { rowCount: 1, rows: [{ id: ids.conversation, appointment_id: null }] };
+    }
+    if (text.includes("insert into public.whatsapp_messages")) {
+      return { rowCount: 1, rows: [{ id: ids.inbound }] };
+    }
+    if (text.includes("update public.whatsapp_conversations")) {
+      if (text.includes("appointment_id=$4")) conversationLinked = true;
+      return { rowCount: 1, rows: [] };
+    }
+    if (text.includes("from public.clients c") && text.includes("regexp_replace")) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (text.includes("insert into auth.users")) {
+      return { rowCount: 1, rows: [{ id: ids.clientProfile }] };
+    }
+    if (text.includes("insert into public.profiles")) {
+      return { rowCount: 1, rows: [{ profile_id: ids.clientProfile, full_name: "Cliente WhatsApp 9999" }] };
+    }
+    if (text.includes("insert into public.clients")) {
+      return { rowCount: 1, rows: [{ client_id: ids.client }] };
+    }
+    if (text.includes("from public.services where id=$1 and active")) {
+      return {
+        rowCount: 1,
+        rows: [{ id: ids.service, name: "Avaliação personalizada", duration_minutes: 45, base_price: 80, deposit_amount: 0, active: true }],
+      };
+    }
+    if (text.includes("from public.professionals p") && text.includes("where p.id=$1")) {
+      return {
+        rowCount: 1,
+        rows: [{ id: ids.professional, profile_id: ids.professionalProfile, full_name: "Renata Moura" }],
+      };
+    }
+    if (text.includes("public.professional_availability")) {
+      return { rowCount: 1, rows: [{ starts_at: "08:00", ends_at: "18:00", active: true }] };
+    }
+    if (text.includes("conflicts limit 1")) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (text.includes("from public.salon_locations")) {
+      return { rowCount: 1, rows: [{ id: ids.location }] };
+    }
+    if (text.includes("select uuid_generate_v4() as id")) {
+      return { rowCount: 1, rows: [{ id: ids.appointment }] };
+    }
+    if (text.includes("insert into public.appointments")) {
+      appointmentCreated = true;
+      assert.equal(params[2], ids.client);
+      assert.equal(params[3], ids.professional);
+      assert.equal(params[4], ids.service);
+      assert.equal(params[8].includes("Pré-agendamento criado pela IA"), true);
+      return { rowCount: 1, rows: [] };
+    }
+    if (text.includes("select s.id,s.name") && text.includes("ai_service_settings")) {
+      return {
+        rowCount: 1,
+        rows: [{
+          id: ids.service,
+          name: "Avaliação personalizada",
+          active: true,
+          ai_active: true,
+          commercial_name: "Avaliação personalizada",
+          allow_auto_booking: true,
+          priority_order: 1,
+        }],
+      };
+    }
+    if (text.includes("from public.ai_automation_flows") && text.includes("order by name")) {
+      return {
+        rowCount: 2,
+        rows: [
+          { flow_key: "pre_agendamento", name: "Pré-agendamento", enabled: true },
+          { flow_key: "verificacao_agenda", name: "Verificação de agenda", enabled: true },
+        ],
+      };
+    }
+    if (text.includes("from public.knowledge_articles")) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (text.includes("from public.plans") || text.includes("from public.coupons")) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (text.includes("whatsapp_messages") && text.includes("select") && text.includes("count")) {
+      return { rowCount: 1, rows: [{ total: 0 }] };
+    }
+    return { rowCount: 1, rows: [{ id: "generic-id" }] };
+  };
+  pool.connect = async () => ({
+    query: pool.query,
+    release: () => {},
+  });
+
+  globalThis.fetch = async (url) => {
+    if (url.includes("/api/send-text")) {
+      return new Response(JSON.stringify({ success: true, messageId: "baileys-booking-created" }));
+    }
+    if (url.includes("/api/presence")) {
+      return new Response(JSON.stringify({ success: true }));
+    }
+    if (url.includes("api.openai.com")) {
+      openAiCalled = true;
+      return new Response(JSON.stringify({ output: [] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ success: true, status: "ready" }));
+  };
+
+  process.env.BAILEYS_API_URL = "https://baileys.example.com";
+  process.env.BAILEYS_API_KEY = "test-key";
+  process.env.OPENAI_ENABLED = "true";
+  process.env.OPENAI_API_KEY = "openai-key";
+  process.env.OPENAI_MODEL = "gpt-5.4-mini";
+
+  const result = await processIncomingWhatsAppWebhook({
+    from: "5511999999999@s.whatsapp.net",
+    text: "sim",
+    isFromMe: false,
+    messageId: "msg-booking-confirmed-1",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, "booking_created");
+  assert.equal(appointmentCreated, true);
+  assert.equal(conversationLinked, true);
+  assert.equal(openAiCalled, false);
+});
