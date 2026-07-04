@@ -830,3 +830,16 @@ Trabalhar somente em **validação final do pareamento por número**: após o co
 ## Próxima etapa recomendada (Módulo específico)
 
 Trabalhar somente em **validação operacional da agenda WhatsApp IA**: testar uma conversa privada real escolhendo serviço, data e horário por número, confirmar que o novo atendimento aparece em `/admin/agendamentos` e `/profissional/agenda`, e ajustar apenas as mensagens do fluxo se a UX ficar confusa.
+
+## Ajuste desta etapa (Continuidade após pré-agendamento WhatsApp IA)
+
+- **Causa corrigida:** após criar um pré-agendamento real, o `booking_state.status='booked'` fazia qualquer próxima mensagem cair novamente no texto “seu pré-agendamento já foi registrado”, porque o último preview da conversa ainda continha “pré-agendamento”.
+- **Continuidade liberada:** mensagens normais depois de um pré-agendamento registrado agora saem do fluxo estruturado e seguem para a IA responder dúvidas, sem repetir o comprovante.
+- **Opções pós-agendamento adicionadas:** a mensagem de sucesso agora oferece `1) Agendar outro serviço ou avaliação`, `2) Tirar uma dúvida sobre Mega Hair` e `3) Falar com a equipe`.
+- **Novo agendamento controlado:** opção `1` ou pedido explícito de novo horário reinicia o fluxo de agenda sem apagar o vínculo do agendamento anterior.
+- **Dúvida e equipe:** opção `2` pede a dúvida da cliente; opção `3` cria solicitação de atenção humana sem desligar a IA, mantendo a regra de que somente o admin pausa/desabilita a conversa.
+- **Validação técnica:** `node --check server/lib/whatsapp-ai-engine.js` passou; `node --test tests/ai-router.test.js` passou com 8/8, incluindo regressão para pergunta normal após pré-agendamento e validação das opções 1/2/3.
+
+## Próxima etapa recomendada (Módulo específico)
+
+Trabalhar somente em **validação operacional da agenda WhatsApp IA em produção**: fazer um pré-agendamento real pelo WhatsApp, responder uma dúvida em seguida e confirmar que o bot não repete o comprovante nem bloqueia a conversa.

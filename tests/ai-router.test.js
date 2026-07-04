@@ -4,7 +4,7 @@ import { getGeminiKeys } from "../server/lib/gemini-client.js";
 import { generateGroqText, getGroqKeys } from "../server/lib/groq-client.js";
 import { pool } from "../server/lib/db.js";
 import { processIncomingWhatsAppWebhook } from "../server/lib/whatsapp-ai-engine.js";
-import { invalidateAiSettingsCache } from "../server/lib/ai-whatsapp.js";
+import { invalidateAiBaseCache, invalidateAiSettingsCache } from "../server/lib/ai-whatsapp.js";
 
 // Save original objects
 const originalQuery = pool.query;
@@ -27,6 +27,7 @@ beforeEach(() => {
     delete process.env[key];
   }
   invalidateAiSettingsCache();
+  invalidateAiBaseCache();
 });
 
 afterEach(() => {
@@ -453,6 +454,7 @@ test("processIncomingWhatsAppWebhook creates a real appointment for confirmed Wh
   let openAiCalled = false;
   let appointmentCreated = false;
   let conversationLinked = false;
+  const sentTexts = [];
   const queue = [];
   const ids = {
     conversation: "11111111-1111-4111-8111-111111111111",
@@ -634,8 +636,10 @@ test("processIncomingWhatsAppWebhook creates a real appointment for confirmed Wh
     release: () => {},
   });
 
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = async (url, options = {}) => {
     if (url.includes("/api/send-text")) {
+      const body = JSON.parse(options.body || "{}");
+      sentTexts.push(body.text || "");
       return new Response(JSON.stringify({ success: true, messageId: "baileys-booking-created" }));
     }
     if (url.includes("/api/presence")) {
@@ -666,4 +670,177 @@ test("processIncomingWhatsAppWebhook creates a real appointment for confirmed Wh
   assert.equal(appointmentCreated, true);
   assert.equal(conversationLinked, true);
   assert.equal(openAiCalled, false);
+  assert.equal(sentTexts.some(text => text.includes("1) Agendar outro")), true);
+  assert.equal(sentTexts.some(text => text.includes("2) Tirar uma dúvida")), true);
+  assert.equal(sentTexts.some(text => text.includes("3) Falar com a equipe")), true);
+});
+
+test("processIncomingWhatsAppWebhook lets questions continue after a booked pre-booking", async () => {
+  let openAiCalled = false;
+  let alreadyCreatedSent = false;
+  const sentTexts = [];
+  const queue = [];
+  const ids = {
+    conversation: "11111111-1111-4111-8111-111111111112",
+    inbound: "22222222-2222-4222-8222-222222222223",
+    appointment: "99999999-9999-4999-8999-999999999998",
+  };
+  const bookingState = {
+    status: "booked",
+    appointmentId: ids.appointment,
+    bookingCode: "CS-TESTE123",
+  };
+  const mockSettings = {
+    id: "settings-booked-followup",
+    business_id: "default",
+    enabled: true,
+    welcome_message: "Olá!",
+    after_hours_message: "Fora do horário.",
+    human_handoff_message: "Vou chamar a equipe.",
+    closing_message: "Obrigada.",
+    timezone: "America/Sao_Paulo",
+    allow_24h: true,
+    cache_enabled: false,
+    max_auto_messages: 12,
+    grouping_window_ms: 1,
+    allow_new_contacts: true,
+    allow_existing_clients: true,
+    allow_auto_booking: true,
+    require_booking_confirmation: true,
+    primary_provider: "openai",
+    primary_model: "gpt-5.4-mini",
+    fallback_provider: "openai",
+    fallback_model: "gpt-5.4-mini",
+    fallback_enabled: false,
+    max_retries: 0,
+    timeout_ms: 1000,
+  };
+
+  pool.query = async (text, params = []) => {
+    if (text.includes("insert into public.whatsapp_incoming_queue")) {
+      queue.push({ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", phone_number: params[0], message_id: params[1], text: params[2], processed: false });
+      return { rowCount: 1, rows: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }] };
+    }
+    if (text.includes("whatsapp_incoming_queue") && text.includes("select")) {
+      if (text.includes("processed = false")) {
+        const pending = queue.filter(item => item.phone_number === params[0] && !item.processed);
+        return { rowCount: pending.length, rows: pending };
+      }
+      const isDup = queue.some(item => item.message_id === params[0]);
+      return { rowCount: isDup ? 1 : 0, rows: isDup ? [{ 1: 1 }] : [] };
+    }
+    if (text.includes("update public.whatsapp_incoming_queue")) {
+      for (const item of queue) item.processed = true;
+      return { rowCount: queue.length, rows: [] };
+    }
+    if (text.includes("ai_settings") && text.includes("select")) {
+      return { rowCount: 1, rows: [mockSettings] };
+    }
+    if (text.includes("from public.whatsapp_sessions")) {
+      return { rowCount: 1, rows: [{ id: "session-id", professional_id: null }] };
+    }
+    if (text.includes("from public.whatsapp_conversations") && text.includes("where phone_number")) {
+      return {
+        rowCount: 1,
+        rows: [{
+          id: ids.conversation,
+          phone_number: "5511999999999",
+          status: "ai",
+          ai_enabled: true,
+          last_message_preview: "Pronto, registrei sua solicitação de pré-agendamento.",
+          booking_state: bookingState,
+          client_id: null,
+          appointment_id: ids.appointment,
+        }],
+      };
+    }
+    if (text.includes("select id from public.whatsapp_conversations") && text.includes("for update")) {
+      return { rowCount: 1, rows: [{ id: ids.conversation }] };
+    }
+    if (text.includes("insert into public.whatsapp_messages")) {
+      return { rowCount: 1, rows: [{ id: ids.inbound }] };
+    }
+    if (text.includes("update public.whatsapp_conversations")) {
+      return { rowCount: 1, rows: [] };
+    }
+    if (text.includes("whatsapp_messages") && text.includes("select") && text.includes("count")) {
+      return { rowCount: 1, rows: [{ total: 1 }] };
+    }
+    if (text.includes("whatsapp_messages") && text.includes("select") && text.includes("direction")) {
+      return {
+        rowCount: 1,
+        rows: [{
+          direction: "outbound",
+          sender_type: "ai",
+          body: "Pronto, registrei sua solicitação de pré-agendamento.",
+        }],
+      };
+    }
+    if (text.includes("from public.clients c") && text.includes("regexp_replace")) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (text.includes("select s.id,s.name") && text.includes("ai_service_settings")) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (text.includes("from public.ai_automation_flows") && text.includes("order by name")) {
+      return {
+        rowCount: 2,
+        rows: [
+          { flow_key: "pre_agendamento", name: "Pré-agendamento", enabled: true },
+          { flow_key: "verificacao_agenda", name: "Verificação de agenda", enabled: true },
+        ],
+      };
+    }
+    if (text.includes("from public.knowledge_articles")) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (text.includes("from public.plans") || text.includes("from public.coupons")) {
+      return { rowCount: 0, rows: [] };
+    }
+    return { rowCount: 1, rows: [{ id: "generic-id" }] };
+  };
+  pool.connect = async () => ({
+    query: pool.query,
+    release: () => {},
+  });
+
+  globalThis.fetch = async (url, options = {}) => {
+    if (url.includes("/api/send-text")) {
+      const body = JSON.parse(options.body || "{}");
+      sentTexts.push(body.text || "");
+      alreadyCreatedSent ||= String(body.text || "").includes("já está registrado");
+      return new Response(JSON.stringify({ success: true, messageId: "baileys-followup" }));
+    }
+    if (url.includes("/api/presence")) {
+      return new Response(JSON.stringify({ success: true }));
+    }
+    if (url.includes("api.openai.com/v1/responses")) {
+      openAiCalled = true;
+      return new Response(JSON.stringify({
+        id: "resp_followup",
+        output: [{ type: "message", content: [{ type: "output_text", text: "Pode sim. O cuidado principal é manter a manutenção em dia e pentear com delicadeza." }] }],
+        usage: { input_tokens: 12, output_tokens: 8 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ success: true, status: "ready" }));
+  };
+
+  process.env.BAILEYS_API_URL = "https://baileys.example.com";
+  process.env.BAILEYS_API_KEY = "test-key";
+  process.env.OPENAI_ENABLED = "true";
+  process.env.OPENAI_API_KEY = "openai-key";
+  process.env.OPENAI_MODEL = "gpt-5.4-mini";
+
+  const result = await processIncomingWhatsAppWebhook({
+    from: "5511999999999@s.whatsapp.net",
+    text: "quero fazer uma pergunta: quais cuidados eu preciso ter com mega hair?",
+    isFromMe: false,
+    messageId: "msg-booked-followup-question-1",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, "openai_reply");
+  assert.equal(openAiCalled, true);
+  assert.equal(alreadyCreatedSent, false);
+  assert.equal(sentTexts.some(text => text.includes("Pode sim.")), true);
 });

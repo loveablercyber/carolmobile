@@ -743,6 +743,111 @@ function isBookingIntent(text) {
   ]);
 }
 
+function bookingFollowupOptionsText() {
+  return [
+    "Posso continuar te ajudando por aqui:",
+    "1) Agendar outro serviço ou avaliação",
+    "2) Tirar uma dúvida sobre Mega Hair",
+    "3) Falar com a equipe",
+  ].join("\n");
+}
+
+function buildAlreadyBookedResponse(state) {
+  const code = state.bookingCode || (state.appointmentId ? String(state.appointmentId).slice(0, 8) : "");
+  return [
+    `Seu pré-agendamento já está registrado${code ? ` com o código ${code}` : ""}.`,
+    "A equipe vai confirmar os detalhes pelo WhatsApp.",
+    bookingFollowupOptionsText(),
+  ].join("\n\n");
+}
+
+function asksAboutExistingBooking(text) {
+  const normalized = normalizeText(text);
+  return includesAny(normalized, [
+    "meu pre agendamento",
+    "meu agendamento",
+    "pre agendamento registrado",
+    "agendamento registrado",
+    "codigo",
+    "protocolo",
+    "status do agendamento",
+    "ja foi registrado",
+    "ja registrou",
+    "ficou registrado",
+    "deu certo",
+    "confirmado",
+    "confirmou",
+    "esta marcado",
+    "ta marcado",
+    "esta agendado",
+    "ta agendado",
+  ]);
+}
+
+function isBookedFollowupQuestionChoice(text) {
+  return numericChoice(text) === 2;
+}
+
+function isBookedFollowupHandoffChoice(text) {
+  const normalized = normalizeText(text);
+  return numericChoice(text) === 3 || includesAny(normalized, [
+    "falar com a equipe",
+    "falar com atendente",
+    "falar com humano",
+    "chamar equipe",
+    "chamar atendente",
+    "atendente",
+  ]);
+}
+
+function isNewBookingRequestAfterBooked(text) {
+  const normalized = normalizeText(text);
+  if (numericChoice(text) === 1) return true;
+  if (asksAboutExistingBooking(text)) return false;
+  const hasServiceAction = includesAny(normalized, [
+    "quero fazer aplicacao",
+    "quero fazer uma aplicacao",
+    "quero fazer manutencao",
+    "quero fazer uma manutencao",
+    "quero fazer avaliacao",
+    "quero fazer uma avaliacao",
+    "quero fazer mega hair",
+    "quero fazer fibra russa",
+    "queria fazer aplicacao",
+    "queria fazer manutencao",
+    "queria fazer avaliacao",
+    "gostaria de fazer aplicacao",
+    "gostaria de fazer manutencao",
+    "gostaria de fazer avaliacao",
+    "preciso fazer aplicacao",
+    "preciso fazer manutencao",
+    "preciso fazer avaliacao",
+  ]);
+  return hasServiceAction || includesAny(normalized, [
+    "agendar outro",
+    "agendar outra",
+    "agendar mais",
+    "marcar outro",
+    "marcar outra",
+    "novo agendamento",
+    "nova avaliacao",
+    "outra avaliacao",
+    "outro servico",
+    "outro horario",
+    "tem horario",
+    "tem vaga",
+    "tem disponibilidade",
+    "horario disponivel",
+    "marcar horario",
+    "marcar um horario",
+    "quero agendar",
+    "queria agendar",
+    "gostaria de agendar",
+    "posso agendar",
+    "quero marcar",
+  ]);
+}
+
 function flowEnabled(base, flowKey) {
   const flow = (base.flows || []).find((item) => item.flow_key === flowKey);
   return flow ? flow.enabled !== false : true;
@@ -802,7 +907,48 @@ async function handleStructuredBookingFlow({
   if (!settings.allowAutoBooking) return null;
   if (!flowEnabled(base, "pre_agendamento") && !flowEnabled(base, "verificacao_agenda")) return null;
 
-  const currentState = parseJsonObject(recorded.conversation.booking_state);
+  let currentState = parseJsonObject(recorded.conversation.booking_state);
+  if (currentState.status === "booked" && currentState.appointmentId) {
+    if (isBookedFollowupHandoffChoice(text)) {
+      const responseText =
+        settings.humanHandoffMessage ||
+        "Certo, chamei a equipe para continuar seu atendimento por aqui.";
+      await requestHumanAttention({
+        conversationId,
+        messageId: inboundMessageId,
+        reason: "booking_followup_handoff",
+        responseText,
+      });
+      await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_followup_handoff" });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      return { ok: true, replied: true, reason: "booking_followup_handoff", conversationId };
+    }
+
+    if (isBookedFollowupQuestionChoice(text)) {
+      const responseText =
+        "Claro 😊 Me manda sua dúvida sobre Mega Hair que eu te respondo por aqui.";
+      await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_followup_question_prompt" });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      return { ok: true, replied: true, reason: "booking_followup_question_prompt", conversationId };
+    }
+
+    if (isNewBookingRequestAfterBooked(text)) {
+      currentState = {
+        status: "collecting",
+        previousAppointmentId: currentState.appointmentId,
+        previousBookingCode: currentState.bookingCode || "",
+        updatedAt: new Date().toISOString(),
+      };
+    } else if (asksAboutExistingBooking(text) || isAffirmativeBookingConfirmation(text)) {
+      const responseText = buildAlreadyBookedResponse(currentState);
+      await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_already_created" });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      return { ok: true, replied: true, reason: "booking_already_created", conversationId };
+    } else {
+      return null;
+    }
+  }
+
   const previousPrompt = normalizeText(recorded.conversation.last_message_preview || "");
   const previousPromptSuggestsBooking =
     isBookingIntent(previousPrompt) ||
@@ -813,8 +959,6 @@ async function handleStructuredBookingFlow({
       "escolha o horário",
       "responda so com o numero",
       "responda só com o número",
-      "pre agendamento",
-      "pré agendamento",
     ]);
   const active =
     (currentState.status && currentState.status !== "booked") ||
@@ -828,13 +972,6 @@ async function handleStructuredBookingFlow({
   };
   const detectedName = extractClientName(text);
   if (detectedName) state.clientName = detectedName;
-
-  if (state.status === "booked" && state.appointmentId) {
-    const responseText = `Seu pré-agendamento já foi registrado com o código ${state.bookingCode || String(state.appointmentId).slice(0, 8)}. A equipe vai confirmar os detalhes pelo WhatsApp.`;
-    await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_already_created" });
-    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
-    return { ok: true, replied: true, reason: "booking_already_created", conversationId };
-  }
 
   const serviceChoice = selectBookingService(text, base, state);
   if (!state.serviceId && serviceChoice) {
@@ -1023,13 +1160,14 @@ async function handleStructuredBookingFlow({
       phoneNumber: normalized.phoneNumber,
       state,
     });
-    const responseText = [
+    const confirmationText = [
       `Pronto, registrei sua solicitação de pré-agendamento ✨`,
       appointment.bookingCode ? `Código: ${appointment.bookingCode}` : "",
       `${appointment.service || state.serviceName} — ${formatDateLabel(state.date)} às ${state.time}`,
       appointment.professional ? `Com ${appointment.professional}` : "",
       "A equipe vai confirmar os detalhes antes do atendimento.",
     ].filter(Boolean).join("\n");
+    const responseText = [confirmationText, bookingFollowupOptionsText()].join("\n\n");
     await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_created" });
     await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
     await logAiRequest({
