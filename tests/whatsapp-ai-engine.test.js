@@ -153,6 +153,30 @@ test("extracts text from raw Baileys message when text field is absent", () => {
   assert.equal(normalized.messageId, "RAW1");
 });
 
+test("normalizes Evolution messages.upsert webhook payload safely", () => {
+  const normalized = normalizeIncomingWhatsappPayload({
+    event: "messages.upsert",
+    instance: "carolsol",
+    data: {
+      key: {
+        id: "EVO1",
+        remoteJid: "5514996405496@s.whatsapp.net",
+        fromMe: false,
+      },
+      message: {
+        conversation: "Boa tarde, tem horario?",
+      },
+      messageTimestamp: 1710000000,
+    },
+  });
+
+  assert.equal(normalized.sessionName, "carolsol");
+  assert.equal(normalized.phoneNumber, "5514996405496");
+  assert.equal(normalized.text, "Boa tarde, tem horario?");
+  assert.equal(normalized.isFromMe, false);
+  assert.equal(normalized.messageId, "EVO1");
+});
+
 test("uses explicit phone when Baileys remote JID is a LID", () => {
   const normalized = normalizeIncomingWhatsappPayload({
     from: "123456789012345@lid",

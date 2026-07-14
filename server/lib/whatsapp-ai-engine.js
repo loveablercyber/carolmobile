@@ -64,15 +64,23 @@ function firstValidPhone(...values) {
 }
 
 export function normalizeIncomingWhatsappPayload(payload = {}) {
-  const raw = payload.raw || payload.message || {};
+  const raw = payload.raw || payload.data || payload.message || {};
   const key = raw?.key || payload.key || {};
   const from =
-    clean(payload.from || payload.remoteJid || payload.jid || key.remoteJid) ||
+    clean(
+      payload.from ||
+        payload.remoteJid ||
+        payload.jid ||
+        raw.remoteJid ||
+        key.remoteJid,
+    ) ||
     "";
   const phoneNumber = firstValidPhone(
     payload.phone,
     payload.number,
     payload.senderPn,
+    raw.phone,
+    raw.number,
     raw.senderPn,
     key.remoteJidAlt,
     key.participantAlt,
@@ -82,13 +90,21 @@ export function normalizeIncomingWhatsappPayload(payload = {}) {
     key.participant,
     key.remoteJid,
   );
-  const text = clean(payload.text || payload.body || extractRawText(raw));
-  const isFromMe = truthy(payload.isFromMe ?? payload.fromMe ?? key.fromMe);
+  const text = clean(
+    payload.text ||
+      payload.body ||
+      raw.text ||
+      raw.body ||
+      raw.message?.conversation ||
+      raw.message?.extendedTextMessage?.text ||
+      extractRawText(raw),
+  );
+  const isFromMe = truthy(payload.isFromMe ?? payload.fromMe ?? raw.fromMe ?? key.fromMe);
   const messageId = clean(
-    payload.messageId || payload.id || payload.provider_message_id || key.id,
+    payload.messageId || payload.id || payload.provider_message_id || raw.id || key.id,
   );
   const sessionName =
-    clean(payload.session_name || payload.instance || payload.session) ||
+    clean(payload.session_name || payload.instance || raw.instance || payload.session) ||
     String(process.env.BAILEYS_DEFAULT_INSTANCE || "carol-sol");
   const isGroup = from.endsWith("@g.us");
   const isStatus = from === "status@broadcast";
