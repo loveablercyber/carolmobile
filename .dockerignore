@@ -1,0 +1,9 @@
+.git
+.vercel
+.env
+.env.*
+node_modules
+dist
+*.log
+*.tsbuildinfo
+coolify-server-test.*.log
