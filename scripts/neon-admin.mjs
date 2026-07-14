@@ -12,6 +12,17 @@ if (!connectionString) {
   process.exit(1);
 }
 
+function shouldUseSsl(value) {
+  try {
+    const url = new URL(value);
+    const sslMode = url.searchParams.get("sslmode");
+    if (sslMode) return !["disable", "allow", "prefer"].includes(sslMode.toLowerCase());
+    return /(neon\.tech|supabase\.(co|com)|amazonaws\.com|render\.com)$/i.test(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 const expectedTables = [
   "profiles",
   "clients",
@@ -70,7 +81,7 @@ const expectedTables = [
 
 const client = new Client({
   connectionString,
-  ssl: { rejectUnauthorized: false },
+  ssl: shouldUseSsl(connectionString) ? { rejectUnauthorized: false } : undefined,
 });
 
 async function getPublicTables() {
