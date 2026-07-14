@@ -154,7 +154,7 @@ export async function applyRecurringCheckout(paymentId, checkout) {
       await client.query(
         `insert into public.notifications(profile_id,kind,title,body,data,action_url,metadata,notification_key)
          values($1,'subscription_renewed','Plano renovado','Sua renovação automática foi confirmada.',$2,'/cliente/beneficios',$2,$3)
-         on conflict(notification_key) do nothing`,
+         on conflict(notification_key) where notification_key is not null do nothing`,
         [
           profile.rows[0].profile_id,
           JSON.stringify({ subscription_id: item.subscription_id, payment_id: paymentId }),

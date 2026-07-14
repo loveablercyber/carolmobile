@@ -91,7 +91,7 @@ async function handleReminders(req, res) {
       .replace('{service}', appointment.service)
       .replace('{professional}', appointment.professional)
       .replace('{window}', window.label);
-    const inserted = await query(`insert into public.notifications(profile_id,kind,title,body,data,notification_key,scheduled_at) values($1,'appointment_reminder',$2,$3,$4,$5,now()) on conflict(notification_key) do nothing returning id`, [appointment.profile_id, `Lembrete de agendamento — ${window.key}`, text, JSON.stringify({ appointment_id: appointment.id }), notificationKey])
+    const inserted = await query(`insert into public.notifications(profile_id,kind,title,body,data,notification_key,scheduled_at) values($1,'appointment_reminder',$2,$3,$4,$5,now()) on conflict(notification_key) where notification_key is not null do nothing returning id`, [appointment.profile_id, `Lembrete de agendamento — ${window.key}`, text, JSON.stringify({ appointment_id: appointment.id }), notificationKey])
     const notificationId = inserted.rows[0]?.id
     if (!notificationId) continue
     const deliveries = []
@@ -185,7 +185,7 @@ async function handleBillingWhatsapp(req, res) {
     const inserted = await query(
       `insert into public.notifications(profile_id,kind,title,body,data,action_url,metadata,notification_key,scheduled_at)
        values($1,'payment_whatsapp_followup','Cobranca disponivel',$2,$3,$4,$3,$5,now())
-       on conflict(notification_key) do nothing returning id`,
+       on conflict(notification_key) where notification_key is not null do nothing returning id`,
       [
         payment.profile_id,
         text,
