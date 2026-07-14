@@ -161,6 +161,23 @@ GET https://dominio-temporario-do-coolify/api/cron-billing-whatsapp?execute=1&se
 GET https://dominio-temporario-do-coolify/api/cron-renewals?execute=1&secret=CRON_SECRET
 ```
 
+Alternativa no Coolify: se a tela de Scheduled Tasks não persistir todas as tarefas,
+ative o scheduler interno da aplicação:
+
+```env
+INTERNAL_CRON_ENABLED=true
+```
+
+Com essa flag, o `server.mjs` chama internamente:
+
+- `/api/cron-reminders?execute=1` a cada 10 minutos.
+- `/api/cron-billing-whatsapp?execute=1` a cada 5 minutos.
+- `/api/whatsapp-keepalive?force=1` a cada 4 minutos.
+- `/api/cron-renewals` uma vez ao dia em modo protegido/dry-run por padrão.
+
+Os endpoints continuam protegidos por `CRON_SECRET`. Use crons externos ou o
+scheduler interno, não os dois ao mesmo tempo para a mesma rotina.
+
 ## Teste Antes Do DNS
 
 1. Abrir domínio temporário.

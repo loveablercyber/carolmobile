@@ -8,6 +8,9 @@ const staticRoot = join(appRoot, 'dist')
 const port = Number(process.env.PORT || 5173)
 const host = process.env.HOST || '0.0.0.0'
 const maxBodyBytes = Number(process.env.MAX_BODY_BYTES || 5 * 1024 * 1024)
+const internalCronEnabled = ['1', 'true', 'yes', 'sim'].includes(
+  String(process.env.INTERNAL_CRON_ENABLED || '').toLowerCase(),
+)
 
 const mime = {
   '.html': 'text/html; charset=utf-8',
@@ -144,7 +147,78 @@ async function handleStatic(req, res, pathname) {
   res.end(content)
 }
 
-createServer(async (req, res) => {
+async function runInternalCronJob(job) {
+  if (job.running) return
+  job.running = true
+  try {
+    const response = await fetch(job.url(), {
+      headers: { Authorization: `Bearer ${process.env.CRON_SECRET || ''}` },
+    })
+    const text = await response.text()
+    const preview = text.replace(/\s+/g, ' ').slice(0, 240)
+    if (!response.ok) {
+      console.warn(`[cron:${job.name}] status=${response.status} ${preview}`)
+    } else {
+      console.log(`[cron:${job.name}] status=${response.status} ${preview}`)
+    }
+  } catch (error) {
+    console.warn(`[cron:${job.name}] failed`, error.message)
+  } finally {
+    job.running = false
+  }
+}
+
+function startInternalCronScheduler() {
+  if (!internalCronEnabled) return
+  if (!process.env.CRON_SECRET) {
+    console.warn('[cron] INTERNAL_CRON_ENABLED=true, mas CRON_SECRET nao esta configurado.')
+    return
+  }
+
+  const baseUrl = `http://127.0.0.1:${port}`
+  const truthy = (value) => ['1', 'true', 'yes', 'sim'].includes(String(value || '').toLowerCase())
+  const whatsappConfigured = truthy(process.env.BAILEYS_ENABLED) &&
+    Boolean(process.env.BAILEYS_API_URL && process.env.BAILEYS_API_KEY)
+  const emailConfigured = Boolean(process.env.RESEND_API_KEY)
+  const jobs = []
+  if (whatsappConfigured || emailConfigured) {
+    jobs.push({
+      name: 'reminders',
+      everyMs: 10 * 60 * 1000,
+      url: () => `${baseUrl}/api/cron-reminders?execute=1`,
+    })
+  }
+  if (whatsappConfigured) {
+    jobs.push({
+      name: 'billing-whatsapp',
+      everyMs: 5 * 60 * 1000,
+      url: () => `${baseUrl}/api/cron-billing-whatsapp?execute=1`,
+    })
+    jobs.push({
+      name: 'whatsapp-keepalive',
+      everyMs: 4 * 60 * 1000,
+      url: () => `${baseUrl}/api/whatsapp-keepalive?force=1&secret=${encodeURIComponent(process.env.CRON_SECRET || '')}`,
+    },
+    )
+  }
+  jobs.push({
+    name: 'renewals-dry-run',
+    everyMs: 24 * 60 * 60 * 1000,
+    url: () => `${baseUrl}/api/cron-renewals`,
+  })
+
+  for (const job of jobs) {
+    job.running = false
+    const timer = setInterval(() => runInternalCronJob(job), job.everyMs)
+    timer.unref?.()
+  }
+  setTimeout(() => {
+    for (const job of jobs) runInternalCronJob(job)
+  }, 15_000).unref?.()
+  console.log('[cron] Scheduler interno ativado.')
+}
+
+const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
     const pathname = decodeURIComponent(url.pathname)
@@ -166,6 +240,9 @@ createServer(async (req, res) => {
     }))
     if (status >= 500) console.error('Server error', error)
   }
-}).listen(port, host, () => {
+})
+
+server.listen(port, host, () => {
   console.log(`Carol Sol disponivel em http://${host}:${port}`)
+  startInternalCronScheduler()
 })
