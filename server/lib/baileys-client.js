@@ -22,7 +22,9 @@ export function baileysConfig() {
     .trim()
     .replace(/\/+$/, "");
   const apiKey = String(process.env.BAILEYS_API_KEY || "").trim();
-  return { baseUrl, apiKey, configured: Boolean(baseUrl && apiKey) };
+  const provider = String(process.env.BAILEYS_PROVIDER || "wrapper").trim().toLowerCase();
+  const instance = String(process.env.BAILEYS_DEFAULT_INSTANCE || "carol-sol").trim();
+  return { baseUrl, apiKey, provider, instance, configured: Boolean(baseUrl && apiKey) };
 }
 
 function truthy(value) {
@@ -98,6 +100,9 @@ async function request(path, { method = "GET", body } = {}) {
       "O servidor do WhatsApp ainda não está configurado.",
       { status: 503, code: "BAILEYS_NOT_CONFIGURED" },
     );
+  if (config.provider === "evolution") {
+    return requestEvolution(config, path, { method, body });
+  }
   let response;
   try {
     response = await fetch(`${config.baseUrl}${path}`, {
@@ -122,6 +127,75 @@ async function request(path, { method = "GET", body } = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw friendlyProviderError(response, data);
   return { ok: true, status: String(data.status || "unknown"), data };
+}
+
+function evolutionRequestOptions(path, { method = "GET", body } = {}, config) {
+  const instance = encodeURIComponent(config.instance);
+  if (path === "/api/status") {
+    return { path: `/instance/connectionState/${instance}`, method: "GET" };
+  }
+  if (path === "/api/reset-session") {
+    return { path: `/instance/restart/${instance}`, method: "POST" };
+  }
+  if (path === "/api/qr") {
+    return { path: `/instance/connect/${instance}`, method: "GET" };
+  }
+  if (path === "/api/logout") {
+    return { path: `/instance/logout/${instance}`, method: "DELETE" };
+  }
+  if (path === "/api/send-text") {
+    return {
+      path: `/message/sendText/${instance}`,
+      method: "POST",
+      body: {
+        number: body?.number,
+        text: body?.text,
+      },
+    };
+  }
+  if (path === "/api/pairing-code") {
+    return { path: `/instance/connect/${instance}`, method: "GET" };
+  }
+  if (path === "/api/presence") {
+    return {
+      skip: true,
+      data: { status: "skipped", reason: "presence_not_required" },
+    };
+  }
+  return { path, method, body };
+}
+
+async function requestEvolution(config, path, options = {}) {
+  const mapped = evolutionRequestOptions(path, options, config);
+  if (mapped.skip) {
+    return { ok: true, status: "skipped", data: mapped.data };
+  }
+  let response;
+  try {
+    response = await fetch(`${config.baseUrl}${mapped.path}`, {
+      method: mapped.method,
+      headers: {
+        "Content-Type": "application/json",
+        apikey: config.apiKey,
+        "x-api-key": config.apiKey,
+      },
+      body: mapped.body ? JSON.stringify(mapped.body) : undefined,
+      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+    });
+  } catch (error) {
+    console.error("Evolution network error", {
+      path: mapped.path,
+      message: error.message,
+    });
+    throw new BaileysClientError(
+      "Nao foi possivel conectar ao servidor do WhatsApp.",
+      { status: 503, code: "BAILEYS_NETWORK_ERROR" },
+    );
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw friendlyProviderError(response, data);
+  const status = data?.instance?.state || data?.status || data?.connectionStatus || "unknown";
+  return { ok: true, status: String(status), data };
 }
 
 export function normalizeBaileysNumber(value) {
