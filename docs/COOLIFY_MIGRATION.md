@@ -87,6 +87,8 @@ npm start
 
 ## Variáveis Obrigatórias
 
+Use `docs/coolify.env.example` como base para preencher o painel do Coolify.
+
 ```env
 NODE_ENV=production
 PORT=3000
@@ -94,6 +96,12 @@ APP_URL=https://dominio-temporario-do-coolify
 DATABASE_URL=postgresql://...
 JWT_SECRET=...
 CRON_SECRET=...
+```
+
+Depois de salvar as variáveis e fazer o primeiro deploy, valide no terminal do app:
+
+```bash
+npm run coolify:env-check
 ```
 
 ## Integrações
@@ -156,7 +164,13 @@ GET https://dominio-temporario-do-coolify/api/cron-renewals?execute=1&secret=CRO
 ## Teste Antes Do DNS
 
 1. Abrir domínio temporário.
-2. Rodar o teste automatico:
+2. Validar variáveis no terminal do app:
+
+```bash
+npm run coolify:env-check
+```
+
+3. Rodar o teste automatico:
 
 ```bash
 npm run coolify:smoke -- https://dominio-temporario-do-coolify
@@ -168,7 +182,7 @@ Com `CRON_SECRET` no ambiente local, o teste tambem tenta o keepalive autenticad
 CRON_SECRET="seu-segredo" npm run coolify:smoke -- https://dominio-temporario-do-coolify
 ```
 
-3. Validar manualmente:
+4. Validar manualmente:
    - `/api/health`
    - login admin
    - painel admin
@@ -182,7 +196,7 @@ CRON_SECRET="seu-segredo" npm run coolify:smoke -- https://dominio-temporario-do
    - retorno SumUp
    - webhook SumUp
    - uploads Cloudinary
-4. Só depois trocar `APP_URL`, `SUMUP_RETURN_URL` e webhooks para `https://carolsol.com.br`.
+5. Só depois trocar `APP_URL`, `SUMUP_RETURN_URL` e webhooks para `https://carolsol.com.br`.
 
 ## Cutover Final
 

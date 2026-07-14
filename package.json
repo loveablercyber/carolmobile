@@ -14,6 +14,7 @@
     "preview": "vite preview --configLoader runner",
     "lint": "tsc --noEmit -p tsconfig.app.json",
     "test": "node --test tests/*.test.js",
+    "coolify:env-check": "node scripts/coolify-env-check.mjs",
     "coolify:smoke": "node scripts/coolify-smoke.mjs",
     "db:inspect": "node scripts/neon-admin.mjs inspect",
     "db:setup": "node scripts/neon-admin.mjs setup"
