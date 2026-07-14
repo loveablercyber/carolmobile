@@ -24,6 +24,7 @@ COPY --from=build /app/server ./server
 COPY --from=build /app/server.mjs ./server.mjs
 COPY --from=build /app/scripts ./scripts
 COPY --from=build /app/database ./database
+COPY --from=build /app/migration-data ./migration-data
 COPY --from=build /app/supabase ./supabase
 
 EXPOSE 3000

@@ -5,6 +5,22 @@ import { query } from './db.js'
 const COOKIE_NAME = 'carol_sol_session'
 const key = () => new TextEncoder().encode(process.env.JWT_SECRET || 'development-only-change-me')
 
+export function shouldUseSecureSessionCookie() {
+  const override = String(process.env.SESSION_COOKIE_SECURE || '').trim().toLowerCase()
+  if (['1', 'true', 'yes', 'sim'].includes(override)) return true
+  if (['0', 'false', 'no', 'nao', 'não'].includes(override)) return false
+
+  const appUrl = String(process.env.APP_URL || '').trim()
+  if (appUrl) {
+    try {
+      return new URL(appUrl).protocol === 'https:'
+    } catch {
+      // Fall through to the production-safe default for malformed URLs.
+    }
+  }
+  return process.env.NODE_ENV === 'production'
+}
+
 export async function createSession(user) {
   return new SignJWT({ role: user.role, profileId: user.id, name: user.full_name })
     .setProtectedHeader({ alg: 'HS256' })
@@ -38,11 +54,11 @@ export async function requireUser(req, roles = []) {
 }
 
 export function setSessionCookie(res, token) {
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
+  const secure = shouldUseSecureSessionCookie() ? '; Secure' : ''
   res.setHeader('Set-Cookie', `${COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800${secure}`)
 }
 
 export function clearSessionCookie(res) {
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
+  const secure = shouldUseSecureSessionCookie() ? '; Secure' : ''
   res.setHeader('Set-Cookie', `${COOKIE_NAME}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${secure}`)
 }
