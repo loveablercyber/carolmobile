@@ -150,6 +150,24 @@ CLOUDINARY_PROVIDERS_JSON=[]
 CLOUDINARY_DEFAULT_FOLDER=carol-sol
 ```
 
+Quando Cloudinary não estiver disponível, use o storage local persistente do Coolify:
+
+```env
+LOCAL_UPLOAD_ENABLED=true
+UPLOAD_DIR=/app/uploads
+LOCAL_UPLOAD_FOLDER=carol-sol
+```
+
+No Coolify, crie também um Persistent Storage:
+
+```txt
+Source Path: /data/coolify/carolmobile/uploads
+Destination Path: /app/uploads
+```
+
+Com isso fotos, comprovantes e anexos são servidos por `/uploads/...` e preservados
+entre redeploys.
+
 ## Crons Externos
 
 Configure no Coolify, EasyCron, cron-job.org ou outro monitor:
