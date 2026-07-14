@@ -26,6 +26,15 @@ function configured() {
 
 async function sumupRequest(path, options = {}) {
   const config = configured();
+  const requestPayload = options.body
+    ? (() => {
+        try {
+          return JSON.parse(options.body);
+        } catch {
+          return null;
+        }
+      })()
+    : null;
   const response = await fetch(`https://api.sumup.com${path}`, {
     ...options,
     headers: {
@@ -44,9 +53,11 @@ async function sumupRequest(path, options = {}) {
       status: response.status >= 500 ? 502 : 400,
       providerStatus: response.status,
       providerCode: data?.error_code || null,
+      providerResponse: data,
+      requestPayload,
     });
   }
-  return data;
+  return { data, requestPayload };
 }
 
 export async function createSumupCheckout({
@@ -57,9 +68,11 @@ export async function createSumupCheckout({
   customerId,
   purpose,
   useDefaultReturnUrl = true,
+  hostedCheckout = false,
 }) {
   const config = configured();
-  const checkout = await sumupRequest("/v0.1/checkouts", {
+  const callbackUrl = returnUrl || (useDefaultReturnUrl ? config.returnUrl : "");
+  const { data: checkout, requestPayload } = await sumupRequest("/v0.1/checkouts", {
     method: "POST",
     body: JSON.stringify({
       checkout_reference: reference,
@@ -67,9 +80,10 @@ export async function createSumupCheckout({
       currency: "BRL",
       merchant_code: config.merchantCode,
       description,
-      ...(returnUrl || (useDefaultReturnUrl && config.returnUrl)
-        ? { return_url: returnUrl || config.returnUrl }
+      ...(callbackUrl
+        ? { return_url: callbackUrl, redirect_url: callbackUrl }
         : {}),
+      ...(hostedCheckout ? { hosted_checkout: { enabled: true } } : {}),
       ...(customerId ? { customer_id: customerId } : {}),
       ...(purpose ? { purpose } : {}),
     }),
@@ -83,11 +97,11 @@ export async function createSumupCheckout({
       ["checkout", "redirect", "hosted_checkout"].includes(link.rel),
     )?.href ||
     null;
-  return { ...checkout, hostedUrl };
+  return { ...checkout, hostedUrl, requestPayload, rawResponse: checkout };
 }
 
 export const retrieveSumupCheckout = (id) =>
-  sumupRequest(`/v0.1/checkouts/${encodeURIComponent(id)}`);
+  sumupRequest(`/v0.1/checkouts/${encodeURIComponent(id)}`).then((result) => result.data);
 
 export const processSumupCheckout = ({ checkoutId, token, customerId }) =>
   sumupRequest(`/v0.1/checkouts/${encodeURIComponent(checkoutId)}`, {
@@ -98,7 +112,7 @@ export const processSumupCheckout = ({ checkoutId, token, customerId }) =>
       token,
       customer_id: customerId,
     }),
-  });
+  }).then((result) => result.data);
 
 export const createSumupCustomer = ({ customerId, personalDetails }) =>
   sumupRequest("/v0.1/customers", {
@@ -107,21 +121,21 @@ export const createSumupCustomer = ({ customerId, personalDetails }) =>
       customer_id: customerId,
       personal_details: personalDetails,
     }),
-  });
+  }).then((result) => result.data);
 
 export const retrieveSumupCustomer = (customerId) =>
-  sumupRequest(`/v0.1/customers/${encodeURIComponent(customerId)}`);
+  sumupRequest(`/v0.1/customers/${encodeURIComponent(customerId)}`).then((result) => result.data);
 
 export const listSumupPaymentInstruments = (customerId) =>
   sumupRequest(
     `/v0.1/customers/${encodeURIComponent(customerId)}/payment-instruments`,
-  );
+  ).then((result) => result.data);
 
 export const deactivateSumupPaymentInstrument = (customerId, token) =>
   sumupRequest(
     `/v0.1/customers/${encodeURIComponent(customerId)}/payment-instruments/${encodeURIComponent(token)}`,
     { method: "DELETE" },
-  );
+  ).then((result) => result.data);
 
 export function mapSumupStatus(value) {
   const status = String(value || "").toUpperCase();

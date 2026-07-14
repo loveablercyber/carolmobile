@@ -284,6 +284,29 @@ create index if not exists ai_request_logs_created_idx on public.ai_request_logs
 create index if not exists knowledge_articles_category_idx on public.knowledge_articles(category);
 create index if not exists knowledge_articles_status_idx on public.knowledge_articles(status);
 
+alter table public.services add column if not exists show_online_booking boolean not null default true;
+alter table public.services add column if not exists is_free boolean not null default false;
+
+create table if not exists public.marketing_promotions (
+  id uuid primary key default uuid_generate_v4(),
+  title text not null,
+  description text,
+  promotional_value numeric(12,2) not null default 0,
+  original_value numeric(12,2),
+  starts_at date,
+  ends_at date,
+  active boolean not null default true,
+  show_on_site boolean not null default false,
+  whatsapp_only boolean not null default true,
+  keywords jsonb not null default '[]',
+  archived boolean not null default false,
+  created_by uuid references public.profiles(id),
+  updated_by uuid references public.profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists marketing_promotions_active_idx on public.marketing_promotions(active, archived, starts_at, ends_at);
+
 alter table public.whatsapp_conversations add column if not exists booking_state jsonb not null default '{}';
 
 insert into public.ai_settings(business_id, system_prompt, welcome_message, after_hours_message, human_handoff_message, closing_message)

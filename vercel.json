@@ -11,11 +11,31 @@
   },
   "crons": [
     {
-      "path": "/api/cron-renewals",
+      "path": "/api/cron-tasks?task=renewals",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron-tasks?task=reminders",
+      "schedule": "0 11 * * *"
     }
   ],
   "rewrites": [
+    {
+      "source": "/api/cron-renewals",
+      "destination": "/api/cron-tasks?task=renewals"
+    },
+    {
+      "source": "/api/cron-reminders",
+      "destination": "/api/cron-tasks?task=reminders"
+    },
+    {
+      "source": "/api/cron-billing-whatsapp",
+      "destination": "/api/cron-tasks?task=billing-whatsapp"
+    },
+    {
+      "source": "/api/whatsapp-keepalive",
+      "destination": "/api/whatsapp?resource=keepalive"
+    },
     {
       "source": "/api/webhooks/baileys/carolsol",
       "destination": "/api/whatsapp?resource=webhook"

@@ -1,3 +1,5 @@
+import bcrypt from "bcryptjs";
+import { randomBytes } from "node:crypto";
 import { query, transaction } from "./db.js";
 import {
   buildRuntimePrompt,
@@ -14,8 +16,10 @@ import {
 } from "./availability-rules.js";
 import { generateOpenAiText, openAiPublicStatus } from "./openai-client.js";
 import { sendBaileysTextMessage, sendBaileysPresence } from "./baileys-client.js";
+import { sendEmail } from "./integrations.js";
 
 const MAX_AI_MESSAGE_CHARS = 6000;
+const SLOT_PAGE_SIZE = 5;
 
 const clean = (value) => String(value ?? "").trim();
 
@@ -214,8 +218,174 @@ function parseJsonObject(value) {
   }
 }
 
+function hasBookingStateProgress(state = {}) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return false;
+  return Boolean(
+    state.status ||
+      state.appointmentId ||
+      state.previousAppointmentId ||
+      state.serviceId ||
+      state.date ||
+      state.time ||
+      state.professionalId ||
+      state.clientName ||
+      state.clientEmail ||
+      state.serviceOptions?.length ||
+      state.dateOptions?.length ||
+      state.slotOptions?.length,
+  );
+}
+
+function isActiveBookingState(state = {}) {
+  if (!hasBookingStateProgress(state)) return false;
+  return state.status !== "booked";
+}
+
+export function shouldResetBookingStateOnGreeting(text, state = {}) {
+  return isSimpleGreeting(text) && hasBookingStateProgress(state);
+}
+
+const aiDomainTerms = [
+  "mega hair",
+  "megahair",
+  "alongamento",
+  "aplique",
+  "aplicacao",
+  "aplicar",
+  "manutencao",
+  "retirada",
+  "remocao",
+  "fibra russa",
+  "fita",
+  "queratina",
+  "microlink",
+  "nanopele",
+  "lace",
+  "peruca",
+  "protese capilar",
+  "cabelo",
+  "cabelos",
+  "fio",
+  "fios",
+  "couro cabeludo",
+  "raiz",
+  "mecha",
+  "mechas",
+  "ponta",
+  "pontas",
+  "preenchimento",
+  "preencher",
+  "alongamento parcial",
+  "parcial",
+  "volume",
+  "comprimento",
+  "correcao",
+  "corrigir",
+  "reposicao",
+  "repor",
+  "queda",
+  "quebra",
+  "coceira",
+  "irritacao",
+  "oleosidade",
+  "progressiva",
+  "quimica",
+  "loiro",
+  "descolorido",
+  "lavar",
+  "pentear",
+  "cuidados",
+  "avaliacao",
+  "diagnostico",
+];
+
+const salonOperationalTerms = [
+  "agendar",
+  "agendamento",
+  "agenda",
+  "horario",
+  "disponivel",
+  "disponibilidade",
+  "encaixe",
+  "servico",
+  "servicos",
+  "valor",
+  "preco",
+  "orcamento",
+  "custa",
+  "quanto fica",
+  "quanto esta",
+  "promocao",
+  "promocoes",
+  "promocional",
+  "desconto",
+  "descontos",
+  "oferta",
+  "ofertas",
+  "campanha",
+  "liquidacao",
+  "promo",
+  "sinal",
+  "pagamento",
+  "pix",
+  "cartao",
+  "cupom",
+  "endereco",
+  "localizacao",
+  "funcionamento",
+  "atendente",
+  "equipe",
+  "salao",
+  "carol sol",
+  "registrar",
+  "confirmar",
+  "confirmo",
+  "pode registrar",
+  "pode confirmar",
+];
+
+const clearlyOutOfScopeTerms = [
+  "receita",
+  "bolo",
+  "comida",
+  "cozinha",
+  "futebol",
+  "jogo",
+  "politica",
+  "programacao",
+  "codigo",
+  "filme",
+  "serie",
+  "musica",
+  "noticia",
+  "matematica",
+  "viagem",
+  "hotel",
+];
+
+export function isInAiServiceScope(text) {
+  const normalized = normalizeText(text);
+  if (!normalized) return true;
+  if (isSimpleGreeting(text)) return true;
+  if (isAffirmativeBookingConfirmation(text)) return true;
+  const hasDomainTerm = includesAny(normalized, aiDomainTerms);
+  if (hasDomainTerm) return true;
+  if (includesAny(normalized, clearlyOutOfScopeTerms)) return false;
+  return includesAny(normalized, salonOperationalTerms);
+}
+
+export function buildOutOfScopeResponse(text) {
+  if (isInAiServiceScope(text)) return "";
+  return [
+    "Consigo te ajudar apenas com assuntos do salão: Mega Hair, cabelos, perucas, apliques, cuidados, valores, horários e agendamentos.",
+    "Me manda uma dúvida dentro desses temas que eu sigo daqui.",
+  ].join("\n\n");
+}
+
 function numericChoice(text) {
-  const match = normalizeText(text).match(/^\s*(?:opcao\s*)?(\d{1,2})\s*$/);
+  const normalized = normalizeText(text);
+  if (/^\s*\d{1,2}\s*h\b/.test(normalized)) return null;
+  const match = normalized.match(/^\s*(?:opcao\s*)?(\d{1,2})(?:\s*[\).:-]?\s*$|\s+[\p{L}])/u);
   return match ? Number(match[1]) : null;
 }
 
@@ -297,6 +467,41 @@ function parseBookingTimeFromText(text) {
   return { period: "", time: "" };
 }
 
+function parseFlexibleBookingTimeFromText(text) {
+  const normalized = normalizeText(text);
+  if (/\b(cedo|cedinho)\b/.test(normalized)) return { period: "morning", time: "" };
+  if (/\b(depois do almoco|apos o almoco|apos almoco|depois de almoco|depois do meio dia|depois de meio dia|mais tarde)\b/.test(normalized)) {
+    return { period: "afternoon", time: "" };
+  }
+  if (/\b(meio dia|meiodia|perto das 12|por volta das 12)\b/.test(normalized)) {
+    return { period: "afternoon", time: "12:00" };
+  }
+  const colloquial = normalized.match(/\b(\d{1,2})\s*(?:da|de)\s*(manha|tarde|noite)\b/);
+  if (colloquial) {
+    let hour = Number(colloquial[1]);
+    const period = colloquial[2];
+    if (period === "tarde" && hour >= 1 && hour <= 11) hour += 12;
+    if (period === "noite" && hour >= 1 && hour <= 11) hour += 12;
+    if (hour >= 0 && hour <= 23) {
+      return {
+        period: period === "manha" ? "morning" : period === "tarde" ? "afternoon" : "evening",
+        time: `${String(hour).padStart(2, "0")}:00`,
+      };
+    }
+  }
+  const explicit = normalized.match(
+    /(?:\b(?:as|a?s|horario|hora|perto das|por volta das|depois das|apos as)\s*)(\d{1,2})(?:[:h](\d{0,2}))?\b|\b(\d{1,2})h(?:(\d{2}))?\b/,
+  );
+  if (explicit) {
+    const hour = Number(explicit[1] || explicit[3]);
+    const minute = Number(explicit[2] || explicit[4] || 0);
+    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+      return { period: "", time: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}` };
+    }
+  }
+  return parseBookingTimeFromText(text);
+}
+
 function periodMatches(time, period) {
   if (!period) return true;
   const hour = Number(String(time).slice(0, 2));
@@ -311,6 +516,114 @@ function periodLabel(period) {
   if (period === "afternoon") return "tarde";
   if (period === "evening") return "noite";
   return "";
+}
+
+function lastAiText(history = []) {
+  return (history || []).filter((item) => item.sender_type === "ai").pop()?.body || "";
+}
+
+function hasTemporalBookingSignal(text, state = {}) {
+  const normalized = normalizeText(text);
+  const parsedDate = parseBookingDateFromText(text, state);
+  const parsedTime = parseFlexibleBookingTimeFromText(text);
+  return Boolean(
+    parsedDate ||
+      parsedTime.time ||
+      parsedTime.period ||
+      wantsMoreSlotOptions(text) ||
+      includesAny(normalized, [
+        "depois do almoco",
+        "depois do meio dia",
+        "perto das",
+        "por volta das",
+        "mais tarde",
+        "cedo",
+        "cedinho",
+        "qualquer horario",
+        "esse horario nao da",
+        "esse horario nao serve",
+      ]),
+  );
+}
+
+function promptSuggestsBookingAnswer(prompt = "") {
+  const normalized = normalizeText(prompt);
+  return includesAny(normalized, [
+    "qual dia",
+    "escolha a data",
+    "data preferida",
+    "escolha o horario",
+    "escolha o horÃ¡rio",
+    "horarios disponiveis",
+    "horÃ¡rios disponÃ­veis",
+    "proximos horarios",
+    "prÃ³ximos horÃ¡rios",
+    "qual servico",
+    "qual serviÃ§o",
+    "escolha o servico",
+    "escolha o serviÃ§o",
+  ]);
+}
+
+export function shouldPrioritizeBookingState(text, state = {}, history = []) {
+  if (!isActiveBookingState(state)) return false;
+  const normalized = normalizeText(text);
+  const choice = numericChoice(text);
+  if (state.status === "awaiting_contact") return true;
+  if (state.status === "awaiting_confirmation") {
+    return Boolean(isAffirmativeBookingConfirmation(text) || choice || hasTemporalBookingSignal(text, state));
+  }
+  if (state.status === "awaiting_service_details") {
+    return Boolean(
+      isAffirmativeBookingConfirmation(text) ||
+        choice ||
+        includesAny(normalized, ["verificar", "horario", "horarios", "outro servico", "outro serviço", "alterar"]),
+    );
+  }
+  if (state.status === "awaiting_slot") {
+    return Boolean(choice || hasTemporalBookingSignal(text, state));
+  }
+  if (state.status === "awaiting_date") {
+    return hasTemporalBookingSignal(text, state);
+  }
+  if (state.status === "awaiting_service") {
+    return Boolean(choice || includesAny(normalized, aiDomainTerms));
+  }
+  if (state.serviceId && hasTemporalBookingSignal(text, state)) return true;
+  return promptSuggestsBookingAnswer(lastAiText(history)) && hasTemporalBookingSignal(text, state);
+}
+
+function textMatchesCatalogEntry(text, entryText) {
+  const normalized = normalizeText(text).replace(/[^a-z0-9 ]/g, " ");
+  const entry = normalizeText(entryText).replace(/[^a-z0-9 ]/g, " ");
+  if (!normalized || !entry) return false;
+  if (normalized.includes(entry) || entry.includes(normalized)) return true;
+  const ignored = new Set(["qual", "quanto", "esta", "para", "pra", "com", "sem", "uma", "por", "que", "voce", "voces"]);
+  const tokens = normalized.split(/\s+/).filter((token) => token.length >= 4 && !ignored.has(token));
+  if (!tokens.length) return false;
+  const matches = tokens.filter((token) => entry.includes(token)).length;
+  return matches >= Math.min(2, tokens.length);
+}
+
+function hasCommercialCatalogReference(text, base = {}) {
+  const entries = [];
+  for (const service of base.services || []) {
+    entries.push([
+      service.name,
+      service.commercial_name,
+      service.short_description,
+      service.detailed_description,
+      service.description,
+    ].filter(Boolean).join(" "));
+  }
+  for (const item of base.products || []) entries.push([item.name, item.category].filter(Boolean).join(" "));
+  for (const item of base.inventory || []) {
+    entries.push([item.name, item.category, item.color, item.shade, item.texture].filter(Boolean).join(" "));
+  }
+  for (const article of base.knowledgeArticles || []) {
+    entries.push([article.title, article.short_answer, article.category].filter(Boolean).join(" "));
+  }
+  return entries.some((entry) => textMatchesCatalogEntry(text, entry));
 }
 
 function bookableAiServices(base = {}) {
@@ -330,6 +643,180 @@ function serviceSearchText(service) {
       .filter(Boolean)
       .join(" "),
   );
+}
+
+function arrayFromJsonLike(value) {
+  if (Array.isArray(value)) return value;
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function activePromotions(base = {}, today = localDateParts()) {
+  return (base.promotions || []).filter((promotion) => {
+    if (!promotion || promotion.active === false) return false;
+    const startsAt = promotion.starts_at ? String(promotion.starts_at).slice(0, 10) : "";
+    const endsAt = promotion.ends_at ? String(promotion.ends_at).slice(0, 10) : "";
+    if (startsAt && startsAt > today) return false;
+    if (endsAt && endsAt < today) return false;
+    return true;
+  });
+}
+
+function promotionSearchText(promotion = {}) {
+  return normalizeText(
+    [
+      promotion.title,
+      promotion.description,
+      ...arrayFromJsonLike(promotion.keywords),
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
+function significantTerms(text) {
+  return normalizeText(text)
+    .split(/[^a-z0-9]+/)
+    .filter(
+      (term) =>
+        term.length >= 4 &&
+        ![
+          "promocao",
+          "promocoes",
+          "desconto",
+          "descontos",
+          "oferta",
+          "ofertas",
+          "campanha",
+          "liquidacao",
+          "preco promocional",
+          "cabelo em promocao",
+          "mega hair em promocao",
+          "promo",
+          "valor",
+          "preco",
+          "quanto",
+          "custa",
+          "esta",
+          "fica",
+          "para",
+          "pra",
+          "tem",
+          "qual",
+        ].includes(term),
+    );
+}
+
+function matchingPromotionsForText(text, base = {}) {
+  const promotions = activePromotions(base);
+  if (!promotions.length) return [];
+  const terms = significantTerms(text);
+  if (!terms.length) return promotions;
+  const matched = promotions.filter((promotion) => {
+    const haystack = promotionSearchText(promotion);
+    return terms.some((term) => haystack.includes(term));
+  });
+  return matched.length ? matched : promotions;
+}
+
+function matchingPromotionForService(service, base = {}) {
+  if (!service) return null;
+  const serviceText = serviceSearchText(service);
+  return activePromotions(base).find((promotion) => {
+    const promoText = promotionSearchText(promotion);
+    const keywords = arrayFromJsonLike(promotion.keywords).map(normalizeText);
+    if (keywords.some((keyword) => keyword && serviceText.includes(keyword))) return true;
+    const promoTerms = promoText.split(/\s+/).filter((term) => term.length >= 4);
+    return promoTerms.some((term) => serviceText.includes(term));
+  }) || null;
+}
+
+function matchingServiceForPriceQuestion(text, base = {}) {
+  const normalized = normalizeText(text);
+  const services = (base.services || []).filter((service) => service.active !== false && service.ai_active);
+  return services.find((service) => {
+    const haystack = serviceSearchText(service);
+    const terms = haystack.split(/\s+/).filter((term) => term.length >= 4);
+    return terms.some((term) => normalized.includes(term));
+  }) || null;
+}
+
+function promotionDateText(promotion = {}) {
+  const date = promotion.ends_at ? String(promotion.ends_at).slice(0, 10) : "";
+  if (!date) return "";
+  const label = new Date(`${date}T12:00:00.000Z`).toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+  return ` Promocao valida ate ${label}.`;
+}
+
+function formatPromotionLine(promotion = {}) {
+  const promo = Number(promotion.promotional_value || 0);
+  const original = Number(promotion.original_value || 0);
+  const valueText =
+    original > 0
+      ? `De ${formatBookingCurrency(original)} por ${formatBookingCurrency(promo)}.`
+      : `Valor promocional: ${formatBookingCurrency(promo)}.`;
+  return [
+    promotion.title,
+    promotion.description,
+    valueText + promotionDateText(promotion),
+  ].filter(Boolean).join("\n");
+}
+
+function buildPromotionIntentResponse(text, base = {}) {
+  const active = activePromotions(base);
+  const promotions = matchingPromotionsForText(text, base);
+  if (!active.length) {
+    return [
+      "Deixe-me verificar.",
+      "No momento nao temos promocoes cadastradas.",
+      "Posso te informar os valores normais ou verificar condicoes especiais disponiveis.",
+    ].join("\n\n");
+  }
+  if (!promotions.length) {
+    return [
+      "Deixe-me verificar.",
+      "No momento nao encontrei promocao ativa cadastrada para essa pergunta.",
+      "Posso verificar o valor normal do servico ou te ajudar a agendar uma avaliacao.",
+    ].join("\n\n");
+  }
+  const selected = promotions.slice(0, 3).map(formatPromotionLine).join("\n\n");
+  return [
+    "Deixe-me verificar.",
+    promotions.length === 1 ? "Temos uma promocao ativa:" : "Temos promocoes ativas:",
+    selected,
+    "Deseja agendar uma avaliacao ou aplicacao?",
+  ].join("\n\n");
+}
+
+function buildPriceIntentResponse(text, base = {}) {
+  const service = matchingServiceForPriceQuestion(text, base);
+  if (!service) return null;
+  const serviceName = service.commercial_name || service.name;
+  const price = serviceValue(service);
+  const promotion = matchingPromotionForService(service, base);
+  const lines = [
+    servicePriceText(service, price, { serviceName }),
+  ];
+  if (promotion) {
+    lines.push(
+      [
+        `Temos uma promocao ativa: ${promotion.title}.`,
+        formatPromotionLine(promotion),
+      ].join("\n"),
+    );
+  }
+  lines.push("Quer que eu verifique uma avaliacao ou horario para voce?");
+  return lines.join("\n\n");
 }
 
 function selectBookingService(text, base = {}, state = {}) {
@@ -355,6 +842,8 @@ function selectBookingService(text, base = {}, state = {}) {
       serviceName: matched.commercial_name || matched.name,
       requestedServiceName: matched.commercial_name || matched.name,
       serviceValue: serviceValue(matched),
+      serviceIsFree: isFreeService(matched),
+      ...bookingServiceDetails(matched),
     };
   }
 
@@ -371,6 +860,8 @@ function selectBookingService(text, base = {}, state = {}) {
         matched?.name ||
         (asksMaintenance ? "Manutenção" : asksApplication ? "Aplicação de Mega Hair" : evaluation.name),
       serviceValue: serviceValue(evaluation),
+      serviceIsFree: isFreeService(evaluation),
+      ...bookingServiceDetails(evaluation),
       note:
         matched && !matched.allow_auto_booking
           ? "O serviço solicitado exige validação da equipe; a IA vai registrar uma avaliação primeiro."
@@ -388,11 +879,62 @@ function buildServiceOptions(base = {}) {
     serviceName: service.commercial_name || service.name,
     requestedServiceName: service.commercial_name || service.name,
     serviceValue: serviceValue(service),
+    serviceIsFree: isFreeService(service),
+    ...bookingServiceDetails(service),
   }));
+}
+
+function bookingServiceDetails(service = {}) {
+  return {
+    serviceDescription: clean(service.short_description || service.description),
+    serviceDetailedDescription: clean(service.detailed_description),
+    serviceDurationMinutes: Number(service.estimated_duration_minutes || service.duration_minutes || 0),
+    serviceDepositAmount: Number(service.deposit_value ?? service.deposit_amount ?? 0),
+    serviceDepositType: clean(service.deposit_type || "amount"),
+    serviceRequiresAssessment: service.requires_assessment === true,
+    serviceRequiresDeposit: service.requires_deposit === true,
+    serviceRecommendedMessage: clean(service.recommended_message),
+  };
+}
+
+function serviceDetailsState(choice = {}) {
+  return {
+    serviceDescription: choice.serviceDescription || "",
+    serviceDetailedDescription: choice.serviceDetailedDescription || "",
+    serviceDurationMinutes: Number(choice.serviceDurationMinutes || 0),
+    serviceDepositAmount: Number(choice.serviceDepositAmount || 0),
+    serviceDepositType: choice.serviceDepositType || "amount",
+    serviceRequiresAssessment: choice.serviceRequiresAssessment === true,
+    serviceRequiresDeposit: choice.serviceRequiresDeposit === true,
+    serviceRecommendedMessage: choice.serviceRecommendedMessage || "",
+  };
 }
 
 function optionLines(options, formatter) {
   return options.map((item) => `${item.id}) ${formatter(item)}`).join("\n");
+}
+
+function slotPageLines(options = [], start = 0) {
+  const visible = options.slice(start, start + SLOT_PAGE_SIZE);
+  const lines = [optionLines(visible, formatSlot)];
+  const nextCommand = start + SLOT_PAGE_SIZE + 1;
+  if (options.length > start + SLOT_PAGE_SIZE) {
+    lines.push(`Digite ${nextCommand} para ver mais horários.`);
+  }
+  return lines.filter(Boolean).join("\n");
+}
+
+function wantsMoreSlotOptions(text) {
+  const normalized = normalizeText(text);
+  return includesAny(normalized, [
+    "ver mais",
+    "mais horarios",
+    "mais horários",
+    "proximos horarios",
+    "próximos horários",
+    "proximo horario",
+    "próximo horário",
+  ]);
 }
 
 function extractClientName(text) {
@@ -410,6 +952,10 @@ function extractBookingClientName(text, { allowPlain = false } = {}) {
   const withoutContacts = value
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, " ")
     .replace(/(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}[-\s]?\d{4}/g, " ")
+    .replace(/(?:cpf|documento)\s*:?\s*[0-9.\-]{11,14}/gi, " ")
+    .replace(/\b\d{3}\.?\d{3}\.?\d{3}-\d{2}\b/g, " ")
+    .replace(/(?:nascimento|data de nascimento|nasci|nasc\.?|anivers[aá]rio)\s*:?\s*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/gi, " ")
+    .replace(/\b\d{1,2}[/-]\d{1,2}[/-](?:19|20)\d{2}\b/g, " ")
     .replace(/\b(nome|email|e-mail|telefone|celular|whats|whatsapp)\b\s*:?/gi, " ")
     .replace(/[|,;]+/g, " ")
     .replace(/\s+/g, " ")
@@ -425,6 +971,69 @@ function extractClientEmail(text) {
   return match ? match[0].toLowerCase().slice(0, 160) : "";
 }
 
+function isFakeWhatsappEmail(value) {
+  const email = clean(value).toLowerCase();
+  return /^whatsapp\+\d+@/.test(email) || email.endsWith("@carolsol.local");
+}
+
+function isValidClientEmail(value) {
+  const email = clean(value).toLowerCase();
+  return /^\S+@\S+\.\S+$/.test(email) && !isFakeWhatsappEmail(email);
+}
+
+function normalizeClientCpf(value) {
+  const digits = clean(value).replace(/\D/g, "");
+  return digits.length === 11 ? digits : "";
+}
+
+function extractClientCpf(text) {
+  const value = clean(text);
+  const labeled = value.match(/(?:cpf|documento)\s*:?\s*([0-9.\-]{11,14})/i);
+  if (labeled) return normalizeClientCpf(labeled[1]);
+  const formatted = value.match(/\b\d{3}\.?\d{3}\.?\d{3}-\d{2}\b/);
+  if (formatted) return normalizeClientCpf(formatted[0]);
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 11 && !/^\d{2}9\d{8}$/.test(digits)) return digits;
+  return "";
+}
+
+function normalizeBirthDate(value) {
+  const raw = clean(value);
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const br = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})$/);
+  if (!iso && !br) return "";
+  const day = Number(iso ? iso[3] : br[1]);
+  const month = Number(iso ? iso[2] : br[2]);
+  let year = Number(iso ? iso[1] : br[3]);
+  if (year < 100) year += year > 30 ? 1900 : 2000;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  )
+    return "";
+  const currentYear = Number(localDateParts().slice(0, 4));
+  if (year < 1900 || year > currentYear) return "";
+  return [
+    String(year).padStart(4, "0"),
+    String(month).padStart(2, "0"),
+    String(day).padStart(2, "0"),
+  ].join("-");
+}
+
+function extractClientBirthDate(text) {
+  const value = clean(text);
+  const labeled = value.match(/(?:nascimento|data de nascimento|nasci|nasc\.?|anivers[aá]rio)\s*:?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i);
+  if (labeled) return normalizeBirthDate(labeled[1]);
+  const generic = value.match(/\b(\d{1,2}[/-]\d{1,2}[/-](?:19|20)\d{2})\b/);
+  return generic ? normalizeBirthDate(generic[1]) : "";
+}
+
+function generateTemporaryPassword() {
+  return `Carol-${randomBytes(4).toString("hex").toUpperCase()}`;
+}
+
 function normalizeBookingPhone(value, fallback = "") {
   const digits = clean(value).replace(/\D/g, "");
   const candidate = digits || clean(fallback).replace(/\D/g, "");
@@ -435,18 +1044,40 @@ function normalizeBookingPhone(value, fallback = "") {
 }
 
 function extractClientPhone(text) {
-  const match = clean(text).match(/(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}[-\s]?\d{4}/);
+  const value = clean(text);
+  const labeled = value.match(
+    /(?:telefone|celular|whats(?:app)?|fone|contato)\s*:?\s*((?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}[-\s]?\d{4})/i,
+  );
+  if (labeled) return normalizeBookingPhone(labeled[1]);
+  const match = value.match(/(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}[-\s]?\d{4}/);
   if (!match) return "";
+  const digits = match[0].replace(/\D/g, "");
+  const allDigits = value.replace(/\D/g, "");
+  if (extractClientCpf(value) && digits === allDigits) return "";
+  if (/^\d{11}$/.test(digits) && !/^\d{2}9\d{8}$/.test(digits)) return "";
+  if (/^55\d{11}$/.test(digits) && !/^55\d{2}9\d{8}$/.test(digits)) return "";
   return normalizeBookingPhone(match[0]);
+}
+
+function formatBookingPhone(value) {
+  const digits = normalizeBookingPhone(value);
+  const local = digits.startsWith("55") ? digits.slice(2) : digits;
+  if (local.length === 11) return `(${local.slice(0, 2)}) ${local.slice(2, 7)}-${local.slice(7)}`;
+  if (local.length === 10) return `(${local.slice(0, 2)}) ${local.slice(2, 6)}-${local.slice(6)}`;
+  return digits || clean(value);
 }
 
 function applyBookingContactFields(state, text, { allowPlainName = false } = {}) {
   const email = extractClientEmail(text);
+  const cpf = extractClientCpf(text);
   const phone = extractClientPhone(text);
-  const name = extractBookingClientName(text, { allowPlain: allowPlainName || Boolean(email || phone) });
+  const birthDate = extractClientBirthDate(text);
+  const name = extractBookingClientName(text, { allowPlain: allowPlainName || Boolean(email || phone || cpf || birthDate) });
   if (name) state.clientName = name;
   if (email) state.clientEmail = email;
+  if (cpf) state.clientCpf = cpf;
   if (phone) state.clientPhone = phone;
+  if (birthDate) state.clientBirthDate = birthDate;
   return state;
 }
 
@@ -456,17 +1087,149 @@ function formatBookingCurrency(value) {
   return amount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+function isFreeService(service = {}) {
+  return service.is_free === true || service.isFree === true;
+}
+
+function servicePriceText(service = {}, value = serviceValue(service), { serviceName = "" } = {}) {
+  const label = serviceName || service.commercial_name || service.name || "servico";
+  if (isFreeService(service)) return `${label} nao tem custo.`;
+  const amount = Number(value || 0);
+  return amount > 0
+    ? `${label} custa a partir de ${formatBookingCurrency(amount)}.`
+    : `O valor de ${label} esta sob consulta.`;
+}
+
+function formatServiceValue(service = {}, value = serviceValue(service)) {
+  if (isFreeService(service)) return "sem custo";
+  return formatBookingCurrency(value);
+}
+
+function formatServiceDeposit(state = {}) {
+  if (state.serviceIsFree) return "";
+  const amount = Number(state.serviceDepositAmount || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return "Sinal: nao exige sinal";
+  if (state.serviceDepositType === "percentage") return `Sinal: ${amount}%`;
+  return `Sinal: ${formatBookingCurrency(amount)}`;
+}
+
 function serviceValue(service = {}) {
+  if (isFreeService(service)) return 0;
   const amount = Number(service.initial_price || service.base_price || 0);
   return Number.isFinite(amount) ? amount : 0;
+}
+
+function buildServiceDetailsResponse(state = {}) {
+  const description = state.serviceDetailedDescription || state.serviceDescription || "";
+  const duration = Number(state.serviceDurationMinutes || 0);
+  return [
+    state.serviceNote || "",
+    "Perfeito, voce escolheu:",
+    state.serviceName,
+    description ? `Descricao: ${description}` : "",
+    duration > 0 ? `Duracao: ${duration} minutos` : "",
+    `Valor: ${formatServiceValue({ is_free: state.serviceIsFree }, state.serviceValue)}`,
+    formatServiceDeposit(state),
+    state.serviceRequiresAssessment ? "Requer avaliacao previa." : "",
+    state.serviceRecommendedMessage ? `Observacao: ${state.serviceRecommendedMessage}` : "",
+    "Posso verificar os horarios disponiveis para esse servico?",
+    "1) Sim",
+    "2) Escolher outro servico",
+  ].filter(Boolean).join("\n\n");
+}
+
+function isServiceDetailsAccepted(text) {
+  const normalized = normalizeText(text);
+  return (
+    isAffirmativeBookingConfirmation(text) ||
+    numericChoice(text) === 1 ||
+    includesAny(normalized, ["verificar horario", "verificar horarios", "pode verificar", "seguir", "continuar"])
+  );
+}
+
+function wantsAnotherServiceAfterDetails(text) {
+  const normalized = normalizeText(text);
+  return numericChoice(text) === 2 || includesAny(normalized, [
+    "outro servico",
+    "outro serviço",
+    "escolher outro",
+    "alterar servico",
+    "alterar serviço",
+    "mudar servico",
+    "mudar serviço",
+    "trocar servico",
+    "trocar serviço",
+  ]);
+}
+
+function whatsappBookingPaymentInfo(service = {}, state = {}) {
+  if (isFreeService(service) || state.serviceIsFree === true) {
+    return {
+      amount: 0,
+      originalAmount: 0,
+      billingReason: "Servico sem custo",
+      notes: `Agendamento sem custo para ${service.name || "servico"}.`,
+    };
+  }
+  const serviceTotal = Number(state.serviceValue || service.base_price || 0);
+  const deposit = Number(service.deposit_amount || 0);
+  const safeTotal = Number.isFinite(serviceTotal) ? Math.max(0, serviceTotal) : 0;
+  const safeDeposit = Number.isFinite(deposit) ? Math.max(0, deposit) : 0;
+  if (safeDeposit > 0) {
+    return {
+      amount: safeTotal > 0 ? Math.min(safeDeposit, safeTotal) : safeDeposit,
+      originalAmount: safeDeposit,
+      billingReason: "Sinal do agendamento",
+      notes: `Fatura de sinal gerada automaticamente pelo WhatsApp para ${service.name || "servico"}.`,
+    };
+  }
+  return {
+    amount: safeTotal,
+    originalAmount: safeTotal,
+    billingReason: "Servico agendado",
+    notes: `Fatura do servico gerada automaticamente pelo WhatsApp para ${service.name || "servico"}.`,
+  };
 }
 
 function missingBookingContactFields(state) {
   const missing = [];
   if (!clean(state.clientName)) missing.push("nome completo");
-  if (!clean(state.clientEmail)) missing.push("e-mail");
+  if (!isValidClientEmail(state.clientEmail)) missing.push("e-mail real");
+  if (!normalizeClientCpf(state.clientCpf)) missing.push("CPF");
+  if (!normalizeBirthDate(state.clientBirthDate)) missing.push("data de nascimento");
   if (!normalizeBookingPhone(state.clientPhone)) missing.push("telefone");
   return missing;
+}
+
+function bookingContactPrompt(state, missingContact = []) {
+  const next = missingContact[0];
+  const saved = [
+    state.clientName ? `Nome: ${state.clientName}` : "",
+    isValidClientEmail(state.clientEmail) ? `E-mail: ${state.clientEmail}` : "",
+    normalizeClientCpf(state.clientCpf) ? `CPF: ${normalizeClientCpf(state.clientCpf)}` : "",
+    normalizeBirthDate(state.clientBirthDate) ? `Nascimento: ${normalizeBirthDate(state.clientBirthDate)}` : "",
+    normalizeBookingPhone(state.clientPhone) ? `Telefone: ${formatBookingPhone(state.clientPhone)}` : "",
+  ].filter(Boolean);
+  const nextQuestion =
+    next === "nome completo"
+      ? "Qual seu nome completo?"
+      : next === "e-mail real"
+        ? "Qual seu e-mail real?"
+        : next === "CPF"
+          ? "Qual seu CPF?"
+          : next === "data de nascimento"
+            ? "Qual sua data de nascimento? Pode enviar no formato 10/02/1990."
+            : "Qual telefone deseja usar para contato?";
+  return [
+    "Perfeito, encontrei o horario.",
+    `Servico: ${state.serviceName}`,
+    `Valor: ${formatServiceValue({ is_free: state.serviceIsFree }, state.serviceValue)}`,
+    saved.length ? `Ja tenho:\n${saved.join("\n")}` : "",
+    normalizeBookingPhone(state.clientPhone)
+      ? `Vou usar este WhatsApp como telefone de contato: ${formatBookingPhone(state.clientPhone)}.`
+      : "",
+    nextQuestion,
+  ].filter(Boolean).join("\n\n");
 }
 
 async function saveBookingState(conversationId, state) {
@@ -478,80 +1241,202 @@ async function saveBookingState(conversationId, state) {
   );
 }
 
-async function ensureClientForBooking(client, { phoneNumber, clientName, clientEmail = "", clientPhone = "" }) {
+async function ensureClientForBooking(client, {
+  phoneNumber,
+  clientName,
+  clientEmail = "",
+  clientPhone = "",
+  clientCpf = "",
+  clientBirthDate = "",
+}) {
   const contactPhone = normalizeBookingPhone(clientPhone, phoneNumber);
+  const email = clean(clientEmail).toLowerCase();
+  const cpf = normalizeClientCpf(clientCpf);
+  const birthDate = normalizeBirthDate(clientBirthDate);
+  if (!isValidClientEmail(email))
+    throw new Error("Informe um e-mail real para criar o acesso da cliente.");
+  if (!cpf) throw new Error("Informe um CPF válido para o pré-cadastro.");
+  if (!birthDate) throw new Error("Informe uma data de nascimento válida.");
+  await client.query("alter table public.profiles add column if not exists cpf text").catch(() => null);
   const found = await findClientByPhone(client, contactPhone || phoneNumber);
   if (found?.id) {
     const profile = await client.query(
-      `select c.id as client_id,p.id as profile_id,p.full_name
+      `select c.id as client_id,c.cpf,p.id as profile_id,p.full_name,p.birth_date,u.email,u.encrypted_password
          from public.clients c
          join public.profiles p on p.id=c.profile_id
+         join auth.users u on u.id=p.id
         where c.id=$1
         limit 1`,
       [found.id],
     );
     if (profile.rows[0]?.profile_id) {
+      const target = profile.rows[0];
+      const emailCheck = await client.query(
+        "select id from auth.users where lower(email)=lower($1) and id<>$2 limit 1",
+        [email, target.profile_id],
+      );
+      if (emailCheck.rowCount)
+        throw new Error("Este e-mail já está cadastrado para outra cliente.");
+      const needsTemporaryPassword =
+        !target.encrypted_password || isFakeWhatsappEmail(target.email);
+      const temporaryPassword = needsTemporaryPassword
+        ? generateTemporaryPassword()
+        : "";
+      const passwordHash = temporaryPassword
+        ? await bcrypt.hash(temporaryPassword, 12)
+        : null;
       await client.query(
-        `update public.clients
-            set preferences=coalesce(preferences,'{}'::jsonb) || $2::jsonb
+        `update auth.users
+            set email=$1,
+                phone=coalesce(phone,$2),
+                encrypted_password=coalesce($3, encrypted_password),
+                email_confirmed_at=coalesce(email_confirmed_at,now()),
+                raw_user_meta_data=coalesce(raw_user_meta_data,'{}'::jsonb) || $4::jsonb,
+                updated_at=now()
+          where id=$5`,
+        [
+          email,
+          contactPhone || phoneNumber,
+          passwordHash,
+          JSON.stringify({
+            name: clean(clientName) || target.full_name || "",
+            source: "whatsapp_ai",
+            force_password_change: Boolean(temporaryPassword),
+          }),
+          target.profile_id,
+        ],
+      );
+      await client.query(
+        `update public.profiles
+            set full_name=case
+                  when full_name ilike 'Cliente WhatsApp %' then $2
+                  else full_name
+                end,
+                phone=coalesce(phone,$3),
+                birth_date=coalesce(birth_date,$4::date),
+                cpf=coalesce(cpf,$5),
+                notification_preferences=coalesce(notification_preferences,'{}'::jsonb) || '{"email":true,"whatsapp":true}'::jsonb,
+                updated_at=now()
           where id=$1`,
         [
-          profile.rows[0].client_id,
+          target.profile_id,
+          clean(clientName) || target.full_name || "",
+          contactPhone || phoneNumber,
+          birthDate,
+          cpf,
+        ],
+      );
+      await client.query(
+        `update public.clients
+            set cpf=coalesce(cpf,$2),
+                preferences=coalesce(preferences,'{}'::jsonb) || $3::jsonb
+          where id=$1`,
+        [
+          target.client_id,
+          cpf,
           JSON.stringify({
             whatsapp_ai_contact: {
-              name: clean(clientName) || profile.rows[0].full_name || "",
-              email: clean(clientEmail),
+              name: clean(clientName) || target.full_name || "",
+              email,
               phone: contactPhone || phoneNumber,
+              cpf,
+              birthDate,
             },
           }),
         ],
       ).catch(() => null);
+      await client.query(
+        `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
+         values($1,'update','client',$2,$3)`,
+        [
+          target.profile_id,
+          target.client_id,
+          JSON.stringify({
+            source: "whatsapp_ai",
+            emailUpdated: target.email !== email,
+            temporaryPasswordGenerated: Boolean(temporaryPassword),
+          }),
+        ],
+      ).catch(() => null);
+      return {
+        ...target,
+        access: temporaryPassword
+          ? {
+              email,
+              temporaryPassword,
+              fullName: clean(clientName) || target.full_name || "",
+            }
+          : null,
+      };
     }
-    return profile.rows[0] || { client_id: found.id, profile_id: null, full_name: found.full_name };
+    return profile.rows[0] || { client_id: found.id, profile_id: null, full_name: found.full_name, access: null };
   }
 
   const safeName =
     clean(clientName).length >= 2
       ? clean(clientName).slice(0, 120)
       : `Cliente WhatsApp ${String(phoneNumber || "").slice(-4)}`;
-  const email = `whatsapp+${String(contactPhone || phoneNumber).replace(/\D/g, "")}@carolsol.local`;
+  const temporaryPassword = generateTemporaryPassword();
+  const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+  const existingEmail = await client.query(
+    "select id from auth.users where lower(email)=lower($1) limit 1",
+    [email],
+  );
+  if (existingEmail.rowCount)
+    throw new Error("Este e-mail já está cadastrado para outra cliente.");
   const user = await client.query(
     `insert into auth.users(email, phone, encrypted_password, email_confirmed_at, raw_user_meta_data)
-     values($1,$2,null,now(),$3)
+     values($1,$2,$3,now(),$4)
      on conflict(email) do update
         set phone=coalesce(auth.users.phone, excluded.phone),
             raw_user_meta_data=coalesce(nullif(auth.users.raw_user_meta_data,'{}'::jsonb), excluded.raw_user_meta_data),
             updated_at=now()
      returning id`,
-    [email, contactPhone || phoneNumber, JSON.stringify({ name: safeName, email: clean(clientEmail), source: "whatsapp_ai" })],
+    [
+      email,
+      contactPhone || phoneNumber,
+      passwordHash,
+      JSON.stringify({
+        name: safeName,
+        source: "whatsapp_ai",
+        force_password_change: true,
+      }),
+    ],
   );
   const profile = await client.query(
-    `insert into public.profiles(id, role, full_name, phone, notification_preferences)
-     values($1,'client',$2,$3,'{"email":false,"whatsapp":true,"push":false}')
+    `insert into public.profiles(id, role, full_name, phone, birth_date, cpf, notification_preferences)
+     values($1,'client',$2,$3,$4,$5,'{"email":true,"whatsapp":true,"push":false}')
      on conflict(id) do update
         set full_name=case
               when public.profiles.full_name ilike 'Cliente WhatsApp %' then excluded.full_name
               else public.profiles.full_name
             end,
             phone=coalesce(public.profiles.phone, excluded.phone),
+            birth_date=coalesce(public.profiles.birth_date, excluded.birth_date),
+            cpf=coalesce(public.profiles.cpf, excluded.cpf),
+            notification_preferences=coalesce(public.profiles.notification_preferences,'{}'::jsonb) || '{"email":true,"whatsapp":true}'::jsonb,
             updated_at=now()
      returning id as profile_id, full_name`,
-    [user.rows[0].id, safeName, contactPhone || phoneNumber],
+    [user.rows[0].id, safeName, contactPhone || phoneNumber, birthDate, cpf],
   );
   const insertedClient = await client.query(
-    `insert into public.clients(profile_id, source, preferences)
-     values($1,'WhatsApp IA',$2)
+    `insert into public.clients(profile_id, source, cpf, preferences)
+     values($1,'WhatsApp IA',$2,$3)
      on conflict(profile_id) do update set
        source=coalesce(public.clients.source, excluded.source),
+       cpf=coalesce(public.clients.cpf, excluded.cpf),
        preferences=coalesce(public.clients.preferences,'{}'::jsonb) || excluded.preferences
      returning id as client_id`,
     [
       profile.rows[0].profile_id,
+      cpf,
       JSON.stringify({
         whatsapp_ai_contact: {
           name: safeName,
-          email: clean(clientEmail),
+          email,
           phone: contactPhone || phoneNumber,
+          cpf,
+          birthDate,
         },
       }),
     ],
@@ -562,16 +1447,34 @@ async function ensureClientForBooking(client, { phoneNumber, clientName, clientE
      on conflict do nothing`,
     [profile.rows[0].profile_id],
   ).catch(() => null);
+  await client.query(
+    `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
+     values($1,'create','client',$2,$3)`,
+    [
+      profile.rows[0].profile_id,
+      insertedClient.rows[0].client_id,
+      JSON.stringify({
+        source: "whatsapp_ai",
+        loginCreated: true,
+        temporaryPasswordGenerated: true,
+      }),
+    ],
+  ).catch(() => null);
   return {
     client_id: insertedClient.rows[0].client_id,
     profile_id: profile.rows[0].profile_id,
     full_name: profile.rows[0].full_name,
+    access: {
+      email,
+      temporaryPassword,
+      fullName: safeName,
+    },
   };
 }
 
 async function availableBookingSlots(client, { serviceId, date, preferredTime = "", period = "" }) {
   const service = await client.query(
-    "select id,name,duration_minutes,base_price,deposit_amount,active from public.services where id=$1 and active limit 1",
+    "select id,name,duration_minutes,base_price,deposit_amount,active,coalesce(is_free,false) as is_free from public.services where id=$1 and active limit 1",
     [serviceId],
   );
   if (!service.rows[0]) return { service: null, slots: [] };
@@ -629,11 +1532,11 @@ async function availableBookingSlots(client, { serviceId, date, preferredTime = 
       });
     }
   }
-  return { service: service.rows[0], slots: slots.slice(0, 8) };
+  return { service: service.rows[0], slots };
 }
 
 async function createWhatsappAppointment({ conversationId, phoneNumber, state }) {
-  return transaction(async (client) => {
+  const result = await transaction(async (client) => {
     const lockedConversation = await client.query(
       "select id,appointment_id from public.whatsapp_conversations where id=$1 for update",
       [conversationId],
@@ -648,6 +1551,8 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       clientName: state.clientName,
       clientEmail: state.clientEmail,
       clientPhone: state.clientPhone,
+      clientCpf: state.clientCpf,
+      clientBirthDate: state.clientBirthDate,
     });
     if (!bookingClient?.client_id) throw new Error("Cliente não encontrado para o agendamento.");
 
@@ -702,6 +1607,9 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
     );
     const appointmentId = (await client.query("select uuid_generate_v4() as id")).rows[0].id;
     const bookingCode = `CS-${String(appointmentId).replace(/-/g, "").slice(-12).toUpperCase()}`;
+    const paymentInfo = whatsappBookingPaymentInfo(service.rows[0], state);
+    const shouldCreatePayment = paymentInfo.amount > 0;
+    const initialStatus = shouldCreatePayment ? "awaiting_payment" : "requested";
     const intake = {
       origin: "whatsapp_ai",
       conversation_id: conversationId,
@@ -711,6 +1619,8 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
         name: clean(state.clientName),
         email: clean(state.clientEmail),
         phone: normalizeBookingPhone(state.clientPhone, phoneNumber),
+        cpf: normalizeClientCpf(state.clientCpf),
+        birthDate: normalizeBirthDate(state.clientBirthDate),
       },
       selected_by_ai: true,
       requires_human_confirmation: true,
@@ -719,13 +1629,15 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       "Pré-agendamento criado pela IA do WhatsApp.",
       state.clientName ? `Nome informado: ${state.clientName}.` : "",
       state.clientEmail ? `E-mail informado: ${state.clientEmail}.` : "",
+      normalizeClientCpf(state.clientCpf) ? `CPF informado: ${normalizeClientCpf(state.clientCpf)}.` : "",
+      normalizeBirthDate(state.clientBirthDate) ? `Nascimento informado: ${normalizeBirthDate(state.clientBirthDate)}.` : "",
       normalizeBookingPhone(state.clientPhone, phoneNumber)
         ? `Telefone informado: ${normalizeBookingPhone(state.clientPhone, phoneNumber)}.`
         : "",
       state.requestedServiceName && state.requestedServiceName !== state.serviceName
         ? `Serviço solicitado pela cliente: ${state.requestedServiceName}.`
         : "",
-      `Valor registrado: ${formatBookingCurrency(state.serviceValue || service.rows[0].base_price || 0)}.`,
+      `Valor registrado: ${formatServiceValue({ is_free: state.serviceIsFree || service.rows[0].is_free }, state.serviceValue || service.rows[0].base_price || 0)}.`,
       "Confirmar disponibilidade e detalhes com a cliente antes do atendimento.",
     ].filter(Boolean).join(" ");
 
@@ -733,7 +1645,7 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       `insert into public.appointments(
         id,booking_code,client_id,professional_id,service_id,location_id,starts_at,ends_at,
         status,notes,estimated_value,original_value,discount_amount,intake_data,created_by
-      ) values($1,$2,$3,$4,$5,$6,$7,$8,'requested',$9,$10,$10,0,$11,$12)`,
+      ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,0,$12,$13)`,
       [
         appointmentId,
         bookingCode,
@@ -743,26 +1655,53 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
         location.rows[0]?.id || null,
         startsAt.toISOString(),
         endsAt.toISOString(),
+        initialStatus,
         notes,
         state.serviceValue || service.rows[0].base_price || 0,
         JSON.stringify(intake),
         bookingClient.profile_id || null,
       ],
     );
+    let paymentId = null;
+    if (shouldCreatePayment) {
+      await client.query("alter table public.payments add column if not exists billing_reason text").catch(() => null);
+      const payment = await client.query(
+        `insert into public.payments(
+          appointment_id,client_id,amount,original_amount,discount_amount,method,payment_method,provider,status,notes,billing_reason
+        ) values($1,$2,$3,$4,0,'pix','pix','pix_manual','pending',$5,$6) returning id`,
+        [
+          appointmentId,
+          bookingClient.client_id,
+          paymentInfo.amount,
+          paymentInfo.originalAmount,
+          paymentInfo.notes,
+          paymentInfo.billingReason,
+        ],
+      );
+      paymentId = payment.rows[0]?.id || null;
+      if (!paymentId) throw new Error("Nao foi possivel criar a fatura do agendamento.");
+      await client.query(
+        `insert into public.payment_status_history(payment_id,old_status,new_status,changed_by,notes)
+         values($1,null,'pending',$2,$3)`,
+        [paymentId, bookingClient.profile_id || null, "Fatura criada automaticamente pelo WhatsApp"],
+      ).catch(() => null);
+    }
     await client.query(
       `insert into public.appointment_status_history(appointment_id,to_status,changed_by,note)
-       values($1,'requested',$2,'Pré-agendamento criado pela IA do WhatsApp')`,
-      [appointmentId, bookingClient.profile_id || null],
+       values($1,$2,$3,'Pré-agendamento criado pela IA do WhatsApp')`,
+      [appointmentId, initialStatus, bookingClient.profile_id || null],
     );
-    const notificationData = JSON.stringify({ appointment_id: appointmentId, conversation_id: conversationId });
+    const notificationData = JSON.stringify({ appointment_id: appointmentId, payment_id: paymentId, conversation_id: conversationId });
     await client.query(
       `insert into public.notifications(profile_id,kind,title,body,data,action_url,metadata)
        values($1,'appointment_created','Pré-agendamento enviado',$2,$3,$4,$3)`,
       [
         bookingClient.profile_id,
-        `Sua solicitação de ${service.rows[0].name} foi registrada. A equipe vai confirmar a disponibilidade.`,
+        shouldCreatePayment
+          ? `Sua solicitação de ${service.rows[0].name} foi registrada. A fatura já está disponível no portal.`
+          : `Sua solicitação de ${service.rows[0].name} foi registrada. A equipe vai confirmar a disponibilidade.`,
         notificationData,
-        `/cliente/agendamentos/${appointmentId}`,
+        paymentId ? `/cliente/pagamentos/${paymentId}` : `/cliente/agendamentos/${appointmentId}`,
       ],
     ).catch(() => null);
     await client.query(
@@ -787,7 +1726,8 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
           set client_id=coalesce(client_id,$2),
               professional_id=coalesce(professional_id,$3),
               appointment_id=$4,
-              booking_state=$5,
+              payment_id=$5,
+              booking_state=$6,
               updated_at=now()
         where id=$1`,
       [
@@ -795,6 +1735,7 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
         bookingClient.client_id,
         professional.rows[0].id,
         appointmentId,
+        paymentId,
         JSON.stringify(prunePayload(nextState)),
       ],
     );
@@ -806,6 +1747,9 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       details: {
         appointmentId,
         bookingCode,
+        paymentId,
+        paymentAmount: paymentInfo.amount,
+        billingReason: paymentInfo.billingReason,
         service: service.rows[0].name,
         professional: professional.rows[0].full_name,
         startsAt: startsAt.toISOString(),
@@ -824,10 +1768,24 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       id: appointmentId,
       bookingCode,
       startsAt: startsAt.toISOString(),
+      paymentId,
+      paymentAmount: paymentInfo.amount,
+      billingReason: paymentInfo.billingReason,
       service: service.rows[0].name,
       professional: professional.rows[0].full_name,
+      access: bookingClient.access || null,
     };
   });
+  if (result.access?.email && result.access?.temporaryPassword) {
+    await sendEmail({
+      to: result.access.email,
+      subject: "Seu acesso ao portal Carol Sol",
+      html: `<p>Olá, ${result.access.fullName || "cliente"}.</p><p>Seu cadastro foi realizado com sucesso e seu acesso ao portal foi criado.</p><p><strong>Login:</strong> ${result.access.email}<br/><strong>Senha temporária:</strong> ${result.access.temporaryPassword}</p><p>Acesse: <a href="${process.env.APP_URL || "https://carolmobile.vercel.app"}/entrar">${process.env.APP_URL || "https://carolmobile.vercel.app"}/entrar</a></p><p>Por segurança, altere sua senha no primeiro acesso.</p>`,
+    }).catch((error) =>
+      console.error("Failed to send WhatsApp booking access email:", error.message),
+    );
+  }
+  return result;
 }
 
 function isBookingIntent(text) {
@@ -978,39 +1936,59 @@ async function slotOptionsForBooking({ serviceId, date, preferredTime = "", peri
       preferredTime,
       period,
     });
-    return slots.slice(0, 5).map((slot, index) => ({ ...slot, id: index + 1 }));
+    return slots.map((slot, index) => ({ ...slot, id: index + 1 }));
   });
 }
 
 async function nextAvailableSlotOptions({ serviceId, fromDate, period = "" }) {
   const options = [];
-  for (let offset = 0; offset <= 10 && options.length < 5; offset++) {
+  for (let offset = 0; offset <= 10; offset++) {
     const date = addLocalDays(fromDate, offset);
     const slots = await slotOptionsForBooking({ serviceId, date, period });
     for (const slot of slots) {
       options.push({ ...slot, id: options.length + 1 });
-      if (options.length >= 5) break;
     }
   }
   return options;
 }
 
-function buildBookingSummary(state) {
-  return [
-    state.clientName ? `Nome: ${state.clientName}` : "",
-    state.clientEmail ? `E-mail: ${state.clientEmail}` : "",
-    state.clientPhone ? `Telefone: ${state.clientPhone}` : "",
-    `Serviço: ${state.serviceName}`,
-    state.requestedServiceName && state.requestedServiceName !== state.serviceName
-      ? `Pedido informado: ${state.requestedServiceName}`
-      : "",
-    `Valor: ${formatBookingCurrency(state.serviceValue)}`,
-    `Data e horário: ${formatDateLabel(state.date)} às ${state.time}`,
-    state.professionalName ? `Profissional: ${state.professionalName}` : "",
-  ].filter(Boolean).join("\n");
+export function isAgendaAvailabilityIntent(text) {
+  const normalized = normalizeText(text);
+  if (!normalized) return false;
+  const wantsAgenda = includesAny(normalized, [
+    "horario",
+    "agenda",
+    "disponivel",
+    "disponibilidade",
+    "vaga",
+    "encaixe",
+    "atende",
+    "atendimento",
+    "tem hora",
+    "tem horario",
+    "consegue",
+    "tem como",
+  ]);
+  if (!wantsAgenda) return false;
+  return includesAny(normalized, [
+    "hoje",
+    "hj",
+    "amanha",
+    "depois de amanha",
+    "domingo",
+    "segunda",
+    "terca",
+    "quarta",
+    "quinta",
+    "sexta",
+    "sabado",
+    "manha",
+    "tarde",
+    "noite",
+  ]) || /\b(?:dia\s*)?\d{1,2}[\/.-]\d{1,2}(?:[\/.-]\d{2,4})?\b/.test(normalized);
 }
 
-async function handleStructuredBookingFlow({
+export async function handleLocalAgendaAvailabilityIntent({
   normalized,
   conversationId,
   inboundMessageId,
@@ -1020,11 +1998,278 @@ async function handleStructuredBookingFlow({
   recorded,
   queueLatencyMs,
   receivedAt,
+  history = [],
+}) {
+  if (!settings.allowAutoBooking) return null;
+  if (!flowEnabled(base, "verificacao_agenda")) return null;
+  if (!isAgendaAvailabilityIntent(text)) return null;
+
+  const lastAiMessage = (history || []).filter((item) => item.sender_type === "ai").pop();
+  const lastAiText = lastAiMessage ? lastAiMessage.body : "";
+  const sendTextAndRecord = async ({ text: responseText, reason }) => {
+    if (lastAiText && responseText.trim() === lastAiText.trim()) {
+      throw new Error("LOOP_DETECTED");
+    }
+    return performSendTextAndRecord({ normalized, conversationId, text: responseText, reason });
+  };
+
+  try {
+    const currentState = parseJsonObject(recorded.conversation.booking_state);
+    const state = {
+      status: "collecting",
+      ...currentState,
+      updatedAt: new Date().toISOString(),
+    };
+    state.clientPhone = normalizeBookingPhone(state.clientPhone, normalized.phoneNumber);
+
+    const parsedDate = parseBookingDateFromText(text, state) || state.date || "";
+    const parsedTime = parseFlexibleBookingTimeFromText(text);
+    const requestedPeriod = parsedTime.period || state.period || "";
+    const preferredTime = parsedTime.time || "";
+
+    let serviceChoice = state.serviceId
+      ? {
+          serviceId: state.serviceId,
+          serviceName: state.serviceName,
+          requestedServiceName: state.requestedServiceName || state.serviceName,
+          serviceValue: state.serviceValue || 0,
+          serviceIsFree: state.serviceIsFree === true,
+          ...serviceDetailsState(state),
+        }
+      : selectBookingService(text, base, state);
+    const serviceOptions = buildServiceOptions(base);
+    if (!serviceChoice && serviceOptions.length === 1) serviceChoice = serviceOptions[0];
+
+    if (!serviceChoice?.serviceId) {
+      if (!serviceOptions.length) return null;
+      Object.assign(state, {
+        status: "awaiting_service",
+        serviceOptions,
+        date: parsedDate || state.date || "",
+        period: requestedPeriod,
+        preferredTime,
+        requestedAgendaQuestion: clean(text),
+      });
+      await saveBookingState(conversationId, state);
+      const dateText = parsedDate ? ` para ${formatDateLabel(parsedDate)}` : "";
+      const responseText = [
+        `Consigo consultar a agenda real${dateText}.`,
+        "Para verificar com precisao, me diga qual servico:",
+        optionLines(serviceOptions, (item) => item.serviceName),
+        "Responda so com o numero.",
+      ].join("\n\n");
+      await sendTextAndRecord({ text: responseText, reason: "agenda_service_request" });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      await logAiRequest({
+        conversationId,
+        messageId: inboundMessageId,
+        provider: "local_booking",
+        model: "agenda_availability_intent",
+        status: "service_request",
+        queueLatencyMs,
+        providerLatencyMs: 0,
+        totalLatencyMs: Date.now() - receivedAt.getTime(),
+        inputTokens: 0,
+        outputTokens: 0,
+      });
+      return { ok: true, replied: true, reason: "agenda_service_request", conversationId };
+    }
+
+    Object.assign(state, {
+      serviceId: serviceChoice.serviceId,
+      serviceName: serviceChoice.serviceName,
+      requestedServiceName: serviceChoice.requestedServiceName || serviceChoice.serviceName,
+      serviceValue: serviceChoice.serviceValue || state.serviceValue || 0,
+      serviceIsFree: serviceChoice.serviceIsFree === true || state.serviceIsFree === true,
+      ...serviceDetailsState(serviceChoice),
+      serviceDetailsAccepted: state.serviceDetailsAccepted === true && state.serviceId === serviceChoice.serviceId,
+      date: parsedDate || state.date || "",
+      period: requestedPeriod,
+      preferredTime,
+    });
+
+    if (!state.serviceDetailsAccepted) {
+      state.status = "awaiting_service_details";
+      await saveBookingState(conversationId, state);
+      const responseText = buildServiceDetailsResponse(state);
+      await sendTextAndRecord({ text: responseText, reason: "agenda_service_details" });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      await logAiRequest({
+        conversationId,
+        messageId: inboundMessageId,
+        provider: "local_booking",
+        model: "agenda_availability_intent",
+        status: "service_details",
+        queueLatencyMs,
+        providerLatencyMs: 0,
+        totalLatencyMs: Date.now() - receivedAt.getTime(),
+        inputTokens: 0,
+        outputTokens: 0,
+      });
+      return { ok: true, replied: true, reason: "agenda_service_details", conversationId };
+    }
+
+    if (!state.date) {
+      state.status = "awaiting_date";
+      state.dateOptions = dateOptionsFrom();
+      await saveBookingState(conversationId, state);
+      const responseText = [
+      `Consigo consultar a agenda real para ${state.serviceName}.`,
+        "Qual dia voce quer verificar?",
+        optionLines(state.dateOptions, (item) => item.label),
+        "Se preferir outro dia, pode mandar no formato 10/07.",
+      ].join("\n\n");
+      await sendTextAndRecord({ text: responseText, reason: "agenda_date_request" });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      await logAiRequest({
+        conversationId,
+        messageId: inboundMessageId,
+        provider: "local_booking",
+        model: "agenda_availability_intent",
+        status: "date_request",
+        queueLatencyMs,
+        providerLatencyMs: 0,
+        totalLatencyMs: Date.now() - receivedAt.getTime(),
+        inputTokens: 0,
+        outputTokens: 0,
+      });
+      return { ok: true, replied: true, reason: "agenda_date_request", conversationId };
+    }
+
+    let slotOptions = await slotOptionsForBooking({
+      serviceId: state.serviceId,
+      date: state.date,
+      preferredTime,
+      period: requestedPeriod,
+    });
+    let reason = "agenda_slot_options";
+    let header = `Consultei a agenda real para ${formatDateLabel(state.date)}.`;
+
+    if (!slotOptions.length) {
+      const nextOptions = await nextAvailableSlotOptions({
+        serviceId: state.serviceId,
+        fromDate: addLocalDays(state.date, 1),
+        period: requestedPeriod,
+      });
+      if (!nextOptions.length) {
+        Object.assign(state, {
+          status: "awaiting_date",
+          date: "",
+          time: "",
+          professionalId: "",
+          slotOptions: [],
+          dateOptions: dateOptionsFrom(),
+        });
+        await saveBookingState(conversationId, state);
+        const responseText = [
+          `${header} Nao encontrei horarios disponiveis nessa data.`,
+          "Tambem nao encontrei vagas nos proximos dias para esse servico.",
+          "Pode me enviar outra data para eu consultar?",
+        ].join("\n\n");
+        await sendTextAndRecord({ text: responseText, reason: "agenda_no_slots" });
+        await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+        await logAiRequest({
+          conversationId,
+          messageId: inboundMessageId,
+          provider: "local_booking",
+          model: "agenda_availability_intent",
+          status: "no_slots",
+          queueLatencyMs,
+          providerLatencyMs: 0,
+          totalLatencyMs: Date.now() - receivedAt.getTime(),
+          inputTokens: 0,
+          outputTokens: 0,
+        });
+        return { ok: true, replied: true, reason: "agenda_no_slots", conversationId };
+      }
+      slotOptions = nextOptions;
+      reason = "agenda_next_slot_options";
+      header = `${header} Nao encontrei horarios nessa data, mas achei proximas opcoes.`;
+    }
+
+    Object.assign(state, {
+      status: "awaiting_slot",
+      date: state.date,
+      time: "",
+      professionalId: "",
+      slotOptions,
+      slotPageStart: 0,
+    });
+    await saveBookingState(conversationId, state);
+    const periodText = requestedPeriod ? ` no periodo da ${periodLabel(requestedPeriod)}` : "";
+    const responseText = [
+      naturalConversationPrefix(text),
+      `${header} Encontrei ${slotOptions.length} horarios disponiveis${periodText}.`,
+      "Pode escolher pelo numero ou me dizer o horario que prefere:",
+      slotPageLines(slotOptions, 0),
+    ].filter(Boolean).join("\n\n");
+    await sendTextAndRecord({ text: responseText, reason });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    await logAiRequest({
+      conversationId,
+      messageId: inboundMessageId,
+      provider: "local_booking",
+      model: "agenda_availability_intent",
+      status: reason,
+      queueLatencyMs,
+      providerLatencyMs: 0,
+      totalLatencyMs: Date.now() - receivedAt.getTime(),
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+    return { ok: true, replied: true, reason, conversationId };
+  } catch (error) {
+    if (error.message !== "LOOP_DETECTED") {
+      console.error("Local agenda availability intent failed:", error.message);
+    }
+    return null;
+  }
+}
+
+function buildBookingSummary(state) {
+  return [
+    state.clientName ? `Nome: ${state.clientName}` : "",
+    state.clientEmail ? `E-mail: ${state.clientEmail}` : "",
+    state.clientCpf ? `CPF: ${state.clientCpf}` : "",
+    state.clientBirthDate ? `Nascimento: ${state.clientBirthDate}` : "",
+    state.clientPhone ? `Telefone: ${state.clientPhone}` : "",
+    `Serviço: ${state.serviceName}`,
+    state.requestedServiceName && state.requestedServiceName !== state.serviceName
+      ? `Pedido informado: ${state.requestedServiceName}`
+      : "",
+    `Valor: ${formatServiceValue({ is_free: state.serviceIsFree }, state.serviceValue)}`,
+    `Data e horário: ${formatDateLabel(state.date)} às ${state.time}`,
+    state.professionalName ? `Profissional: ${state.professionalName}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+export async function handleStructuredBookingFlow({
+  normalized,
+  conversationId,
+  inboundMessageId,
+  text,
+  settings,
+  base,
+  recorded,
+  queueLatencyMs,
+  receivedAt,
+  history = [],
 }) {
   if (!settings.allowAutoBooking) return null;
   if (!flowEnabled(base, "pre_agendamento") && !flowEnabled(base, "verificacao_agenda")) return null;
 
-  let currentState = parseJsonObject(recorded.conversation.booking_state);
+  const lastAiMessage = (history || []).filter(item => item.sender_type === "ai").pop();
+  const lastAiText = lastAiMessage ? lastAiMessage.body : "";
+
+  const sendTextAndRecord = async ({ normalized, conversationId, text: responseText, reason }) => {
+    if (lastAiText && responseText.trim() === lastAiText.trim()) {
+      throw new Error("LOOP_DETECTED");
+    }
+    return performSendTextAndRecord({ normalized, conversationId, text: responseText, reason });
+  };
+
+  try {
+    let currentState = parseJsonObject(recorded.conversation.booking_state);
   const persistedAppointmentId = recorded.conversation.appointment_id || currentState.appointmentId || "";
   if (
     persistedAppointmentId &&
@@ -1036,6 +2281,23 @@ async function handleStructuredBookingFlow({
       status: "booked",
       appointmentId: persistedAppointmentId,
     };
+  }
+  if (shouldResetBookingStateOnGreeting(text, currentState)) {
+    await saveBookingState(conversationId, {});
+    const responseText = settings.welcomeMessage;
+    await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_state_reset_greeting" });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    await logAiRequest({
+      conversationId,
+      messageId: inboundMessageId,
+      provider: "local_booking",
+      model: "booking_state_machine",
+      status: "state_reset_greeting",
+      queueLatencyMs,
+      providerLatencyMs: 0,
+      totalLatencyMs: Date.now() - receivedAt.getTime(),
+    });
+    return { ok: true, replied: true, reason: "booking_state_reset_greeting", conversationId };
   }
   if (currentState.status === "booked" && currentState.appointmentId) {
     if (isBookedFollowupHandoffChoice(text)) {
@@ -1112,6 +2374,9 @@ async function handleStructuredBookingFlow({
       serviceName: serviceChoice.serviceName,
       requestedServiceName: serviceChoice.requestedServiceName || serviceChoice.serviceName,
       serviceValue: serviceChoice.serviceValue || 0,
+      serviceIsFree: serviceChoice.serviceIsFree === true,
+      ...serviceDetailsState(serviceChoice),
+      serviceDetailsAccepted: false,
       serviceNote: serviceChoice.note || "",
     });
   }
@@ -1125,6 +2390,9 @@ async function handleStructuredBookingFlow({
         serviceName: serviceOptions[0].serviceName,
         requestedServiceName: serviceOptions[0].requestedServiceName,
         serviceValue: serviceOptions[0].serviceValue || 0,
+        serviceIsFree: serviceOptions[0].serviceIsFree === true,
+        ...serviceDetailsState(serviceOptions[0]),
+        serviceDetailsAccepted: false,
       });
     } else {
       state.serviceOptions = serviceOptions;
@@ -1149,6 +2417,74 @@ async function handleStructuredBookingFlow({
       });
       return { ok: true, replied: true, reason: "booking_service_options", conversationId };
     }
+  }
+
+  if (state.serviceId && state.status === "awaiting_service_details") {
+    if (wantsAnotherServiceAfterDetails(text)) {
+      const serviceOptions = buildServiceOptions(base);
+      Object.assign(state, {
+        status: "awaiting_service",
+        serviceId: "",
+        serviceName: "",
+        requestedServiceName: "",
+        serviceValue: 0,
+        serviceIsFree: false,
+        serviceNote: "",
+        serviceDetailsAccepted: false,
+        serviceDescription: "",
+        serviceDetailedDescription: "",
+        serviceDurationMinutes: 0,
+        serviceDepositAmount: 0,
+        serviceDepositType: "amount",
+        serviceRequiresAssessment: false,
+        serviceRequiresDeposit: false,
+        serviceRecommendedMessage: "",
+        serviceOptions,
+      });
+      await saveBookingState(conversationId, state);
+      const responseText = [
+        "Tudo bem. Escolha outro servico:",
+        optionLines(serviceOptions, (item) => item.serviceName),
+      ].join("\n\n");
+      await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_service_options" });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      return { ok: true, replied: true, reason: "booking_service_options", conversationId };
+    }
+    if (!isServiceDetailsAccepted(text)) {
+      await saveBookingState(conversationId, state);
+      const responseText = [
+        buildServiceDetailsResponse(state),
+        "Responda 1 para verificar horarios ou 2 para escolher outro servico.",
+      ].join("\n\n");
+      await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_service_details" });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      return { ok: true, replied: true, reason: "booking_service_details", conversationId };
+    }
+    state.serviceDetailsAccepted = true;
+    state.status = "collecting";
+  }
+
+  if (
+    state.serviceId &&
+    !state.serviceDetailsAccepted &&
+    ["collecting", "awaiting_service"].includes(String(state.status || "collecting"))
+  ) {
+    state.status = "awaiting_service_details";
+    await saveBookingState(conversationId, state);
+    const responseText = buildServiceDetailsResponse(state);
+    await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_service_details" });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    await logAiRequest({
+      conversationId,
+      messageId: inboundMessageId,
+      provider: "local_booking",
+      model: "booking_state_machine",
+      status: "service_details",
+      queueLatencyMs,
+      providerLatencyMs: 0,
+      totalLatencyMs: Date.now() - receivedAt.getTime(),
+    });
+    return { ok: true, replied: true, reason: "booking_service_details", conversationId };
   }
 
   if (!state.date) {
@@ -1183,38 +2519,120 @@ async function handleStructuredBookingFlow({
 
   if (!state.time || !state.professionalId) {
     const choice = numericChoice(text);
-    if (choice && Array.isArray(state.slotOptions)) {
-      const selected = state.slotOptions.find((item) => Number(item.id) === choice);
+    if (Array.isArray(state.slotOptions)) {
+      const pageStart = Number(state.slotPageStart || 0);
+      const nextCommand = pageStart + SLOT_PAGE_SIZE + 1;
+      if (
+        choice === nextCommand &&
+        state.slotOptions.length > pageStart + SLOT_PAGE_SIZE
+      ) {
+        state.slotPageStart = pageStart + SLOT_PAGE_SIZE;
+        state.status = "awaiting_slot";
+        await saveBookingState(conversationId, state);
+        const responseText = [
+          `Encontrei ${state.slotOptions.length} horários disponíveis. Próximos horários:`,
+          slotPageLines(state.slotOptions, state.slotPageStart),
+        ].join("\n\n");
+        await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_slot_more_options" });
+        await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+        await logAiRequest({
+          conversationId,
+          messageId: inboundMessageId,
+          provider: "local_booking",
+          model: "booking_state_machine",
+          status: "slot_more_options",
+          queueLatencyMs,
+          providerLatencyMs: 0,
+          totalLatencyMs: Date.now() - receivedAt.getTime(),
+        });
+        return { ok: true, replied: true, reason: "booking_slot_more_options", conversationId };
+      }
+      if (
+        wantsMoreSlotOptions(text) &&
+        state.slotOptions.length > pageStart + SLOT_PAGE_SIZE
+      ) {
+        state.slotPageStart = pageStart + SLOT_PAGE_SIZE;
+        state.status = "awaiting_slot";
+        await saveBookingState(conversationId, state);
+        const responseText = [
+          `Encontrei ${state.slotOptions.length} horários disponíveis. Próximos horários:`,
+          slotPageLines(state.slotOptions, state.slotPageStart),
+        ].join("\n\n");
+        await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_slot_more_options" });
+        await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+        await logAiRequest({
+          conversationId,
+          messageId: inboundMessageId,
+          provider: "local_booking",
+          model: "booking_state_machine",
+          status: "slot_more_options",
+          queueLatencyMs,
+          providerLatencyMs: 0,
+          totalLatencyMs: Date.now() - receivedAt.getTime(),
+        });
+        return { ok: true, replied: true, reason: "booking_slot_more_options", conversationId };
+      }
+      const displayedSlots = state.slotOptions.slice(pageStart, pageStart + SLOT_PAGE_SIZE);
+      const selected = displayedSlots.find((item) => Number(item.id) === choice);
       if (selected) {
         Object.assign(state, {
           date: selected.date,
           time: selected.time,
           professionalId: selected.professionalId,
           professionalName: selected.professionalName,
+          slotPageStart: pageStart,
           status: "awaiting_confirmation",
         });
       }
     }
 
     if (!state.time || !state.professionalId) {
-      const parsedTime = parseBookingTimeFromText(text);
+      const parsedTime = parseFlexibleBookingTimeFromText(text);
       const preferredTime = parsedTime.time || "";
       const period = parsedTime.period || state.period || "";
       if (period) state.period = period;
-      let slotOptions = await slotOptionsForBooking({
+      const slotOptions = await slotOptionsForBooking({
         serviceId: state.serviceId,
         date: state.date,
         preferredTime,
         period,
       });
-      if (!slotOptions.length && !preferredTime) {
-        slotOptions = await nextAvailableSlotOptions({
-          serviceId: state.serviceId,
-          fromDate: state.date,
-          period,
-        });
-      }
       if (!slotOptions.length) {
+        const unavailableDate = state.date;
+        const fallbackSlots = (preferredTime || period)
+          ? await slotOptionsForBooking({
+              serviceId: state.serviceId,
+              date: state.date,
+            })
+          : [];
+        if (fallbackSlots.length) {
+          state.status = "awaiting_slot";
+          state.time = "";
+          state.professionalId = "";
+          state.slotOptions = fallbackSlots;
+          state.slotPageStart = 0;
+          await saveBookingState(conversationId, state);
+          const responseText = [
+            preferredTime
+              ? `Nao encontrei ${preferredTime} disponivel para ${formatDateLabel(unavailableDate)}, mas mantive essa data e achei estas opcoes:`
+              : `Nao encontrei horario nesse periodo para ${formatDateLabel(unavailableDate)}, mas mantive essa data e achei estas opcoes:`,
+            slotPageLines(fallbackSlots, 0),
+            "Pode escolher pelo numero ou me dizer outro horario.",
+          ].join("\n\n");
+          await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_slot_alternatives" });
+          await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+          await logAiRequest({
+            conversationId,
+            messageId: inboundMessageId,
+            provider: "local_booking",
+            model: "booking_state_machine",
+            status: "slot_alternatives",
+            queueLatencyMs,
+            providerLatencyMs: 0,
+            totalLatencyMs: Date.now() - receivedAt.getTime(),
+          });
+          return { ok: true, replied: true, reason: "booking_slot_alternatives", conversationId };
+        }
         state.status = "awaiting_date";
         state.date = "";
         state.time = "";
@@ -1223,7 +2641,7 @@ async function handleStructuredBookingFlow({
         state.dateOptions = dateOptionsFrom();
         await saveBookingState(conversationId, state);
         const responseText = [
-          "Não encontrei horário disponível nessa opção.",
+          `Não encontrei horário disponível para ${formatDateLabel(unavailableDate)}.`,
           "Escolha outra data:",
           optionLines(state.dateOptions, (item) => item.label),
         ].join("\n\n");
@@ -1241,13 +2659,25 @@ async function handleStructuredBookingFlow({
         });
         return { ok: true, replied: true, reason: "booking_no_slots", conversationId };
       }
+      if (preferredTime && slotOptions.length === 1) {
+        Object.assign(state, {
+          date: slotOptions[0].date,
+          time: slotOptions[0].time,
+          professionalId: slotOptions[0].professionalId,
+          professionalName: slotOptions[0].professionalName,
+          slotOptions,
+          slotPageStart: 0,
+          status: "awaiting_confirmation",
+        });
+      } else {
       state.slotOptions = slotOptions;
+      state.slotPageStart = 0;
       state.status = "awaiting_slot";
       await saveBookingState(conversationId, state);
       const periodText = state.period ? ` no período da ${periodLabel(state.period)}` : "";
       const responseText = [
-        `Encontrei estes horários${periodText}. Responda só com o número para escolher:`,
-        optionLines(slotOptions, formatSlot),
+        `Encontrei ${slotOptions.length} horários disponíveis${periodText}. Pode escolher pelo número ou me dizer o horário que prefere:`,
+        slotPageLines(slotOptions, 0),
       ].join("\n\n");
       await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_slot_options" });
       await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
@@ -1262,6 +2692,7 @@ async function handleStructuredBookingFlow({
         totalLatencyMs: Date.now() - receivedAt.getTime(),
       });
       return { ok: true, replied: true, reason: "booking_slot_options", conversationId };
+      }
     }
   }
 
@@ -1269,12 +2700,26 @@ async function handleStructuredBookingFlow({
   if (missingContact.length) {
     state.status = "awaiting_contact";
     await saveBookingState(conversationId, state);
+    const contactResponseText = bookingContactPrompt(state, missingContact);
+    await sendTextAndRecord({ normalized, conversationId, text: contactResponseText, reason: "booking_contact_request" });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    await logAiRequest({
+      conversationId,
+      messageId: inboundMessageId,
+      provider: "local_booking",
+      model: "booking_state_machine",
+      status: "contact_request",
+      queueLatencyMs,
+      providerLatencyMs: 0,
+      totalLatencyMs: Date.now() - receivedAt.getTime(),
+    });
+    return { ok: true, replied: true, reason: "booking_contact_request", conversationId };
     const responseText = [
       "Perfeito, encontrei o horário. Antes de mostrar o resumo final, preciso dos dados do pré-agendamento:",
       `Serviço: ${state.serviceName}`,
-      `Valor: ${formatBookingCurrency(state.serviceValue)}`,
+      `Valor: ${formatServiceValue({ is_free: state.serviceIsFree }, state.serviceValue)}`,
       `Telefone de contato: ${state.clientPhone} (vou usar este WhatsApp; se quiser outro, envie junto).`,
-      `Me envie ${missingContact.join(" e ")}. Exemplo: Maria Silva, maria@email.com`,
+      `Me envie ${missingContact.join(" e ")}. Exemplo: Nome: Maria Silva, e-mail: maria@email.com, CPF: 000.000.000-00, nascimento: 10/05/1990`,
     ].join("\n\n");
     await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_contact_request" });
     await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
@@ -1291,9 +2736,45 @@ async function handleStructuredBookingFlow({
     return { ok: true, replied: true, reason: "booking_contact_request", conversationId };
   }
 
-  if (!isAffirmativeBookingConfirmation(text)) {
+  if (isFinalBookingAlteration(text) && state.status === "awaiting_confirmation") {
+    state.status = "awaiting_slot";
+    state.time = "";
+    state.professionalId = "";
+    state.professionalName = "";
+    await saveBookingState(conversationId, state);
+    const responseText = [
+      "Claro, vamos alterar.",
+      state.date ? `Mantive a data ${formatDateLabel(state.date)} e o servico ${state.serviceName}.` : `Mantive o servico ${state.serviceName}.`,
+      "Me diga o novo horario ou periodo que prefere.",
+    ].join("\n\n");
+    await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_change_requested" });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    return { ok: true, replied: true, reason: "booking_change_requested", conversationId };
+  }
+
+  if (!isFinalBookingConfirmation(text)) {
     state.status = "awaiting_confirmation";
     await saveBookingState(conversationId, state);
+    const finalSummaryText = [
+      "RESUMO DO AGENDAMENTO",
+      buildBookingSummary(state),
+      "Confirmar agendamento?",
+      "1) Confirmar",
+      "2) Alterar",
+    ].join("\n\n");
+    await sendTextAndRecord({ normalized, conversationId, text: finalSummaryText, reason: "booking_confirmation_request" });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    await logAiRequest({
+      conversationId,
+      messageId: inboundMessageId,
+      provider: "local_booking",
+      model: "booking_state_machine",
+      status: "confirmation_request",
+      queueLatencyMs,
+      providerLatencyMs: 0,
+      totalLatencyMs: Date.now() - receivedAt.getTime(),
+    });
+    return { ok: true, replied: true, reason: "booking_confirmation_request", conversationId };
     const responseText = [
       "Resumo do pré-agendamento:",
       buildBookingSummary(state),
@@ -1320,12 +2801,29 @@ async function handleStructuredBookingFlow({
       phoneNumber: normalized.phoneNumber,
       state,
     });
+    const accessText = appointment.access?.temporaryPassword
+      ? [
+          "Cadastro realizado com sucesso.",
+          "",
+          "Seu acesso ao portal foi criado.",
+          "",
+          `Login: ${appointment.access.email}`,
+          `Senha temporária: ${appointment.access.temporaryPassword}`,
+          `Link: ${process.env.APP_URL || "https://carolmobile.vercel.app"}/entrar`,
+          "",
+          "Por segurança, altere sua senha no primeiro acesso.",
+        ].join("\n")
+      : "";
     const confirmationText = [
       `Pronto, registrei sua solicitação de pré-agendamento ✨`,
       appointment.bookingCode ? `Código: ${appointment.bookingCode}` : "",
       `${appointment.service || state.serviceName} — ${formatDateLabel(state.date)} às ${state.time}`,
       appointment.professional ? `Com ${appointment.professional}` : "",
+      appointment.paymentId
+        ? `Fatura: ${formatBookingCurrency(appointment.paymentAmount)} para pagamento no portal.`
+        : "",
       "A equipe vai confirmar os detalhes antes do atendimento.",
+      accessText,
     ].filter(Boolean).join("\n");
     const responseText = [confirmationText, bookingFollowupOptionsText()].join("\n\n");
     await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_created" });
@@ -1378,6 +2876,12 @@ async function handleStructuredBookingFlow({
       totalLatencyMs: Date.now() - receivedAt.getTime(),
     });
     return { ok: true, replied: true, reason: "booking_create_failed", conversationId };
+  }
+  } catch (error) {
+    if (error.message === "LOOP_DETECTED") {
+      return null;
+    }
+    throw error;
   }
 }
 
@@ -1450,7 +2954,11 @@ export function summarizeAiCommercialContext(base, settings = {}) {
     .slice(0, 10)
     .map((service) => {
       const price = Number(service.initial_price || service.base_price || 0);
-      const priceText = price > 0 ? `valor inicial R$ ${price.toFixed(2)}` : "valor sob consulta";
+      const priceText = isFreeService(service)
+        ? "sem custo"
+        : price > 0
+          ? `valor inicial R$ ${price.toFixed(2)}`
+          : "valor sob consulta";
       return `- ${service.commercial_name || service.name}: ${priceText}, duração ${service.estimated_duration_minutes || service.duration_minutes || "sob consulta"} min.`;
     });
   const plans = (base.plans || [])
@@ -1461,22 +2969,52 @@ export function summarizeAiCommercialContext(base, settings = {}) {
     .filter((coupon) => coupon.active)
     .slice(0, 8)
     .map((coupon) => `- ${coupon.code}: ${coupon.description || "cupom ativo sem descrição"}.`);
+  const promotions = activePromotions(base)
+    .slice(0, 8)
+    .map((promotion) => {
+      const promo = formatBookingCurrency(promotion.promotional_value);
+      const original = Number(promotion.original_value || 0);
+      const originalText = original > 0 ? `de ${formatBookingCurrency(original)} por ${promo}` : promo;
+      const keywords = arrayFromJsonLike(promotion.keywords).join(", ");
+      return `- ${promotion.title}: ${originalText}. ${promotion.description || ""}${promotion.ends_at ? ` Valida ate ${promotion.ends_at}.` : ""}${keywords ? ` Palavras-chave: ${keywords}.` : ""}`;
+    });
   const enabledFlows = (base.flows || [])
     .filter((flow) => flow.enabled)
     .map((flow) => flow.name || flow.flow_key)
     .slice(0, 12);
+  const inventory = (base.inventory || [])
+    .filter((item) => item.quantity > 0)
+    .slice(0, 15)
+    .map((item) => {
+      const price = Number(item.suggested_price || 0);
+      const priceText = price > 0 ? `valor R$ ${price.toFixed(2)}` : "valor não cadastrado";
+      return `- ${item.name} (${item.category}): Cor ${item.color || "N/A"}, Tom ${item.shade || "N/A"}, ${item.length_cm || "N/A"}cm, ${item.texture || "textura N/A"}, ${item.weight_grams || "N/A"}g — ${priceText}; disponibilidade: ${item.quantity} unidades.`;
+    });
+  const products = (base.products || [])
+    .filter((item) => item.active !== false && Number(item.stock_quantity || 0) > 0)
+    .slice(0, 15)
+    .map((item) => {
+      const price = Number(item.price || 0);
+      const priceText = price > 0 ? `R$ ${price.toFixed(2)}` : "valor não cadastrado";
+      return `- ${item.name} (${item.category || "produto"}): ${priceText}; disponibilidade: ${item.stock_quantity} unidades.`;
+    });
 
   return [
     "Dados reais liberados para esta resposta:",
     services.length ? `Serviços:\n${services.join("\n")}` : "Serviços: nenhum serviço foi liberado para atendimento automático.",
     plans.length ? `Planos ativos:\n${plans.join("\n")}` : "Planos ativos: nenhum plano ativo encontrado.",
     coupons.length ? `Cupons ativos:\n${coupons.join("\n")}` : "Cupons ativos: nenhum cupom ativo encontrado.",
+    promotions.length ? `Promocoes ativas para WhatsApp:\n${promotions.join("\n")}` : "Promocoes ativas para WhatsApp: nenhuma promocao ativa cadastrada.",
+    inventory.length ? `Cabelos e mechas em estoque real:\n${inventory.join("\n")}` : "Cabelos e mechas: nenhum item em estoque no momento.",
+    products.length ? `Produtos e acessórios ativos:\n${products.join("\n")}` : "Produtos e acessórios: nenhum item ativo em estoque no momento.",
     enabledFlows.length
       ? `Fluxos automáticos habilitados: ${enabledFlows.join(", ")}.`
       : "Fluxos automáticos: nenhum fluxo específico habilitado.",
     settings.allowAutoBooking
       ? "Pré-agendamento automático está permitido, mas exige dados completos e confirmação explícita antes de qualquer gravação."
       : "A IA pode conduzir e registrar uma solicitação de pré-agendamento; a equipe confirma disponibilidade e horário.",
+    "Catálogo: responda sobre cabelos naturais, mechas, microlink, queratina, fita adesiva, telas, acessórios e produtos de manutenção usando exclusivamente os itens cadastrados acima. Nunca invente produto, preço, disponibilidade, cor, peso ou comprimento.",
+    "Promocoes: nunca trate promocao como servico. Quando a cliente perguntar por desconto, oferta, promocao ou valor de um servico com promocao relacionada, use somente as promocoes ativas listadas acima.",
     "Nunca prometa horário, pagamento ou agendamento confirmado sem uma gravação bem-sucedida no backend.",
   ].join("\n\n");
 }
@@ -1501,12 +3039,70 @@ function isAffirmativeBookingConfirmation(text) {
   ].includes(normalized);
 }
 
+function isFinalBookingConfirmation(text) {
+  return isAffirmativeBookingConfirmation(text) || numericChoice(text) === 1;
+}
+
+function isFinalBookingAlteration(text) {
+  const normalized = normalizeText(text);
+  return numericChoice(text) === 2 || includesAny(normalized, [
+    "alterar",
+    "mudar",
+    "trocar",
+    "outro horario",
+    "outra data",
+    "corrigir",
+  ]);
+}
+
 export function buildBookingGuidance({
   incomingText,
   history = [],
   knownClient = false,
   settings = {},
+  currentState = {},
 }) {
+  const isChangingSubject = isClientChangingSubjectOrNegating(incomingText);
+  if (isChangingSubject) {
+    return { active: false, shouldRegister: false, text: "" };
+  }
+
+  const hasQuestion = isClientAskingQuestion(incomingText) ||
+                      isReplyingToExplanationOffer(incomingText, history);
+
+  if (hasQuestion && currentState && currentState.serviceId) {
+    const serviceName = currentState.serviceName || "Mega Hair";
+    const dateText = currentState.date ? `para o dia ${formatDateLabel(currentState.date)}` : "";
+    const savedFields = [
+      currentState.serviceName ? `servico=${currentState.serviceName}` : "",
+      currentState.date ? `data=${currentState.date}` : "",
+      currentState.time ? `horario=${currentState.time}` : "",
+      currentState.clientName ? `nome=${currentState.clientName}` : "",
+      currentState.clientEmail ? `email=${currentState.clientEmail}` : "",
+      currentState.clientPhone ? `telefone=${currentState.clientPhone}` : "",
+      currentState.clientCpf ? `cpf=${currentState.clientCpf}` : "",
+      currentState.clientBirthDate ? `nascimento=${currentState.clientBirthDate}` : "",
+    ].filter(Boolean).join("; ");
+    const missing = [];
+    if (!currentState.time) missing.push("horario");
+    missing.push(...missingBookingContactFields(currentState));
+    const nextStep = missing[0] || "confirmacao do resumo";
+    return {
+      active: true,
+      shouldRegister: false,
+      text: `Existe um fluxo de pre-agendamento em andamento. Servico selecionado: ${serviceName} ${dateText}. Campos ja salvos: ${savedFields || "nenhum"}. Proximo campo faltante: ${nextStep}. Responda a pergunta da cliente primeiro, mantenha todos os campos salvos, nunca pergunte novamente campo preenchido e retome exatamente do proximo campo faltante.`,
+    };
+    return {
+      active: true,
+      shouldRegister: false,
+      text: `Existe um fluxo de pré-agendamento de serviço em andamento (Pausado temporariamente). Serviço selecionado: ${serviceName} ${dateText}. A cliente fez uma pergunta ou tirou uma dúvida. Instrução: Responda à dúvida/pergunta da cliente de forma completa e imediata primeiro. No final da resposta, de forma natural, amigável e sem forçar menus numéricos, ofereça a continuação do agendamento anterior (ex: "Podemos continuar o agendamento do seu ${serviceName} quando quiser. Deseja prosseguir?").`
+    };
+  }
+
+  if (hasQuestion) {
+    return { active: false, shouldRegister: false, text: "" };
+  }
+
   const normalizedCurrent = normalizeText(incomingText);
   const bookingTerms = [
     "agendar",
@@ -1587,6 +3183,8 @@ export function buildAiConversationMessage({
   const requiredContext = [
     `Mensagem atual da cliente:\n${clean(incomingText)}`,
     bookingGuidance,
+    "REGRA DE CONVERSA NATURAL: durante agendamento, aceite respostas livres como hoje a tarde, depois do almoco, perto das 12, amiga consegue mais tarde, esse horario nao da e pode ser amanha cedo. Converta isso em data/periodo/horario e nao peca novamente dados ja salvos na sessao.",
+    "REGRA DE VALORES: preenchimento de pontas, alongamento parcial, volume, correcao de comprimento e reposicao de mechas sao assuntos do salao. Se nao houver preco exato cadastrado, diga que depende da quantidade de cabelo e da tecnica, e ofereca explicacao ou avaliacao.",
     "A mensagem atual é a prioridade. Use o histórico apenas para continuidade; se a cliente mudar de assunto, responda ao novo assunto sem repetir o serviço anterior. Não presuma que a dúvida é sobre Fibra Russa quando a mensagem atual não mencionar essa técnica nem for uma continuação inequívoca dela.",
     "Responda em até 700 caracteres, em português do Brasil, sem inventar dados. Não repita uma pergunta cuja resposta já esteja no histórico. Se a cliente quiser agendar, avance pelo fluxo de pré-agendamento. Nunca diga que um horário foi confirmado sem persistência real no backend.",
   ]
@@ -1726,7 +3324,7 @@ async function recordAiInteraction({ conversationId, messageId, model, inputSumm
   );
 }
 
-async function sendTextAndRecord({ normalized, conversationId, text, reason }) {
+async function performSendTextAndRecord({ normalized, conversationId, text, reason }) {
   const result = await sendBaileysTextMessage({
     number: normalized.phoneNumber,
     text,
@@ -1739,6 +3337,10 @@ async function sendTextAndRecord({ normalized, conversationId, text, reason }) {
     payload: { reason, provider: result.data },
   });
   return { sent, provider: result.data };
+}
+
+export async function sendTextAndRecord(args) {
+  return performSendTextAndRecord(args);
 }
 
 async function requestHumanAttention({ conversationId, messageId, reason, responseText }) {
@@ -1769,11 +3371,11 @@ async function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isSimpleGreeting(text) {
-  const normalized = String(text || "")
-    .toLowerCase()
-    .trim()
-    .replace(/[?!.,\s-]/g, "");
+export function isSimpleGreeting(text) {
+  const compact = normalizeText(text)
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, "")
+    .trim();
   const greetings = [
     "oi",
     "olam",
@@ -1786,16 +3388,212 @@ function isSimpleGreeting(text) {
     "hello",
     "hi",
   ];
-  return greetings.includes(normalized);
+  const allowedSuffixes = [
+    "",
+    "tudobem",
+    "tudobom",
+    "tdbem",
+    "tdbom",
+    "comovai",
+    "bomdia",
+    "boatarde",
+    "boanoite",
+    "carol",
+  ];
+  return greetings.some((greeting) => {
+    if (!compact.startsWith(greeting)) return false;
+    return allowedSuffixes.includes(compact.slice(greeting.length));
+  });
+}
+
+function explicitGreetingFromText(text) {
+  const normalized = normalizeText(text).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (/\bboa noite\b/.test(normalized)) return "Boa noite";
+  if (/\bboa tarde\b/.test(normalized)) return "Boa tarde";
+  if (/\bbom dia\b/.test(normalized)) return "Bom dia";
+  return "";
+}
+
+export function localGreetingForDate(date = new Date(), timezone = "America/Sao_Paulo") {
+  let hour = new Date(date).getHours();
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone || "America/Sao_Paulo",
+      hour: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(date));
+    const parsed = Number(parts.find((part) => part.type === "hour")?.value);
+    if (Number.isFinite(parsed)) hour = parsed;
+  } catch {
+    // Keep the runtime local hour if the configured timezone is invalid.
+  }
+  if (hour >= 5 && hour < 12) return "Bom dia";
+  if (hour >= 12 && hour < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
+export function buildLocalGreetingResponse(text, {
+  date = new Date(),
+  timezone = "America/Sao_Paulo",
+  salonName = "Carol Sol",
+} = {}) {
+  if (!isSimpleGreeting(text)) return "";
+  const greeting = explicitGreetingFromText(text) || localGreetingForDate(date, timezone);
+  const brand = clean(salonName) || "Carol Sol";
+  return `${greeting}! Sou a assistente virtual da ${brand}. Posso te ajudar com servi\u00e7os, valores, hor\u00e1rios ou agendamento.`;
 }
 
 function includesAny(normalizedText, terms) {
   return terms.some((term) => normalizedText.includes(term));
 }
 
+function naturalConversationPrefix(text) {
+  const normalized = normalizeText(text);
+  if (includesAny(normalized, ["amiga", "amg"])) return "Claro, amiga.";
+  return "";
+}
+
+export function isClientAskingQuestion(text) {
+  const normalized = normalizeText(text);
+  if (text.includes("?")) return true;
+  const questionWords = [
+    "como", "qual", "quais", "oque", "o que", "por que", "porque", "quanto", "quando", "onde", "quem", "cuja", "cujo",
+    "dura", "durabilidade", "estraga", "doi", "vende", "valor", "preco", "cust", "orcamento",
+    "funciona", "diferenca", "queria saber", "gostaria de saber", "me explica", "pode explicar", "saber se"
+  ];
+  return questionWords.some(word => normalized.includes(word));
+}
+
+export function isClientChangingSubjectOrNegating(text) {
+  const normalized = normalizeText(text);
+  const terms = [
+    "nao quero agendar", "depois vejo", "depois marco", "so tirar duvida", "tirar duvida", "tirar uma duvida",
+    "mudei de ideia", "mudei de opiniao", "quero cancelar", "cancelar", "so queria saber"
+  ];
+  return terms.some(term => normalized.includes(term));
+}
+
+export function isClientExitingFlow(text) {
+  const normalized = normalizeText(text);
+  const exitTerms = [
+    "depois eu agendo",
+    "depois agendo",
+    "vou ver e retorno",
+    "obrigado",
+    "obrigada",
+    "valeu",
+    "depois volto",
+    "vou pensar",
+    "nao agora",
+    "não agora",
+    "mais tarde",
+    "so queria saber",
+    "só queria saber",
+    "era so uma duvida",
+    "era só uma dúvida"
+  ];
+  return exitTerms.some(term => normalized.includes(term));
+}
+
+export function isReplyingToExplanationOffer(text, history = []) {
+  const lastAiMessage = history.filter(item => item.sender_type === "ai").pop();
+  if (!lastAiMessage) return false;
+  const lastAiBody = normalizeText(lastAiMessage.body);
+  const offersExplanation = lastAiBody.includes("posso explicar") ||
+                             lastAiBody.includes("posso te mostrar") ||
+                             lastAiBody.includes("posso te informar") ||
+                             lastAiBody.includes("posso detalhar") ||
+                             lastAiBody.includes("quer que eu explique") ||
+                             lastAiBody.includes("posso tirar essa duvida") ||
+                             lastAiBody.includes("posso tirar essa dúvida");
+  if (!offersExplanation) return false;
+  const normalizedText = normalizeText(text).replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  const confirmationWords = [
+    "sim", "pode", "claro", "quero", "quero saber", "pode sim", "sim pode", "com certeza", "manda", "envia", "explique"
+  ];
+  return confirmationWords.some(word => normalizedText === word || normalizedText.startsWith(word));
+}
+
+export async function getAgendaAvailabilityContext(client, text, base, state) {
+  const normalized = normalizeText(text);
+  const wantsAgenda = includesAny(normalized, [
+    "horario", "horário", "agenda", "disponivel", "disponível", "disponibilidade", "vaga", "encaixe", "atende", "tem hora"
+  ]);
+  if (!wantsAgenda) return "";
+
+  let serviceId = state.serviceId;
+  if (!serviceId) {
+    const bookable = bookableAiServices(base);
+    const evaluation = bookable.find((service) => serviceSearchText(service).includes("avaliacao")) || bookable[0];
+    if (evaluation) serviceId = evaluation.id;
+  }
+  if (!serviceId) return "";
+
+  const today = localDateParts();
+  let parsedDate = parseBookingDateFromText(text, state);
+  if (!parsedDate) {
+    parsedDate = today;
+  }
+
+  try {
+    const datesToQuery = [parsedDate];
+    if (!parseBookingDateFromText(text, state)) {
+      datesToQuery.push(addLocalDays(today, 1));
+    }
+
+    const allSlots = [];
+    for (const d of datesToQuery) {
+      const { slots } = await availableBookingSlots(client, { serviceId, date: d });
+      allSlots.push(...slots);
+    }
+
+    if (allSlots.length === 0) {
+      return `CONSULTA DE AGENDA REAL para a data ${parsedDate}: NÃO existem horários disponíveis nesta data. Informe à cliente que não há vagas para esta data e ofereça para verificar a próxima data disponível.`;
+    }
+
+    const slotLines = allSlots.map(s => `- ${formatDateLabel(s.date)} às ${s.time} com ${s.professionalName}`).join("\n");
+    return `CONSULTA DE AGENDA REAL:\nHorários disponíveis encontrados para agendamento:\n${slotLines}\n\nInstrução: Se a cliente perguntou sobre disponibilidade/vagas, responda diretamente listando estes horários reais disponíveis de forma natural e pergunte qual ela prefere. Não exiba menu de serviços.`;
+  } catch (err) {
+    console.error("Failed to query agenda for prompt injection:", err.message);
+    return "";
+  }
+}
+
 export function buildLocalIntentResponse(text, base = {}) {
   const normalized = normalizeText(text);
   if (!normalized) return null;
+
+  const asksPromotion = includesAny(normalized, [
+    "promocao",
+    "promocoes",
+    "promocional",
+    "desconto",
+    "descontos",
+    "oferta",
+    "ofertas",
+    "campanha",
+    "liquidacao",
+    "preco promocional",
+    "cabelo em promocao",
+    "mega hair em promocao",
+    "promo",
+  ]);
+  const asksPrice = includesAny(normalized, [
+    "quanto custa",
+    "quanto esta",
+    "qual valor",
+    "valor",
+    "preco",
+    "custa",
+    "fica",
+  ]);
+
+  if (asksPromotion) return buildPromotionIntentResponse(text, base);
+
+  if (asksPrice) {
+    const response = buildPriceIntentResponse(text, base);
+    if (response) return response;
+  }
 
   const asksTodayAvailability =
     includesAny(normalized, [
@@ -2117,13 +3915,32 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   }
 
   if (recorded.conversation.ai_enabled === false) {
-    await query(
-      `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
-       values($1,$2,'ai_skipped','info',$3)`,
-      [conversationId, inboundMessageId, JSON.stringify({ reason: "conversation_paused" })],
-    );
-    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
-    return { ok: true, replied: false, reason: "conversation_paused", conversationId };
+    const status = String(recorded.conversation.status || "").toLowerCase();
+    if (status && status !== "human") {
+      await query(
+        `update public.whatsapp_conversations
+            set status='ai', ai_enabled=true, updated_at=now()
+          where id=$1`,
+        [conversationId],
+      );
+      await query(
+        `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+         values($1,$2,'conversation_auto_resumed','info',$3)`,
+        [
+          conversationId,
+          inboundMessageId,
+          JSON.stringify({ reason: "stale_ai_disabled", previousStatus: status }),
+        ],
+      );
+    } else {
+      await query(
+        `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+         values($1,$2,'ai_skipped','info',$3)`,
+        [conversationId, inboundMessageId, JSON.stringify({ reason: "conversation_paused" })],
+      );
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      return { ok: true, replied: false, reason: "conversation_paused", conversationId };
+    }
   }
 
   if (!settings.allowNewContacts && !recorded.client) {
@@ -2144,6 +3961,47 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     );
     await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
     return { ok: true, replied: false, reason: "existing_clients_disabled", conversationId };
+  }
+
+  const localGreetingResponse = buildLocalGreetingResponse(concatenatedText, {
+    date: processingStartedAt,
+    timezone: settings.timezone,
+    salonName: settings.salonName,
+  });
+  if (localGreetingResponse) {
+    const currentBookingState = parseJsonObject(recorded.conversation.booking_state);
+    const shouldResetBooking = shouldResetBookingStateOnGreeting(concatenatedText, currentBookingState);
+    if (shouldResetBooking) await saveBookingState(conversationId, {});
+
+    await sendTextAndRecord({
+      normalized,
+      conversationId,
+      text: localGreetingResponse,
+      reason: shouldResetBooking ? "booking_state_reset_greeting" : "greeting_template",
+    });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+
+    await logAiRequest({
+      conversationId,
+      messageId: inboundMessageId,
+      provider: "local_template",
+      model: "time_based_greeting",
+      status: shouldResetBooking ? "state_reset_greeting" : "success",
+      retryCount: 0,
+      fallbackUsed: false,
+      totalLatencyMs: Date.now() - receivedAt.getTime(),
+      queueLatencyMs,
+      providerLatencyMs: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+
+    return {
+      ok: true,
+      replied: true,
+      reason: shouldResetBooking ? "booking_state_reset_greeting" : "greeting_template",
+      conversationId,
+    };
   }
 
   if (!isWithinAiHours(settings)) {
@@ -2237,7 +4095,60 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     };
   }
 
-  const structuredBooking = await handleStructuredBookingFlow({
+  if (isClientExitingFlow(concatenatedText)) {
+    await saveBookingState(conversationId, {});
+    const responseText = [
+      "Sem problemas! 😊",
+      "Não precisa escolher agora. Quando quiser agendar é só me chamar novamente.",
+      "Posso te ajudar com alguma dúvida sobre os procedimentos ou técnicas?"
+    ].join("\n\n");
+
+    await sendTextAndRecord({
+      normalized,
+      conversationId,
+      text: responseText,
+      reason: "exit_booking_flow",
+    });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+
+    await logAiRequest({
+      conversationId,
+      messageId: inboundMessageId,
+      provider: "local_booking",
+      model: "booking_exit",
+      status: "success",
+      totalLatencyMs: Date.now() - receivedAt.getTime(),
+      queueLatencyMs,
+      providerLatencyMs: 0,
+    });
+
+    return { ok: true, replied: true, reason: "exit_booking_flow", conversationId };
+  }
+
+  const history = await loadRecentHistory(conversationId, inboundMessageId);
+  const currentStateForRouting = parseJsonObject(recorded.conversation.booking_state);
+  const prioritizeBookingState = shouldPrioritizeBookingState(
+    concatenatedText,
+    currentStateForRouting,
+    history,
+  );
+  if (prioritizeBookingState) {
+    const structuredBooking = await handleStructuredBookingFlow({
+      normalized,
+      conversationId,
+      inboundMessageId,
+      text: concatenatedText,
+      settings,
+      base,
+      recorded,
+      queueLatencyMs,
+      receivedAt,
+      history,
+    });
+    if (structuredBooking) return structuredBooking;
+  }
+
+  const localAgendaAvailability = await handleLocalAgendaAvailabilityIntent({
     normalized,
     conversationId,
     inboundMessageId,
@@ -2247,8 +4158,29 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     recorded,
     queueLatencyMs,
     receivedAt,
+    history,
   });
-  if (structuredBooking) return structuredBooking;
+  if (localAgendaAvailability) return localAgendaAvailability;
+
+  const hasQuestion = isClientAskingQuestion(concatenatedText) ||
+                      isReplyingToExplanationOffer(concatenatedText, history) ||
+                      isClientChangingSubjectOrNegating(concatenatedText);
+
+  if (!hasQuestion && !prioritizeBookingState) {
+    const structuredBooking = await handleStructuredBookingFlow({
+      normalized,
+      conversationId,
+      inboundMessageId,
+      text: concatenatedText,
+      settings,
+      base,
+      recorded,
+      queueLatencyMs,
+      receivedAt,
+      history,
+    });
+    if (structuredBooking) return structuredBooking;
+  }
 
   const localIntentResponse = buildLocalIntentResponse(concatenatedText, base);
   if (localIntentResponse) {
@@ -2278,25 +4210,42 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     return { ok: true, replied: true, reason: "local_intent_reply", conversationId };
   }
 
-  // 7. Local template greeting reply
-  if (settings.cacheEnabled && isSimpleGreeting(concatenatedText)) {
-    const responseText = settings.welcomeMessage;
-    await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "greeting_template" });
+  const outOfScopeResponse = buildOutOfScopeResponse(concatenatedText);
+  if (
+    outOfScopeResponse &&
+    !(
+      matchedArticle ||
+      hasCommercialCatalogReference(concatenatedText, base) ||
+      (
+        isActiveBookingState(currentStateForRouting) &&
+        !includesAny(normalizeText(concatenatedText), clearlyOutOfScopeTerms)
+      )
+    )
+  ) {
+    await sendTextAndRecord({
+      normalized,
+      conversationId,
+      text: outOfScopeResponse,
+      reason: "out_of_scope_guard",
+    });
     await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
 
-    // Log the mock metric for template greeting
     await logAiRequest({
       conversationId,
       messageId: inboundMessageId,
-      provider: "local_template",
-      model: "greeting",
-      status: "success",
-      totalLatencyMs: Date.now() - receivedAt.getTime(),
+      provider: "local_scope_guard",
+      model: "domain_scope",
+      status: "out_of_scope",
+      retryCount: 0,
+      fallbackUsed: false,
       queueLatencyMs,
       providerLatencyMs: 0,
+      totalLatencyMs: Date.now() - receivedAt.getTime(),
+      inputTokens: Math.round(concatenatedText.length / 4),
+      outputTokens: Math.round(outOfScopeResponse.length / 4),
     });
 
-    return { ok: true, replied: true, reason: "greeting_template", conversationId };
+    return { ok: true, replied: true, reason: "out_of_scope_guard", conversationId };
   }
 
   // 8. Start Placeholder typing indicator timer (4 seconds)
@@ -2321,19 +4270,26 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   }, 4000);
 
   // 9. Load AI Context & Prompt
-  const history = await loadRecentHistory(conversationId, inboundMessageId);
+  const currentState = parseJsonObject(recorded.conversation.booking_state);
+  const agendaAvailabilityContext = await getAgendaAvailabilityContext(query, concatenatedText, base, currentState);
+
   const booking = buildBookingGuidance({
     incomingText: concatenatedText,
     history,
     knownClient: Boolean(recorded.client),
     settings,
+    currentState,
   });
   const commercialContext = summarizeAiCommercialContext(base, settings);
   const systemPrompt = buildRuntimePrompt(settings);
 
   let knowledgeContext = "";
+  if (agendaAvailabilityContext) {
+    knowledgeContext = `${agendaAvailabilityContext}\n\n`;
+  }
+
   if (matchedArticle) {
-    knowledgeContext = [
+    knowledgeContext += [
       `Base de Conhecimento Aprovada - Artigo: "${matchedArticle.title}" (Nível ${safetyLevel})`,
       `Resposta Curta: ${matchedArticle.short_answer}`,
       `Resposta Completa: ${matchedArticle.full_answer}`,
@@ -2411,6 +4367,25 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       }
     }
     providerFinishedAt = new Date();
+
+    const lastAiMessage = history.filter(item => item.sender_type === "ai").pop();
+    const lastAiText = lastAiMessage ? lastAiMessage.body : "";
+
+    if (finalResponse && lastAiText && finalResponse.trim() === lastAiText.trim()) {
+      try {
+        const loopPrompt = `${systemPrompt}\n\nATENÇÃO: Sua resposta gerada foi exatamente idêntica à última resposta enviada: "${finalResponse}". Para evitar repetição e loops, gere uma resposta diferente, mais natural e contextualizada.`;
+        const result = await generateOpenAiText({
+          systemPrompt: loopPrompt,
+          message: promptMessage,
+          model: settings.primaryModel || settings.model || runtimeStatus.model,
+          timeoutMs: settings.timeoutMs || 12000,
+          maxTokens: settings.maxResponseTokens || 300,
+        });
+        finalResponse = result.text;
+      } catch (err) {
+        console.error("Regenerating response to prevent loop failed:", err.message);
+      }
+    }
   }
 
   // Clear typing indicator placeholder timer

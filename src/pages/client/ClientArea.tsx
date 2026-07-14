@@ -65,6 +65,8 @@ import {
 
 const money = (n: number) =>
   n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const servicePriceLabel = (service: Record<string, any>) =>
+  service?.is_free ? "Sem custo" : money(Number(service?.base_price || 0));
 
 const whatsappUrl = (phone: unknown) => {
   const digits = String(phone || "").replace(/\D/g, "");
@@ -203,7 +205,7 @@ function ServicesPage() {
                   {s.duration_minutes}min
                 </span>
                 <span className="chip">
-                  A partir de {money(Number(s.base_price || 0))}
+                  {s.is_free ? "Sem custo" : `A partir de ${servicePriceLabel(s)}`}
                 </span>
                 {Number(s.deposit_amount || 0) > 0 && (
                   <span className="chip">
@@ -786,10 +788,18 @@ function ClientAgenda() {
         .join(" • ")
     : "";
   const [booking, setBooking] = useState(Boolean(discoveryDraft));
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(discoveryDraft ? 2 : 0);
+  const mappedMethod = useMemo(() => {
+    const draftMethod = discoveryDraft?.answers?.method;
+    if (!draftMethod) return "Quero recomendação";
+    if (draftMethod === "Sem preferência" || draftMethod === "Tic Tac") {
+      return "Quero recomendação";
+    }
+    return draftMethod;
+  }, [discoveryDraft]);
   const [selected, setSelected] = useState<Record<string, string>>({
     service: "",
-    method: discoveryDraft?.answers?.method || "Quero recomendação",
+    method: mappedMethod,
     professional: "Primeira disponível",
     date: dates[0] || "",
     time: "09:00",
@@ -804,6 +814,28 @@ function ClientAgenda() {
     string,
     any
   > | null>(null);
+  const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
+  const [loadingCheckout, setLoadingCheckout] = useState(false);
+
+  useEffect(() => {
+    if (success && createdAppointment?.payment_id) {
+      setLoadingCheckout(true);
+      setCheckoutUrl(null);
+      apiFetch<{ url: string }>("/api/payments?resource=create-sumup-checkout", {
+        method: "POST",
+        body: JSON.stringify({ paymentId: createdAppointment.payment_id }),
+      })
+        .then((res) => {
+          setCheckoutUrl(res.url);
+        })
+        .catch((err) => {
+          console.error("Failed to generate checkout link", err);
+        })
+        .finally(() => {
+          setLoadingCheckout(false);
+        });
+    }
+  }, [success, createdAppointment]);
   const [toast, setToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1523,47 +1555,101 @@ function ClientAgenda() {
           {rescheduling ? "Enviando…" : "Enviar solicitação"}
         </button>
       </Modal>
-      <Modal open={success} onClose={() => setSuccess(false)}>
-        <div className="py-5 text-center">
-          <div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-emerald-50 text-emerald-600">
-            <Check size={36} />
-          </div>
-          <h2 className="mt-5 font-display text-4xl font-semibold">
-            Solicitação enviada!
-          </h2>
-          <p className="muted mx-auto mt-3 max-w-sm">
-            Seu pedido foi salvo no sistema para {selected.date} às{" "}
-            {selected.time}. Acompanhe o status até a confirmação final.
-          </p>
-          <div className="mt-6 rounded-2xl bg-warm p-4 text-left text-xs">
-            <div className="flex justify-between py-1">
-              <span className="text-stone-500">Código</span>
-              <b>{createdAppointment?.booking_code || "Gerado no sistema"}</b>
+      {(() => {
+        const service = catalog.services.find((s) => s.name === selected.service);
+        const servicePrice = service ? Number(service.base_price || 0) : 0;
+        const discount = couponInfo?.code === selected.couponCode ? couponInfo.discount : 0;
+        const finalPrice = Math.max(0, servicePrice - discount);
+        const depositAmount = service ? Number(service.deposit_amount || 0) : 0;
+        const finalDeposit = Math.min(depositAmount, finalPrice);
+
+        return (
+          <Modal open={success} onClose={() => setSuccess(false)}>
+            <div className="py-5 text-center">
+              <div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-emerald-50 text-emerald-600">
+                <Check size={36} />
+              </div>
+              <h2 className="mt-5 font-display text-4xl font-semibold">
+                Solicitação enviada com sucesso.
+              </h2>
+              <p className="muted mx-auto mt-3 max-w-sm">
+                Seu pedido foi salvo no sistema para {selected.date} às{" "}
+                {selected.time}. Acompanhe o status até a confirmação final.
+              </p>
+              <div className="mt-6 rounded-2xl bg-warm p-4 text-left text-xs space-y-1">
+                <div className="flex justify-between py-1 border-b border-black/5">
+                  <span className="text-stone-500">Código</span>
+                  <b>{createdAppointment?.booking_code || "Gerado no sistema"}</b>
+                </div>
+                <div className="flex justify-between py-1 border-b border-black/5">
+                  <span className="text-stone-500">Serviço</span>
+                  <b>{createdAppointment?.service || selected.service}</b>
+                </div>
+                <div className="flex justify-between py-1 border-b border-black/5">
+                  <span className="text-stone-500">Profissional</span>
+                  <b>{createdAppointment?.professional || selected.professional}</b>
+                </div>
+                <div className="flex justify-between py-1 border-b border-black/5">
+                  <span className="text-stone-500">Status</span>
+                  <b>
+                    {clientAppointmentStatus[String(createdAppointment?.status)] ||
+                      createdAppointment?.status}
+                  </b>
+                </div>
+
+                {finalDeposit > 0 && (
+                  <div className="mt-4 pt-3 text-xs space-y-1">
+                    <div className="flex justify-between">
+                      <span className="text-stone-500">Valor do Serviço</span>
+                      <span>{money(servicePrice)}</span>
+                    </div>
+                    {discount > 0 && (
+                      <div className="flex justify-between text-emerald-600 font-semibold">
+                        <span>Desconto</span>
+                        <span>-{money(discount)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between font-bold text-champagne pt-1 border-t border-dashed border-stone-200">
+                      <span>Sinal (Pagar Agora)</span>
+                      <span>{money(finalDeposit)}</span>
+                    </div>
+                    <div className="flex justify-between text-stone-500">
+                      <span>Restante no local</span>
+                      <span>{money(finalPrice - finalDeposit)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {finalDeposit > 0 && (
+                <div className="mt-6">
+                  {loadingCheckout ? (
+                    <div className="text-xs text-stone-400 py-3">Gerando checkout seguro SumUp...</div>
+                  ) : checkoutUrl ? (
+                    <a
+                      href={checkoutUrl}
+                      className="btn-primary w-full block text-center py-3"
+                    >
+                      Pagar Sinal (SumUp)
+                    </a>
+                  ) : (
+                    <div className="text-xs text-rose-600 font-semibold py-2">
+                      Não foi possível obter o link de pagamento.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <button
+                onClick={() => setSuccess(false)}
+                className="btn-secondary mt-4 w-full"
+              >
+                Acompanhar na agenda
+              </button>
             </div>
-            <div className="flex justify-between py-1">
-              <span className="text-stone-500">Serviço</span>
-              <b>{createdAppointment?.service || selected.service}</b>
-            </div>
-            <div className="flex justify-between py-1">
-              <span className="text-stone-500">Profissional</span>
-              <b>{createdAppointment?.professional || selected.professional}</b>
-            </div>
-            <div className="flex justify-between py-1">
-              <span className="text-stone-500">Status</span>
-              <b>
-                {clientAppointmentStatus[String(createdAppointment?.status)] ||
-                  createdAppointment?.status}
-              </b>
-            </div>
-          </div>
-          <button
-            onClick={() => setSuccess(false)}
-            className="btn-primary mt-6 w-full"
-          >
-            Acompanhar na agenda
-          </button>
-        </div>
-      </Modal>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }

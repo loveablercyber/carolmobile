@@ -38,7 +38,7 @@ export function handleError(res, error) {
   return send(res, status, {
     error:
       status >= 500 && error.expose !== true
-        ? 'Não foi possível concluir a operação.'
+        ? `Não foi possível concluir a operação. Detalhe: ${error.message}`
         : error.message,
   })
 }

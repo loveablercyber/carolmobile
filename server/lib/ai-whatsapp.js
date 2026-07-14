@@ -89,6 +89,7 @@ export const aiWhatsappTables = [
   "whatsapp_incoming_queue",
   "ai_request_logs",
   "knowledge_articles",
+  "marketing_promotions",
 ];
 
 const schemaSql = `
@@ -334,6 +335,26 @@ create table if not exists public.knowledge_articles (
 );
 create index if not exists knowledge_articles_category_idx on public.knowledge_articles(category);
 create index if not exists knowledge_articles_status_idx on public.knowledge_articles(status);
+
+create table if not exists public.marketing_promotions (
+  id uuid primary key default uuid_generate_v4(),
+  title text not null,
+  description text,
+  promotional_value numeric(12,2) not null default 0,
+  original_value numeric(12,2),
+  starts_at date,
+  ends_at date,
+  active boolean not null default true,
+  show_on_site boolean not null default false,
+  whatsapp_only boolean not null default true,
+  keywords jsonb not null default '[]',
+  archived boolean not null default false,
+  created_by uuid references public.profiles(id),
+  updated_by uuid references public.profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists marketing_promotions_active_idx on public.marketing_promotions(active, archived, starts_at, ends_at);
 `;
 
 const defaultMessages = {
@@ -824,6 +845,8 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS gemini_circuit_breaker_until timestamptz;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS groq_circuit_breaker_until timestamptz;
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS booking_state jsonb not null default '{}';
+    ALTER TABLE public.services ADD COLUMN IF NOT EXISTS show_online_booking boolean not null default true;
+    ALTER TABLE public.services ADD COLUMN IF NOT EXISTS is_free boolean not null default false;
   `).catch(err => console.error("Failed to alter public.ai_settings table", err));
 
   await query(`
@@ -1068,6 +1091,7 @@ export async function saveAiServiceSettings(user, input) {
 
   const { rows: services } = await query(
     `select s.id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
+        coalesce(s.is_free,false) as is_free,
         ais.id as ai_service_settings_id,ais.active as ai_active,ais.commercial_name,ais.short_description,
         ais.detailed_description,ais.initial_price,ais.estimated_duration_minutes,ais.requires_assessment,
         ais.requires_deposit,ais.deposit_type,ais.deposit_value,ais.reference_photos_required,
@@ -1230,9 +1254,11 @@ export async function getAiCommercialBase() {
   if (baseCache && (now - baseCacheTime < 60000)) {
     return baseCache;
   }
-  const [services, plans, coupons, flows, knowledgeArticles] = await Promise.all([
+  const [services, plans, coupons, promotions, flows, knowledgeArticles, inventory, products] = await Promise.all([
     query(
       `select s.id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
+        coalesce(s.is_free,false) as is_free,
+        coalesce(s.show_online_booking,true) as show_online_booking,
         ais.id as ai_service_settings_id,
         coalesce(ais.active,false) as ai_active,coalesce(ais.commercial_name,s.name) as commercial_name,
         ais.short_description,ais.detailed_description,ais.initial_price,ais.estimated_duration_minutes,
@@ -1256,19 +1282,41 @@ export async function getAiCommercialBase() {
        order by active desc,ends_at nulls last,code`,
     ),
     query(
+      `select id,title,description,promotional_value,original_value,starts_at,ends_at,active,show_on_site,whatsapp_only,keywords
+       from public.marketing_promotions
+       where archived=false
+         and active=true
+       order by ends_at nulls last,title`
+    ),
+    query(
       `select id,flow_key,name,enabled,channel,requires_human_approval,trigger_delay_minutes,updated_at
        from public.ai_automation_flows order by name`,
     ),
     query(
       `select * from public.knowledge_articles order by category, priority desc, title`
+    ),
+    query(
+      `select id,code as name,supplier,category,color,shade,length_cm,texture,weight_grams,quantity,suggested_price,status
+       from public.hair_inventory
+       where coalesce(status,'active')='active'
+       order by category, code`
+    ),
+    query(
+      `select id,sku,name,category,price,stock_quantity,minimum_stock,active
+       from public.products
+       where active=true
+       order by category,name`
     )
   ]);
   const base = {
     services: services.rows,
     plans: plans.rows,
     coupons: coupons.rows,
+    promotions: promotions.rows,
     flows: flows.rows,
     knowledgeArticles: knowledgeArticles.rows,
+    inventory: inventory.rows,
+    products: products.rows,
   };
   baseCache = base;
   baseCacheTime = now;
@@ -1444,11 +1492,18 @@ export function buildRuntimePrompt(settings) {
     personalityModes.find((item) => item.value === settings.personalityMode) ||
     personalityModes[0];
 
-  const additionalInstructions = `
+const additionalInstructions = `
 Além de atendimento comercial, você é uma assistente educativa especializada em Mega Hair.
 Responda dúvidas com clareza, gentileza e responsabilidade. Use a base de conhecimento aprovada pelo salão antes de responder perguntas técnicas.
+Permaneça estritamente no escopo do salão: Mega Hair, cabelos, perucas, apliques, cuidados capilares, valores, horários, pagamentos, endereço, agendamentos e atendimento humano. Se a cliente pedir receita, notícia, programação, entretenimento, política ou qualquer assunto fora desse escopo, recuse de forma breve e redirecione para temas do salão.
 Nunca faça diagnóstico médico, nunca prometa ausência de riscos e nunca garanta resultado. Quando uma cliente relatar queda intensa, dor, feridas, coceira forte, irritação ou outro problema de saúde do couro cabeludo, oriente avaliação presencial e encaminhe para atendimento humano.
-Quando a cliente pedir indicação de técnica, faça perguntas breves de triagem (objetivo, espessura do fio, química, etc.) e explique que a escolha final depende de avaliação profissional.`;
+Quando a cliente pedir indicação de técnica, faça perguntas breves de triagem (objetivo, espessura do fio, química, etc.) e explique que a escolha final depende de avaliação profissional.
+
+REGRA PRINCIPAL / PRIORIDADE MÁXIMA: Responder à pergunta do cliente é sempre a prioridade número 1. Nunca force, inicie ou repita menus de agendamento rígidos se a cliente tiver uma pergunta técnica pendente ou estiver tirando dúvidas.
+
+REGRA DE RESPOSTA COMPLETA: Se você usar expressões como "posso explicar", "posso te mostrar", "posso detalhar", etc., você deve obrigatoriamente fornecer a informação inteira imediatamente na mesma resposta. Nunca espere a cliente pedir para explicar.
+
+REGRA DE PRODUTOS E ESTOQUE: quando a cliente perguntar sobre cabelos naturais, mechas, microlink, queratina, fita adesiva, telas, acessórios ou produtos de manutenção, use exclusivamente o catálogo real carregado do sistema. Nunca invente produto, preço, cor, comprimento, peso, disponibilidade ou prazo. Se não houver item cadastrado para a categoria pedida, diga que não há item disponível no cadastro no momento e ofereça atendimento humano.`;
 
   return `${settings.systemPrompt || DEFAULT_SYSTEM_PROMPT}
 ${additionalInstructions}

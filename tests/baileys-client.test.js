@@ -3,9 +3,11 @@ import test, { afterEach } from "node:test";
 
 import {
   BaileysClientError,
+  ensureBaileysReady,
   getBaileysQr,
   getBaileysStatus,
   logoutBaileysSession,
+  normalizeBaileysStatusValue,
   normalizeBaileysNumber,
   requestBaileysPairingCode,
   resetBaileysSession,
@@ -15,6 +17,8 @@ import {
 const originalFetch = globalThis.fetch;
 const originalUrl = process.env.BAILEYS_API_URL;
 const originalKey = process.env.BAILEYS_API_KEY;
+const originalEnabled = process.env.BAILEYS_ENABLED;
+const originalAutoReconnect = process.env.BAILEYS_AUTO_RECONNECT;
 
 function configure() {
   process.env.BAILEYS_API_URL = "https://whatsapp.example.test/";
@@ -27,6 +31,10 @@ afterEach(() => {
   else process.env.BAILEYS_API_URL = originalUrl;
   if (originalKey === undefined) delete process.env.BAILEYS_API_KEY;
   else process.env.BAILEYS_API_KEY = originalKey;
+  if (originalEnabled === undefined) delete process.env.BAILEYS_ENABLED;
+  else process.env.BAILEYS_ENABLED = originalEnabled;
+  if (originalAutoReconnect === undefined) delete process.env.BAILEYS_AUTO_RECONNECT;
+  else process.env.BAILEYS_AUTO_RECONNECT = originalAutoReconnect;
 });
 
 test("reads Baileys status with x-api-key only on the server", async () => {
@@ -43,6 +51,11 @@ test("reads Baileys status with x-api-key only on the server", async () => {
   const result = await getBaileysStatus();
   assert.equal(result.ok, true);
   assert.equal(result.status, "ready");
+});
+
+test("normalizes QR payloads without explicit status", () => {
+  assert.equal(normalizeBaileysStatusValue({ qrCode: "data2" }), "qrcode");
+  assert.equal(normalizeBaileysStatusValue({ status: "unknown", qr: "data5" }), "qrcode");
 });
 
 test("blocks text sending until the external API is ready", async () => {
@@ -85,6 +98,50 @@ test("sends normalized text after confirming ready status", async () => {
     text: "Olá!",
   });
   assert.equal(result.data.messageId, "message-1");
+});
+
+test("keepalive restarts a disconnected Baileys session once", async () => {
+  configure();
+  process.env.BAILEYS_ENABLED = "true";
+  const paths = [];
+  globalThis.fetch = async (url) => {
+    const path = new URL(url).pathname;
+    paths.push(path);
+    const data = path === "/api/status"
+      ? { success: true, status: "disconnected" }
+      : { success: true, status: "starting" };
+    return new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const result = await ensureBaileysReady({ source: "test_keepalive" });
+
+  assert.equal(result.reconnected, true);
+  assert.equal(result.beforeStatus, "disconnected");
+  assert.equal(result.status, "starting");
+  assert.deepEqual(paths, ["/api/status", "/api/reset-session"]);
+});
+
+test("keepalive does not restart a QR pairing state without force", async () => {
+  configure();
+  process.env.BAILEYS_ENABLED = "true";
+  const paths = [];
+  globalThis.fetch = async (url) => {
+    paths.push(new URL(url).pathname);
+    return new Response(JSON.stringify({ success: true, status: "qrcode" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const result = await ensureBaileysReady({ source: "test_keepalive" });
+
+  assert.equal(result.reconnected, false);
+  assert.equal(result.skipped, true);
+  assert.equal(result.status, "qrcode");
+  assert.deepEqual(paths, ["/api/status"]);
 });
 
 test("maps protected session endpoints without exposing credentials", async () => {

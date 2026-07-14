@@ -65,6 +65,7 @@ const expectedTables = [
   "whatsapp_incoming_queue",
   "ai_request_logs",
   "knowledge_articles",
+  "marketing_promotions",
 ];
 
 const client = new Client({

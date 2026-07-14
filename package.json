@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node server.mjs",
+    "start": "node server.mjs",
     "dev:vite": "vite --configLoader runner",
     "build": "tsc --noEmit -p tsconfig.app.json && vite build --config vite.config.ts --configLoader runner",
     "preview": "vite preview --configLoader runner",

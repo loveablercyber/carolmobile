@@ -1,16 +1,121 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { afterEach } from "node:test";
+import { pool } from "../server/lib/db.js";
 
 import {
+  buildLocalGreetingResponse,
+  buildOutOfScopeResponse,
   buildLocalIntentResponse,
   buildAiConversationMessage,
   buildBookingGuidance,
+  isInAiServiceScope,
   isMessageWebhookPayload,
   isWithinAiHours,
   keywordInText,
   normalizeIncomingWhatsappPayload,
+  shouldResetBookingStateOnGreeting,
   summarizeAiCommercialContext,
+  isClientAskingQuestion,
+  isClientChangingSubjectOrNegating,
+  isClientExitingFlow,
+  isReplyingToExplanationOffer,
+  getAgendaAvailabilityContext,
+  handleStructuredBookingFlow,
+  isAgendaAvailabilityIntent,
+  shouldPrioritizeBookingState,
+  isSimpleGreeting,
+  localGreetingForDate,
 } from "../server/lib/whatsapp-ai-engine.js";
+
+const originalQuery = pool.query;
+const originalConnect = pool.connect;
+const originalFetch = globalThis.fetch;
+const originalBaileysUrl = process.env.BAILEYS_API_URL;
+const originalBaileysKey = process.env.BAILEYS_API_KEY;
+
+afterEach(() => {
+  pool.query = originalQuery;
+  pool.connect = originalConnect;
+  globalThis.fetch = originalFetch;
+  if (originalBaileysUrl === undefined) delete process.env.BAILEYS_API_URL;
+  else process.env.BAILEYS_API_URL = originalBaileysUrl;
+  if (originalBaileysKey === undefined) delete process.env.BAILEYS_API_KEY;
+  else process.env.BAILEYS_API_KEY = originalBaileysKey;
+});
+
+test("resets saved booking progress when the client starts over with a greeting", () => {
+  assert.equal(
+    shouldResetBookingStateOnGreeting("ola", {
+      status: "awaiting_date",
+      serviceId: "service-1",
+      dateOptions: [{ id: 1, date: "2026-07-04" }],
+    }),
+    true,
+  );
+  assert.equal(
+    shouldResetBookingStateOnGreeting("ol\u00e1", {
+      status: "booked",
+      appointmentId: "appointment-1",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldResetBookingStateOnGreeting("quero agendar", {
+      status: "awaiting_date",
+      serviceId: "service-1",
+    }),
+    false,
+  );
+  assert.equal(shouldResetBookingStateOnGreeting("ola", {}), false);
+});
+
+test("builds time-based greetings locally without AI", () => {
+  assert.equal(isSimpleGreeting("bom dia, tudo bem?"), true);
+  assert.equal(isSimpleGreeting("oi, quero agendar"), false);
+  assert.equal(
+    localGreetingForDate(new Date("2026-07-08T12:00:00.000Z"), "America/Sao_Paulo"),
+    "Bom dia",
+  );
+  assert.equal(
+    localGreetingForDate(new Date("2026-07-08T16:00:00.000Z"), "America/Sao_Paulo"),
+    "Boa tarde",
+  );
+  assert.equal(
+    localGreetingForDate(new Date("2026-07-08T23:30:00.000Z"), "America/Sao_Paulo"),
+    "Boa noite",
+  );
+  assert.match(
+    buildLocalGreetingResponse("boa noite", {
+      date: new Date("2026-07-08T23:30:00.000Z"),
+      timezone: "America/Sao_Paulo",
+      salonName: "Carol Sol Mega Hair",
+    }),
+    /^Boa noite! Sou a assistente virtual da Carol Sol Mega Hair\./,
+  );
+  assert.match(
+    buildLocalGreetingResponse("boa noite", {
+      date: new Date("2026-07-08T16:00:00.000Z"),
+      timezone: "America/Sao_Paulo",
+      salonName: "Carol Sol Mega Hair",
+    }),
+    /^Boa noite!/,
+  );
+});
+
+test("keeps AI replies scoped to salon and hair subjects", () => {
+  assert.equal(isInAiServiceScope("Me passa uma receita de bolo"), false);
+  assert.equal(isInAiServiceScope("Qual cuidado preciso ter com peruca lace?"), true);
+  assert.equal(isInAiServiceScope("Quero saber valores e horários"), true);
+  assert.equal(isInAiServiceScope("Tem promocao?"), true);
+  assert.equal(buildOutOfScopeResponse("Tem promocao?"), "");
+  assert.match(buildOutOfScopeResponse("receita de bolo"), /Mega Hair/i);
+  assert.equal(buildOutOfScopeResponse("Quero agendar avaliação"), "");
+});
+
+test("keeps preenchimento de pontas inside salon scope", () => {
+  assert.equal(isInAiServiceScope("Quanto esta pra preenchimento de pontas?"), true);
+  assert.equal(buildOutOfScopeResponse("Quanto esta pra preenchimento de pontas?"), "");
+});
 
 test("normalizes Baileys inbound webhook payload safely", () => {
   const normalized = normalizeIncomingWhatsappPayload({
@@ -124,12 +229,25 @@ test("summarizes only real AI-enabled commercial data", () => {
     ],
     plans: [{ name: "Gold", active: true, price: 599, billing_cycle: "monthly" }],
     coupons: [{ code: "CAROL15", active: true, description: "15% em produtos" }],
+    promotions: [
+      {
+        title: "Mega Hair Fita Julho",
+        active: true,
+        promotional_value: 890,
+        original_value: 1200,
+        starts_at: "2026-07-01",
+        ends_at: "2099-07-31",
+        keywords: ["fita adesiva", "mega hair"],
+      },
+    ],
   });
 
   assert.match(context, /Mega Hair Fita/);
   assert.match(context, /R\$ 950\.00/);
   assert.match(context, /Gold/);
   assert.match(context, /CAROL15/);
+  assert.match(context, /Mega Hair Fita Julho/);
+  assert.match(context, /Promocoes ativas para WhatsApp/);
   assert.doesNotMatch(context, /Serviço interno/);
 });
 
@@ -211,6 +329,136 @@ test("builds local response for today's availability without promising schedule"
   assert.match(response, /manhã, tarde ou noite/i);
 });
 
+test("builds local promotion response from active marketing promotions", () => {
+  const response = buildLocalIntentResponse("Tem promocao de fita adesiva?", {
+    promotions: [
+      {
+        title: "Mega Hair Fita Julho",
+        description: "Aplicacao com valor especial",
+        active: true,
+        promotional_value: 890,
+        original_value: 1200,
+        starts_at: "2026-07-01",
+        ends_at: "2099-07-31",
+        keywords: ["promocao", "fita adesiva", "mega hair"],
+      },
+    ],
+  });
+
+  assert.match(response, /Mega Hair Fita Julho/);
+  assert.match(response, /R\$\s?890/);
+  assert.match(response, /Promocao valida ate/);
+});
+
+test("builds local promotion response even when specific terms do not match", () => {
+  const response = buildLocalIntentResponse("Tem promocao de doacao de cabelo?", {
+    promotions: [
+      {
+        title: "Mega Hair Fita Julho",
+        description: "Aplicacao com valor especial",
+        active: true,
+        promotional_value: 890,
+        original_value: 1200,
+        starts_at: "2026-07-01",
+        ends_at: "2099-07-31",
+        keywords: ["fita adesiva", "mega hair"],
+      },
+    ],
+  });
+
+  assert.match(response, /Mega Hair Fita Julho/);
+  assert.match(response, /R\$\s?890/);
+  assert.doesNotMatch(response, /No momento nao temos promocoes cadastradas/);
+  assert.doesNotMatch(response, /No momento nao encontrei promocao ativa/);
+});
+
+test("builds local promotion response when no promotions are active", () => {
+  const response = buildLocalIntentResponse("Tem promocao?", { promotions: [] });
+
+  assert.match(response, /No momento nao temos promocoes cadastradas/);
+  assert.match(response, /valores normais/);
+  assert.doesNotMatch(response, /Consigo te ajudar apenas com assuntos/);
+});
+
+test("price intent includes related active promotion when service matches", () => {
+  const response = buildLocalIntentResponse("Quanto custa a fita adesiva?", {
+    services: [
+      {
+        name: "Aplicacao Fita Adesiva",
+        commercial_name: "Aplicacao Fita Adesiva",
+        active: true,
+        ai_active: true,
+        base_price: 1200,
+      },
+    ],
+    promotions: [
+      {
+        title: "Fita Adesiva Julho",
+        active: true,
+        promotional_value: 890,
+        original_value: 1200,
+        ends_at: "2099-07-31",
+        keywords: ["fita adesiva"],
+      },
+    ],
+  });
+
+  assert.match(response, /Aplicacao Fita Adesiva custa a partir de/);
+  assert.match(response, /Fita Adesiva Julho/);
+  assert.match(response, /R\$\s?890/);
+});
+
+test("price intent describes free services as sem custo", () => {
+  const response = buildLocalIntentResponse("Quanto custa a avaliacao?", {
+    services: [
+      {
+        name: "Avaliacao personalizada",
+        commercial_name: "Avaliacao personalizada",
+        active: true,
+        ai_active: true,
+        base_price: 0,
+        is_free: true,
+      },
+    ],
+    promotions: [],
+  });
+
+  assert.match(response, /Avaliacao personalizada nao tem custo/);
+  assert.doesNotMatch(response, /sob consulta/);
+});
+
+test("detects natural agenda availability questions before AI routing", () => {
+  assert.equal(isAgendaAvailabilityIntent("Tem horario para sabado?"), true);
+  assert.equal(isAgendaAvailabilityIntent("Consegue encaixe sexta a tarde?"), true);
+  assert.equal(isAgendaAvailabilityIntent("Oi, qual valor do microlink?"), false);
+});
+
+test("prioritizes pending booking answers written in natural language", () => {
+  assert.equal(
+    shouldPrioritizeBookingState(
+      "Hoje a tarde",
+      {
+        status: "awaiting_date",
+        serviceId: "service-1",
+        serviceName: "Aplicacao Fita Adesiva",
+      },
+      [{ sender_type: "ai", body: "Qual dia voce deseja?" }],
+    ),
+    true,
+  );
+  assert.equal(
+    shouldPrioritizeBookingState(
+      "Quanto custa a manutencao?",
+      {
+        status: "awaiting_date",
+        serviceId: "service-1",
+      },
+      [],
+    ),
+    false,
+  );
+});
+
 test("routes fibra russa questions to the AI provider instead of a fixed local reply", () => {
   const response = buildLocalIntentResponse("Você faz aplicação de fibra russa?", {
     services: [
@@ -223,5 +471,287 @@ test("routes fibra russa questions to the AI provider instead of a fixed local r
     ],
   });
 
+  assert.equal(response, null);
+});
+
+test("isClientAskingQuestion classifies questions correctly", () => {
+  assert.equal(isClientAskingQuestion("Qual o valor do mega?"), true);
+  assert.equal(isClientAskingQuestion("Como funciona o microlink"), true);
+  assert.equal(isClientAskingQuestion("Quero agendar por favor"), false);
+});
+
+test("isClientChangingSubjectOrNegating classifies negations correctly", () => {
+  assert.equal(isClientChangingSubjectOrNegating("Não quero agendar mais"), true);
+  assert.equal(isClientChangingSubjectOrNegating("Só quero tirar uma dúvida"), true);
+  assert.equal(isClientChangingSubjectOrNegating("sim"), false);
+});
+
+test("isReplyingToExplanationOffer detects confirmations to explanation offers", () => {
+  const historyOffer = [
+    { sender_type: "ai", body: "Posso explicar a diferença das técnicas. Gostaria?" }
+  ];
+  const historyBooking = [
+    { sender_type: "ai", body: "Você confirma o pré-agendamento acima?" }
+  ];
+  assert.equal(isReplyingToExplanationOffer("sim", historyOffer), true);
+  assert.equal(isReplyingToExplanationOffer("sim", historyBooking), false);
+});
+
+test("summarizeAiCommercialContext includes active inventory stock", () => {
+  const base = {
+    services: [],
+    plans: [],
+    coupons: [],
+    flows: [],
+    inventory: [
+      { name: "Cabelo Loiro Premium", category: "Cabelos", color: "Loiro Claro", shade: "9.0", length_cm: 65, weight_grams: 100, quantity: 5 }
+    ]
+  };
+  const summary = summarizeAiCommercialContext(base, {});
+  assert.match(summary, /Cabelos e mechas em estoque real:/);
+  assert.match(summary, /Cabelo Loiro Premium/);
+  assert.match(summary, /disponibilidade: 5 unidades/);
+  assert.match(summary, /Nunca invente produto, preço, disponibilidade/);
+});
+
+test("getAgendaAvailabilityContext formats slots when asking for agenda", async () => {
+  const base = {
+    services: [
+      { id: "e3cb1e22-861f-4958-868c-4bc46a6f44d1", name: "Avaliação", commercial_name: "Avaliação Técnica", duration_minutes: 30, base_price: 0, active: true, ai_active: true, allow_auto_booking: true }
+    ]
+  };
+
+  // Mock client database query
+  const mockClientQuery = async (sql, params) => {
+    if (sql.includes("public.services")) {
+      return { rows: [{ id: "e3cb1e22-861f-4958-868c-4bc46a6f44d1", name: "Avaliação", duration_minutes: 30, base_price: 0, active: true }] };
+    }
+    if (sql.includes("public.professionals")) {
+      return { rows: [{ id: "p1", full_name: "Carol Sol" }] };
+    }
+    if (sql.includes("professional_availability")) {
+      return { rows: [{ starts_at: "09:00", ends_at: "18:00", active: true }] };
+    }
+    if (sql.includes("appointments")) {
+      return { rows: [] };
+    }
+    return { rows: [] };
+  };
+
+  const context = await getAgendaAvailabilityContext(
+    { query: mockClientQuery },
+    "Tem vaga amanhã?",
+    base,
+    {}
+  );
+  assert.match(context, /CONSULTA DE AGENDA REAL/);
+  assert.match(context, /Carol Sol/);
+});
+
+test("isClientExitingFlow classifies exit phrases correctly", () => {
+  assert.equal(isClientExitingFlow("depois eu agendo"), true);
+  assert.equal(isClientExitingFlow("era só uma dúvida"), true);
+  assert.equal(isClientExitingFlow("obrigado"), true);
+  assert.equal(isClientExitingFlow("quero agendar"), false);
+});
+
+test("buildBookingGuidance handles paused booking flow when has question", () => {
+  const booking = buildBookingGuidance({
+    incomingText: "Vocês trabalham com queratina?",
+    history: [],
+    knownClient: true,
+    settings: {},
+    currentState: { serviceId: "s1", serviceName: "Microlink", date: "2026-07-10" }
+  });
+  assert.equal(booking.active, true);
+  assert.equal(booking.shouldRegister, false);
+  assert.match(booking.text, /Microlink/);
+  assert.match(booking.text, /Campos ja salvos/i);
+  assert.match(booking.text, /Proximo campo faltante: horario/i);
+  assert.match(booking.text, /nunca pergunte novamente campo preenchido/i);
+});
+
+test("handleStructuredBookingFlow shows service details after service selection", async () => {
+  const sentTexts = [];
+  const savedStates = [];
+  pool.query = async (sql, params = []) => {
+    if (sql.includes("update public.whatsapp_conversations") && sql.includes("booking_state=$2")) {
+      savedStates.push(JSON.parse(params[1]));
+      return { rowCount: 1, rows: [] };
+    }
+    if (sql.includes("insert into public.whatsapp_messages")) {
+      return { rowCount: 1, rows: [{ id: "outbound-1" }] };
+    }
+    if (sql.includes("insert into public.whatsapp_message_logs")) {
+      return { rowCount: 1, rows: [] };
+    }
+    if (sql.includes("insert into public.ai_request_logs")) {
+      return { rowCount: 1, rows: [] };
+    }
+    return { rowCount: 1, rows: [{ id: "generic-id" }] };
+  };
+  pool.connect = async () => ({
+    query: async (sql, params = []) => {
+      if (["begin", "commit", "rollback"].includes(String(sql).toLowerCase())) {
+        return { rowCount: 0, rows: [] };
+      }
+      return pool.query(sql, params);
+    },
+    release: () => {},
+  });
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).includes("/api/send-text")) {
+      sentTexts.push(JSON.parse(options.body || "{}").text || "");
+      return new Response(JSON.stringify({ success: true, messageId: "msg-service-details" }));
+    }
+    return new Response(JSON.stringify({ success: true }));
+  };
+  process.env.BAILEYS_API_URL = "https://baileys.example.test";
+  process.env.BAILEYS_API_KEY = "test-key";
+
+  const serviceOption = {
+    id: 1,
+    serviceId: "svc-avaliacao",
+    serviceName: "Avaliacao personalizada",
+    requestedServiceName: "Avaliacao personalizada",
+    serviceValue: 0,
+    serviceIsFree: true,
+    serviceDescription: "Diagnostico capilar com especialista.",
+    serviceDurationMinutes: 45,
+    serviceDepositAmount: 0,
+  };
+
+  const response = await handleStructuredBookingFlow({
+    normalized: { phoneNumber: "5511999999999" },
+    conversationId: "conversation-1",
+    inboundMessageId: "inbound-1",
+    text: "1",
+    settings: { allowAutoBooking: true },
+    base: {
+      flows: [{ flow_key: "pre_agendamento", enabled: true }],
+      services: [],
+    },
+    recorded: {
+      conversation: {
+        booking_state: JSON.stringify({
+          status: "awaiting_service",
+          serviceOptions: [serviceOption],
+        }),
+      },
+    },
+    queueLatencyMs: 0,
+    receivedAt: new Date(),
+    history: [],
+  });
+
+  assert.equal(response.reason, "booking_service_details");
+  assert.equal(savedStates.at(-1).status, "awaiting_service_details");
+  assert.match(sentTexts.at(-1), /Avaliacao personalizada/);
+  assert.match(sentTexts.at(-1), /Diagnostico capilar/);
+  assert.match(sentTexts.at(-1), /Duracao: 45 minutos/);
+  assert.match(sentTexts.at(-1), /Valor: sem custo/);
+  assert.match(sentTexts.at(-1), /1\) Sim/);
+  assert.match(sentTexts.at(-1), /2\) Escolher outro servico/);
+});
+
+test("handleStructuredBookingFlow does not replace WhatsApp phone with CPF", async () => {
+  const sentTexts = [];
+  const savedStates = [];
+  pool.query = async (sql, params = []) => {
+    if (sql.includes("update public.whatsapp_conversations") && sql.includes("booking_state=$2")) {
+      savedStates.push(JSON.parse(params[1]));
+      return { rowCount: 1, rows: [] };
+    }
+    if (sql.includes("insert into public.whatsapp_messages")) {
+      return { rowCount: 1, rows: [{ id: "outbound-cpf" }] };
+    }
+    if (sql.includes("insert into public.whatsapp_message_logs")) {
+      return { rowCount: 1, rows: [] };
+    }
+    if (sql.includes("insert into public.ai_request_logs")) {
+      return { rowCount: 1, rows: [] };
+    }
+    return { rowCount: 1, rows: [{ id: "generic-id" }] };
+  };
+  pool.connect = async () => ({
+    query: async (sql, params = []) => {
+      if (["begin", "commit", "rollback"].includes(String(sql).toLowerCase())) {
+        return { rowCount: 0, rows: [] };
+      }
+      return pool.query(sql, params);
+    },
+    release: () => {},
+  });
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).includes("/api/send-text")) {
+      sentTexts.push(JSON.parse(options.body || "{}").text || "");
+      return new Response(JSON.stringify({ success: true, messageId: "msg-cpf" }));
+    }
+    return new Response(JSON.stringify({ success: true }));
+  };
+  process.env.BAILEYS_API_URL = "https://baileys.example.test";
+  process.env.BAILEYS_API_KEY = "test-key";
+
+  const response = await handleStructuredBookingFlow({
+    normalized: { phoneNumber: "5511999999999" },
+    conversationId: "conversation-cpf",
+    inboundMessageId: "inbound-cpf",
+    text: "12345678901",
+    settings: { allowAutoBooking: true },
+    base: {
+      flows: [{ flow_key: "pre_agendamento", enabled: true }],
+      services: [],
+    },
+    recorded: {
+      conversation: {
+        booking_state: JSON.stringify({
+          status: "awaiting_contact",
+          serviceId: "svc-avaliacao",
+          serviceName: "Avaliacao personalizada",
+          serviceValue: 0,
+          serviceIsFree: true,
+          serviceDetailsAccepted: true,
+          date: "2026-07-13",
+          time: "09:00",
+          professionalId: "prof-1",
+          professionalName: "Carol Sol",
+          clientName: "Maria Silva",
+          clientEmail: "maria@example.test",
+          clientPhone: "5511999999999",
+          clientBirthDate: "1990-05-10",
+        }),
+      },
+    },
+    queueLatencyMs: 0,
+    receivedAt: new Date(),
+    history: [],
+  });
+
+  assert.equal(response.reason, "booking_confirmation_request");
+  assert.equal(savedStates.at(-1).clientCpf, "12345678901");
+  assert.equal(savedStates.at(-1).clientPhone, "5511999999999");
+  assert.match(sentTexts.at(-1), /CPF: 12345678901/);
+  assert.match(sentTexts.at(-1), /Telefone: 5511999999999/);
+});
+
+test("handleStructuredBookingFlow returns null to abort on loop/duplicate text", async () => {
+  const base = {
+    services: [{ id: "s1", name: "Avaliação", duration_minutes: 30, base_price: 0, active: true }]
+  };
+  const history = [
+    { sender_type: "ai", body: "Posso registrar o pré-agendamento pelo WhatsApp ✨\n\nEscolha o serviço respondendo só com o número:\n\n1) Avaliação" }
+  ];
+  const response = await handleStructuredBookingFlow({
+    normalized: { phoneNumber: "5511999999999" },
+    conversationId: "c1",
+    inboundMessageId: "m1",
+    text: "qualquer entrada nao parseavel para forçar repetição do menu",
+    settings: { allowAutoBooking: true },
+    base,
+    recorded: { conversation: { booking_state: JSON.stringify({ status: "awaiting_service" }) } },
+    queueLatencyMs: 0,
+    receivedAt: new Date(),
+    history
+  });
   assert.equal(response, null);
 });

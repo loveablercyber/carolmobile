@@ -2,6 +2,7 @@
 alter table public.profiles add column if not exists instagram text;
 alter table public.profiles add column if not exists address jsonb default '{}';
 alter table public.profiles add column if not exists account_status text not null default 'active';
+alter table public.profiles add column if not exists cpf text;
 alter table public.clients add column if not exists cpf text;
 alter table public.clients add column if not exists personal_notes text;
 

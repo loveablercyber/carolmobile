@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  anonymizeClientAccount,
+  deleteClientAccount,
   collectClientDataExport,
 } from "../api/portal.js";
 
@@ -61,7 +61,7 @@ test("builds a broad client export without authentication secrets", async () => 
   );
 });
 
-test("anonymizes PII while preserving financial relational records", async () => {
+test("deletes all client database records including appointments and payments", async () => {
   const client = mockClient((sql) => {
     if (sql.startsWith("select dr.id,dr.profile_id"))
       return {
@@ -93,7 +93,7 @@ test("anonymizes PII while preserving financial relational records", async () =>
     return { rows: [], rowCount: 1 };
   });
 
-  const result = await anonymizeClientAccount(client, {
+  const result = await deleteClientAccount(client, {
     requestId: ids.request,
     adminId: ids.admin,
   });
@@ -101,32 +101,31 @@ test("anonymizes PII while preserving financial relational records", async () =>
   assert.equal(result.request.status, "completed");
   assert.equal(result.mediaUrls.length, 3);
   assert.ok(
-    client.calls.some(
-      (call) =>
-        call.sql.startsWith("update auth.users") &&
-        call.params[1].endsWith("@anonymized.invalid"),
+    client.calls.some((call) =>
+      call.sql.includes("delete from auth.users")
     ),
   );
   assert.ok(
     client.calls.some((call) =>
-      call.sql.includes("account_status='anonymized'"),
+      call.sql.includes("delete from public.payments")
     ),
   );
   assert.ok(
-    client.calls.some((call) => call.sql.includes("account_anonymized")),
-  );
-  assert.equal(
     client.calls.some((call) =>
-      /delete from public\.(payments|subscriptions|appointments)/.test(call.sql),
+      call.sql.includes("delete from public.appointments")
     ),
-    false,
+  );
+  assert.ok(
+    client.calls.some((call) =>
+      call.sql.includes("delete from public.subscriptions")
+    ),
   );
 });
 
-test("refuses to anonymize a request that is not pending review", async () => {
+test("refuses to delete a request that is not pending review", async () => {
   const client = mockClient(() => ({ rows: [], rowCount: 0 }));
   await assert.rejects(
-    anonymizeClientAccount(client, {
+    deleteClientAccount(client, {
       requestId: ids.request,
       adminId: ids.admin,
     }),

@@ -160,6 +160,7 @@ type FlowForm = {
 const adminTabs = [
   { id: "connection", label: "Conexão", icon: MessageCircle },
   { id: "ai", label: "Atendimento IA", icon: Brain },
+  { id: "scope", label: "Escopo da IA", icon: ShieldCheck },
   { id: "performance_settings", label: "Provedor e Performance", icon: ShieldCheck },
   { id: "base", label: "Base de Atendimento", icon: BookOpen },
   { id: "knowledge", label: "Conhecimento Mega Hair", icon: BookOpen },
@@ -640,6 +641,7 @@ function AiAdminPanel({
     return (
       <KnowledgeTab panel={panel} onPanel={applyPanel} notify={notify} />
     );
+  if (activeTab === "scope") return <ScopeGuardTab />;
   if (activeTab === "flows")
     return <FlowsTab panel={panel} onPanel={applyPanel} notify={notify} />;
   if (activeTab === "conversations") return <ConversationsTab panel={panel} />;
@@ -1447,6 +1449,52 @@ function ConversationsTab({ panel }: { panel: AiPanelData }) {
         />
       )}
     </section>
+  );
+}
+
+function ScopeGuardTab() {
+  const allowed = [
+    "Mega Hair, apliques, alongamento e manutenção",
+    "Cabelos, couro cabeludo, fios, mechas e cuidados",
+    "Perucas, lace e prótese capilar",
+    "Valores, serviços, horários, agenda e pagamentos",
+    "Endereço, funcionamento e atendimento humano",
+  ];
+  const blocked = [
+    "Receitas, comida e cozinha",
+    "Notícias, política, esportes e entretenimento",
+    "Programação, matemática, viagens e temas gerais",
+    "Qualquer pedido sem relação clara com o salão",
+  ];
+  return (
+    <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
+      <section className="surface p-6">
+        <SectionHeading title="Escopo automático" />
+        <p className="muted max-w-2xl text-sm">
+          O backend bloqueia mensagens fora do universo do salão antes de chamar a OpenAI.
+        </p>
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          {allowed.map((item) => (
+            <div key={item} className="rounded-2xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
+              {item}
+            </div>
+          ))}
+        </div>
+      </section>
+      <aside className="surface p-6">
+        <SectionHeading title="Bloqueado sem token" />
+        <div className="space-y-3">
+          {blocked.map((item) => (
+            <div key={item} className="rounded-2xl bg-rose-50 p-4 text-sm font-semibold text-rose-800">
+              {item}
+            </div>
+          ))}
+        </div>
+        <div className="mt-5 rounded-2xl bg-warm p-4 text-xs font-semibold text-stone-600">
+          Exemplo: pedido de receita de bolo recebe resposta curta local e não consome geração da OpenAI.
+        </div>
+      </aside>
+    </div>
   );
 }
 

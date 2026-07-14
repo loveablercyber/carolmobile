@@ -1,5 +1,6 @@
-import { ReactNode, useEffect } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
 import { Check, ChevronRight, LoaderCircle, X } from 'lucide-react'
+import { createPortal } from 'react-dom'
 
 export function Logo({ compact = false, light = false }: { compact?: boolean; light?: boolean }) {
   return (
@@ -44,12 +45,28 @@ export function SectionHeading({ title, link, onClick }: { title: string; link?:
 }
 
 export function Modal({ open, onClose, children, title }: { open: boolean; onClose: () => void; children: ReactNode; title?: string }) {
+  const [mounted, setMounted] = useState(false)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey)
+    setMounted(true)
+    return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
-  if (!open) return null
-  return <div className="fixed inset-0 z-[80] grid items-end bg-black/40 p-0 backdrop-blur-sm sm:place-items-center sm:p-5" onMouseDown={e => e.target === e.currentTarget && onClose()}><div role="dialog" aria-modal="true" className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-t-[30px] bg-cream p-6 shadow-2xl animate-fade-up sm:rounded-[30px]"><div className="mb-5 flex items-center justify-between">{title && <h2 className="font-display text-2xl font-semibold">{title}</h2>}<button onClick={onClose} aria-label="Fechar" className="ml-auto grid h-10 w-10 place-items-center rounded-full bg-white text-stone-500"><X size={18} /></button></div>{children}</div></div>
+  if (!open || !mounted) return null
+  return createPortal(
+    <div className="fixed inset-0 z-[80] grid items-end bg-black/40 p-0 backdrop-blur-sm sm:place-items-center sm:p-5" onMouseDown={e => e.target === e.currentTarget && onClose()}>
+      <div role="dialog" aria-modal="true" className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-t-[30px] bg-cream p-6 shadow-2xl animate-fade-up sm:rounded-[30px]">
+        <div className="mb-5 flex items-center justify-between">
+          {title && <h2 className="font-display text-2xl font-semibold">{title}</h2>}
+          <button onClick={onClose} aria-label="Fechar" className="ml-auto grid h-10 w-10 place-items-center rounded-full bg-white text-stone-500">
+            <X size={18} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>,
+    document.body
+  )
 }
 
 export function Toast({ message, show }: { message: string; show: boolean }) {

@@ -1,35 +1,52 @@
 # Carol Sol PWA
 
-Aplicativo demonstrativo premium para gestão especializada de Mega Hair, com áreas de cliente, profissional e administração.
+Aplicativo para gestao especializada de Mega Hair, com areas de cliente, profissional e administracao.
 
 ## Executar
 
 ```bash
 npm install
 npm run build
-npm run dev
+npm start
 ```
 
-O comando `npm run dev` serve o build validado em `http://localhost:5173`. Para desenvolvimento com hot reload em ambientes sem restrições de sandbox, use `npm run dev:vite`.
+O comando `npm start` serve o build em `http://localhost:5173` e tambem roteia as APIs em `/api/*`.
 
-Use os seletores de perfil na tela de login para acessar cada painel. Os dados são simulados; a preparação para Supabase está em `src/lib/supabase.ts` e `supabase/schema.sql`.
+Para desenvolvimento com hot reload:
 
-## Produção
+```bash
+npm run dev:vite
+```
 
-1. Copie `.env.example` para `.env` e informe as chaves do Supabase.
-2. Execute `supabase/schema.sql` no projeto Supabase.
-3. Revise e amplie as políticas RLS conforme as regras finais da operação.
-4. Configure credenciais e webhooks para Mercado Pago, WhatsApp e push notifications somente no backend.
+## Producao
 
-O build gera manifest, service worker, cache de navegação e imagens, atalho de instalação e fallback offline.
+1. Copie `.env.example` para `.env`.
+2. Configure `DATABASE_URL`, `JWT_SECRET`, `APP_URL` e as credenciais de integracoes.
+3. Execute `npm run db:inspect`.
+4. Se faltarem tabelas ou migracoes, execute `npm run db:setup`.
+5. Configure webhooks de SumUp, WhatsApp/Baileys/Evolution, e-mail e uploads somente no backend.
 
-## Banco PostgreSQL / Neon
+O fluxo operacional atual usa APIs proprias, JWT em cookie e PostgreSQL via `DATABASE_URL`. O cliente Supabase em `src/lib/supabase.ts` e `supabase/schema.sql` permanecem apenas como legado/preparacao, nao como dependencia principal da aplicacao.
 
-O schema completo pode ser aplicado com a variável `DATABASE_URL` disponível apenas no processo do servidor:
+## Coolify
+
+O projeto esta preparado para Coolify com:
+
+```bash
+npm ci
+npm run build
+npm start
+```
+
+Veja o passo a passo em `docs/COOLIFY_MIGRATION.md`.
+
+## Banco PostgreSQL
+
+O schema completo pode ser aplicado com a variavel `DATABASE_URL` disponivel apenas no processo do servidor:
 
 ```bash
 npm run db:inspect
 npm run db:setup
 ```
 
-As migrações ficam registradas em `public._luxe_migrations`. O arquivo `database/neon-bootstrap.sql` adiciona a camada de compatibilidade de autenticação; `database/neon-seed.sql` cria os dados demonstrativos.
+As migracoes ficam registradas em `public._luxe_migrations`. O arquivo `database/neon-bootstrap.sql` adiciona a camada de compatibilidade de autenticacao; `database/neon-seed.sql` cria os dados demonstrativos.

@@ -1,0 +1,271 @@
+{
+  "newServices": [
+    "Aplicação Fita Adesiva",
+    "Aplicação Microlink",
+    "Avaliação personalizada",
+    "Manutenção Fita Adesiva"
+  ],
+  "oldUniqueCount": 24,
+  "report": [
+    {
+      "name": "Alinhamento",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "064eac32-9df9-4911-a991-ac7001969e2d",
+      "occurrences": 2
+    },
+    {
+      "name": "Avaliação",
+      "status": "mapped_to_existing",
+      "mappedId": "52000000-0000-0000-0000-000000000004",
+      "occurrences": 26
+    },
+    {
+      "name": "Cabelo Ondulado - Fibra Russa",
+      "status": "missing_or_manual",
+      "mappedId": null,
+      "occurrences": 1
+    },
+    {
+      "name": "Entrelace",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "100c912d-a307-4c10-a321-5f035d4238b2",
+      "occurrences": 1
+    },
+    {
+      "name": "Escova",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "6a98fb6b-efda-471e-9fad-9eab38726a4a",
+      "occurrences": 2
+    },
+    {
+      "name": "Escova em peruca",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "95e1dcc0-0e9a-4bee-901c-f1daab86c831",
+      "occurrences": 1
+    },
+    {
+      "name": "Fibra Bio Proteina",
+      "status": "missing_or_manual",
+      "mappedId": null,
+      "occurrences": 1
+    },
+    {
+      "name": "Fibra Bio Proteina (Bio Proteina Marsala)",
+      "status": "missing_or_manual",
+      "mappedId": null,
+      "occurrences": 2
+    },
+    {
+      "name": "Fibra Russa",
+      "status": "missing_or_manual",
+      "mappedId": null,
+      "occurrences": 1
+    },
+    {
+      "name": "Fita Adesiva",
+      "status": "mapped_to_existing",
+      "mappedId": "52000000-0000-0000-0000-000000000001",
+      "occurrences": 11
+    },
+    {
+      "name": "Lace Front",
+      "status": "missing_or_manual",
+      "mappedId": null,
+      "occurrences": 1
+    },
+    {
+      "name": "Manutenção",
+      "status": "mapped_to_existing",
+      "mappedId": "52000000-0000-0000-0000-000000000003",
+      "occurrences": 1
+    },
+    {
+      "name": "Manutenção do Megahair",
+      "status": "missing_or_manual",
+      "mappedId": null,
+      "occurrences": 1
+    },
+    {
+      "name": "Manutenção futura (260 dias)",
+      "status": "mapped_to_existing",
+      "mappedId": "52000000-0000-0000-0000-000000000003",
+      "occurrences": 1
+    },
+    {
+      "name": "Mega Hair Fita 50cm - Loiro",
+      "status": "missing_or_manual",
+      "mappedId": null,
+      "occurrences": 1
+    },
+    {
+      "name": "Método Entrelace - Manutenção - Serviço único",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "767fffe3-7923-4ce6-b452-740693f0d82e",
+      "occurrences": 2
+    },
+    {
+      "name": "Método Fita adesiva - Alongamento cabeça toda - Remoção e aplicação",
+      "status": "mapped_to_existing",
+      "mappedId": "52000000-0000-0000-0000-000000000003",
+      "occurrences": 3
+    },
+    {
+      "name": "Pacote Cronograma Capilar + Blindagem",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "37f75733-4229-4187-96fd-5eb8ed711cce",
+      "occurrences": 12
+    },
+    {
+      "name": "Ponto Americano Invisível",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "42261c95-71d6-41d1-8cfb-07f47a7a4bd6",
+      "occurrences": 17
+    },
+    {
+      "name": "Ponto Americano Invisível - Alongamento cabeça toda - Apenas a remoção",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "0eab39aa-3cd7-4ed7-815f-643c1f7ac08e",
+      "occurrences": 1
+    },
+    {
+      "name": "Ponto Americano Invisível - Alongamento cabeça toda - Até 7 telas",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "42261c95-71d6-41d1-8cfb-07f47a7a4bd6",
+      "occurrences": 2
+    },
+    {
+      "name": "Promoção Bio Proteína",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "e077cee0-2f7b-4724-8063-9df764e8fd94",
+      "occurrences": 4
+    },
+    {
+      "name": "Reparo Técnico de Mega Hair",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "08d9b74c-2872-441f-9bd4-13253c8de789",
+      "occurrences": 5
+    },
+    {
+      "name": "Selante Capilar (Blond)",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "537c4846-b7d8-45cb-84e6-ce357342c7f3",
+      "occurrences": 1
+    }
+  ],
+  "missing": [
+    {
+      "name": "Alinhamento",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "064eac32-9df9-4911-a991-ac7001969e2d",
+      "occurrences": 2
+    },
+    {
+      "name": "Cabelo Ondulado - Fibra Russa",
+      "status": "missing_or_manual",
+      "mappedId": null,
+      "occurrences": 1
+    },
+    {
+      "name": "Entrelace",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "100c912d-a307-4c10-a321-5f035d4238b2",
+      "occurrences": 1
+    },
+    {
+      "name": "Escova",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "6a98fb6b-efda-471e-9fad-9eab38726a4a",
+      "occurrences": 2
+    },
+    {
+      "name": "Escova em peruca",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "95e1dcc0-0e9a-4bee-901c-f1daab86c831",
+      "occurrences": 1
+    },
+    {
+      "name": "Fibra Bio Proteina",
+      "status": "missing_or_manual",
+      "mappedId": null,
+      "occurrences": 1
+    },
+    {
+      "name": "Fibra Bio Proteina (Bio Proteina Marsala)",
+      "status": "missing_or_manual",
+      "mappedId": null,
+      "occurrences": 2
+    },
+    {
+      "name": "Fibra Russa",
+      "status": "missing_or_manual",
+      "mappedId": null,
+      "occurrences": 1
+    },
+    {
+      "name": "Lace Front",
+      "status": "missing_or_manual",
+      "mappedId": null,
+      "occurrences": 1
+    },
+    {
+      "name": "Manutenção do Megahair",
+      "status": "missing_or_manual",
+      "mappedId": null,
+      "occurrences": 1
+    },
+    {
+      "name": "Mega Hair Fita 50cm - Loiro",
+      "status": "missing_or_manual",
+      "mappedId": null,
+      "occurrences": 1
+    },
+    {
+      "name": "Método Entrelace - Manutenção - Serviço único",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "767fffe3-7923-4ce6-b452-740693f0d82e",
+      "occurrences": 2
+    },
+    {
+      "name": "Pacote Cronograma Capilar + Blindagem",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "37f75733-4229-4187-96fd-5eb8ed711cce",
+      "occurrences": 12
+    },
+    {
+      "name": "Ponto Americano Invisível",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "42261c95-71d6-41d1-8cfb-07f47a7a4bd6",
+      "occurrences": 17
+    },
+    {
+      "name": "Ponto Americano Invisível - Alongamento cabeça toda - Apenas a remoção",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "0eab39aa-3cd7-4ed7-815f-643c1f7ac08e",
+      "occurrences": 1
+    },
+    {
+      "name": "Ponto Americano Invisível - Alongamento cabeça toda - Até 7 telas",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "42261c95-71d6-41d1-8cfb-07f47a7a4bd6",
+      "occurrences": 2
+    },
+    {
+      "name": "Promoção Bio Proteína",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "e077cee0-2f7b-4724-8063-9df764e8fd94",
+      "occurrences": 4
+    },
+    {
+      "name": "Reparo Técnico de Mega Hair",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "08d9b74c-2872-441f-9bd4-13253c8de789",
+      "occurrences": 5
+    },
+    {
+      "name": "Selante Capilar (Blond)",
+      "status": "mapped_to_nonexistent_service_id",
+      "mappedId": "537c4846-b7d8-45cb-84e6-ce357342c7f3",
+      "occurrences": 1
+    }
+  ]
+}

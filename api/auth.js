@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { query, transaction } from '../server/lib/db.js'
 import { createSession, readSession, setSessionCookie, clearSessionCookie } from '../server/lib/auth.js'
 import { appError, getBody, handleError, methodNotAllowed, send } from '../server/lib/http.js'
-import { sendEmail } from '../server/lib/integrations.js'
+import { sendEmail, sendWhatsApp } from '../server/lib/integrations.js'
 
 export async function processReferralCode(client, { refCode, newClientId, fullName, phone, userId }) {
   const code = String(refCode || '').trim().toUpperCase().slice(0, 80)
@@ -145,6 +145,25 @@ export default async function handler(req, res) {
       })
       const token = await createSession(profile)
       setSessionCookie(res, token)
+      await Promise.allSettled([
+        sendEmail({
+          to: email,
+          subject: 'Conta criada - Carol Sol',
+          html: `<p>Ola, ${fullName}. Sua conta Carol Sol foi criada com sucesso.</p><p>Agora voce pode acompanhar agendamentos, pagamentos, beneficios e notificacoes pelo aplicativo.</p>`,
+        }).catch((error) =>
+          console.error('Falha ao enviar e-mail de boas-vindas:', error.message),
+        ),
+        (async () => {
+          if (phone) {
+            await sendWhatsApp({
+              to: phone,
+              text: `Olá, ${fullName}! Sua conta Carol Sol foi criada com sucesso. Acesse o portal para acompanhar seus agendamentos, pagamentos e benefícios.`,
+            }).catch((error) =>
+              console.error('Falha ao enviar WhatsApp de boas-vindas:', error.message),
+            )
+          }
+        })()
+      ])
       return send(res, 201, { user: profile })
     }
 

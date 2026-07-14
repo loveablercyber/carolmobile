@@ -67,7 +67,6 @@ const roleNav = {
       path: "/profissional/disponibilidade",
       icon: Clock3,
     },
-    { label: "WhatsApp", path: "/profissional/whatsapp", icon: Bell },
     { label: "Perfil", path: "/profissional/perfil", icon: UserRound },
   ],
   admin: [
@@ -84,6 +83,7 @@ const roleNav = {
     { label: "Pagamentos", path: "/admin/pagamentos", icon: CreditCard },
     { label: "Planos", path: "/admin/planos", icon: Gift },
     { label: "Cupons", path: "/admin/cupons", icon: Tags },
+    { label: "Promocoes", path: "/admin/marketing/promocoes", icon: Megaphone },
     { label: "Comissões", path: "/admin/comissoes", icon: WalletCards },
     { label: "Notificações", path: "/admin/notificacoes", icon: Bell },
     { label: "WhatsApp", path: "/admin/integracoes/whatsapp", icon: Bell },

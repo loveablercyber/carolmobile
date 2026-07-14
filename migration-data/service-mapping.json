@@ -1,0 +1,44 @@
+{
+  "service_mapping": {
+    "Avaliação": "52000000-0000-0000-0000-000000000004",
+    "svc_evaluation": "52000000-0000-0000-0000-000000000004",
+    
+    "Fita Adesiva": "52000000-0000-0000-0000-000000000001",
+    "invisible-hair": "52000000-0000-0000-0000-000000000001",
+    "svc_1777681240348_q3tofo": "52000000-0000-0000-0000-000000000001",
+    
+    "Manutenção": "52000000-0000-0000-0000-000000000003",
+    "flow_human_hair_maintenance": "52000000-0000-0000-0000-000000000003",
+    "Manutenção futura (260 dias)": "52000000-0000-0000-0000-000000000003",
+    "Método Fita adesiva - Alongamento cabeça toda - Remoção e aplicação": "52000000-0000-0000-0000-000000000003",
+    "human_hair_maintenance_tape_full_remove_apply": "52000000-0000-0000-0000-000000000003",
+    
+    "Aplicação Microlink": "52000000-0000-0000-0000-000000000002",
+    
+    "Ponto Americano Invisível": "42261c95-71d6-41d1-8cfb-07f47a7a4bd6",
+    "Ponto Americano Invisível - Alongamento cabeça toda - Até 7 telas": "42261c95-71d6-41d1-8cfb-07f47a7a4bd6",
+    "human_hair_application_point_full_7_screens": "42261c95-71d6-41d1-8cfb-07f47a7a4bd6",
+    "invisible-weft": "42261c95-71d6-41d1-8cfb-07f47a7a4bd6",
+    
+    "Ponto Americano Invisível - Alongamento cabeça toda - Apenas a remoção": "0eab39aa-3cd7-4ed7-815f-643c1f7ac08e",
+    "human_hair_maintenance_point_full_remove": "0eab39aa-3cd7-4ed7-815f-643c1f7ac08e",
+    
+    "Método Entrelace - Manutenção - Serviço único": "767fffe3-7923-4ce6-b452-740693f0d82e",
+    "Entrelace": "100c912d-a307-4c10-a321-5f035d4238b2",
+    "svc_maintenance_interlace": "767fffe3-7923-4ce6-b452-740693f0d82e",
+    "human_hair_maintenance_entrelace_single": "767fffe3-7923-4ce6-b452-740693f0d82e",
+    
+    "Pacote Cronograma Capilar + Blindagem": "37f75733-4229-4187-96fd-5eb8ed711cce",
+    "cronograma-completo": "37f75733-4229-4187-96fd-5eb8ed711cce",
+    
+    "Promoção Bio Proteína": "e077cee0-2f7b-4724-8063-9df764e8fd94",
+    "promo-bio-proteina": "e077cee0-2f7b-4724-8063-9df764e8fd94",
+    
+    "Escova em peruca": "95e1dcc0-0e9a-4bee-901c-f1daab86c831",
+    "Alinhamento": "064eac32-9df9-4911-a991-ac7001969e2d",
+    "Reparo Técnico de Mega Hair": "08d9b74c-2872-441f-9bd4-13253c8de789",
+    "Escova": "6a98fb6b-efda-471e-9fad-9eab38726a4a",
+    "align_escova": "6a98fb6b-efda-471e-9fad-9eab38726a4a",
+    "Selante Capilar (Blond)": "537c4846-b7d8-45cb-84e6-ce357342c7f3"
+  }
+}

@@ -25,6 +25,7 @@ test("static AI WhatsApp migration includes runtime hardening tables and router 
     "whatsapp_incoming_queue",
     "ai_request_logs",
     "knowledge_articles",
+    "marketing_promotions",
   ]) {
     assert.ok(aiWhatsappTables.includes(table));
     assert.match(

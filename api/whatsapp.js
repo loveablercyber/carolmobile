@@ -2,6 +2,7 @@ import { query } from "../server/lib/db.js";
 import { requireUser } from "../server/lib/auth.js";
 import {
   baileysConfig,
+  ensureBaileysReady,
   getBaileysQr,
   getBaileysStatus,
   logoutBaileysSession,
@@ -21,6 +22,9 @@ import {
   processIncomingWhatsAppWebhook,
 } from "../server/lib/whatsapp-ai-engine.js";
 
+const QR_POLL_ATTEMPTS = 6;
+const QR_POLL_DELAY_MS = 1200;
+
 async function context(user) {
   if (!["admin", "professional"].includes(user.role))
     throw appError("Acesso negado.", 403);
@@ -31,13 +35,17 @@ async function context(user) {
 }
 
 export function normalizeStatus(data) {
-  const value = String(
+  const rawStatus =
     data?.status ||
       data?.state ||
       data?.instance?.state ||
-      data?.connectionStatus ||
-      "disconnected",
-  ).toLowerCase();
+      data?.connectionStatus;
+  const value = String(rawStatus || "disconnected").toLowerCase();
+  if (
+    qrValue(data) &&
+    (!rawStatus || ["unknown", "qr", "qrcode", "awaiting_scan"].includes(value))
+  )
+    return "qrcode";
   if (["open", "connected", "online", "ready"].includes(value))
     return "connected";
   if (["connecting", "starting", "reconnecting"].includes(value))
@@ -63,6 +71,19 @@ export function qrValue(data) {
     data?.code ||
     null
   );
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function mergeProviderData(...payloads) {
+  const merged = Object.assign({}, ...payloads.filter(Boolean));
+  if (payloads.some((payload) => qrValue(payload))) {
+    const status = normalizeStatus(merged);
+    if (!["connected"].includes(status)) merged.status = "qrcode";
+  }
+  return merged;
 }
 
 function maskPhoneLike(value) {
@@ -144,10 +165,10 @@ async function getPanel(user) {
   if (config.configured)
     try {
       live = (await getBaileysStatus()).data;
-      if (normalizeStatus(live) === "qrcode" && live.hasQr) {
+      if (["connecting", "qrcode", "pairing_code"].includes(normalizeStatus(live))) {
         try {
           const qr = (await getBaileysQr()).data;
-          if (qrValue(qr)) live = { ...live, ...qr };
+          if (qrValue(qr)) live = mergeProviderData(live, qr);
         } catch (qrError) {
           console.error("WhatsApp QR refresh error", {
             message: qrError.message,
@@ -182,6 +203,50 @@ async function getPanel(user) {
   };
 }
 
+async function readQrOrStatus(current = null) {
+  let statusData = current;
+  try {
+    const freshStatus = (await getBaileysStatus()).data;
+    statusData = statusData
+      ? mergeProviderData(statusData, freshStatus)
+      : freshStatus;
+  } catch (error) {
+    if (!statusData) throw error;
+    console.error("WhatsApp status refresh error", { message: error.message });
+  }
+  if (normalizeStatus(statusData) === "connected") return statusData;
+
+  try {
+    const qrData = (await getBaileysQr()).data;
+    if (qrValue(qrData)) return mergeProviderData(statusData, qrData);
+    return mergeProviderData(statusData, qrData);
+  } catch (error) {
+    console.error("WhatsApp QR read error", { message: error.message });
+    return statusData;
+  }
+}
+
+async function startBaileysQr({ resetFirst = false } = {}) {
+  let latest = null;
+
+  if (!resetFirst) {
+    latest = await readQrOrStatus();
+    if (normalizeStatus(latest) === "connected" || qrValue(latest)) return latest;
+  }
+
+  latest = mergeProviderData(await resetBaileysSession().then((result) => result.data));
+  if (!latest.status || normalizeStatus(latest) === "disconnected")
+    latest = { ...latest, status: "starting" };
+
+  for (let attempt = 0; attempt < QR_POLL_ATTEMPTS; attempt += 1) {
+    await wait(QR_POLL_DELAY_MS);
+    latest = await readQrOrStatus(latest);
+    if (normalizeStatus(latest) === "connected" || qrValue(latest)) return latest;
+  }
+
+  return latest;
+}
+
 async function action(user, body) {
   const ctx = await context(user);
   const action = String(body.action || "");
@@ -195,15 +260,28 @@ async function action(user, body) {
   }
   try {
     let result;
-    if (["connect", "qr"].includes(action)) result = await getBaileysQr();
+    if (["connect", "qr"].includes(action)) {
+      result = { data: await startBaileysQr({ resetFirst: false }) };
+    }
     else if (action === "status") result = await getBaileysStatus();
+    else if (action === "keepalive") {
+      const health = await ensureBaileysReady({
+        source: "panel_keepalive",
+        reconnect: true,
+        forceReconnect: body.forceReconnect === true,
+      });
+      return {
+        ok: true,
+        session: await saveSession(ctx, health.data || { status: health.status }),
+        provider: health,
+      };
+    }
     else if (action === "pairing_code") {
       if (!body.phone) throw appError("Informe o telefone para gerar o código.");
       result = await requestBaileysPairingCode({ number: body.phone });
     }
     else if (action === "restart") {
-      result = await resetBaileysSession();
-      result.data = { ...result.data, status: "starting" };
+      result = { data: await startBaileysQr({ resetFirst: true }) };
     } else if (action === "disconnect") {
       result = await logoutBaileysSession();
       result.data = { ...result.data, status: "logged_out", qr: null };
@@ -212,6 +290,36 @@ async function action(user, body) {
     return { ok: true, session: await saveSession(ctx, data), provider: data };
   } catch (error) {
     await saveSession(ctx, {}, error.message);
+    throw error;
+  }
+}
+
+async function keepalive(req, res, body) {
+  const expected = process.env.BAILEYS_KEEPALIVE_SECRET || process.env.CRON_SECRET;
+  const authorization = String(req.headers.authorization || "");
+  const provided =
+    (authorization.startsWith("Bearer ") ? authorization.slice(7) : "") ||
+    req.headers["x-keepalive-secret"] ||
+    req.headers["x-cron-secret"] ||
+    req.query?.secret;
+
+  if (!expected || provided !== expected) throw appError("Keepalive nao autorizado.", 401);
+
+  const ctx = {
+    sessionName: String(process.env.BAILEYS_DEFAULT_INSTANCE || "carol-sol"),
+    professionalId: null,
+  };
+
+  try {
+    const result = await ensureBaileysReady({
+      source: "whatsapp_keepalive",
+      reconnect: true,
+      forceReconnect: req.query?.force === "1" || body.forceReconnect === true,
+    });
+    const session = await saveSession(ctx, result.data || { status: result.status });
+    return send(res, 200, { ok: true, data: { ...result, session } });
+  } catch (error) {
+    await saveSession(ctx, {}, error.message).catch(() => {});
     throw error;
   }
 }
@@ -250,6 +358,8 @@ export default async function handler(req, res) {
     const body = getBody(req);
     if (resource === "webhook" && req.method === "POST")
       return await webhook(req, res, body);
+    if (resource === "keepalive" && ["GET", "POST"].includes(req.method))
+      return await keepalive(req, res, body);
     const user = await requireUser(req, ["admin", "professional"]);
     if (req.method === "GET")
       return send(res, 200, { data: await getPanel(user) });

@@ -1,4 +1,10 @@
 const DEFAULT_TIMEOUT_MS = 20_000;
+const RECONNECT_COOLDOWN_MS = Number.parseInt(
+  process.env.BAILEYS_RECONNECT_COOLDOWN_MS || "120000",
+  10,
+);
+
+let lastReconnectAttemptAt = 0;
 
 export class BaileysClientError extends Error {
   constructor(message, { status = 502, code = "BAILEYS_ERROR", providerStatus = null } = {}) {
@@ -17,6 +23,49 @@ export function baileysConfig() {
     .replace(/\/+$/, "");
   const apiKey = String(process.env.BAILEYS_API_KEY || "").trim();
   return { baseUrl, apiKey, configured: Boolean(baseUrl && apiKey) };
+}
+
+function truthy(value) {
+  return ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
+}
+
+function falsey(value) {
+  return ["0", "false", "no", "off"].includes(String(value || "").toLowerCase());
+}
+
+export function normalizeBaileysStatusValue(data) {
+  const rawStatus =
+    data?.status ||
+      data?.state ||
+      data?.instance?.state ||
+      data?.connectionStatus;
+  const value = String(rawStatus || "disconnected").toLowerCase();
+  const hasQr = Boolean(
+    data?.qr_code_data ||
+      data?.qrCode ||
+      data?.qrcode?.base64 ||
+      data?.base64 ||
+      data?.qr ||
+      data?.code,
+  );
+  if (hasQr && (!rawStatus || ["unknown", "qr", "qrcode", "awaiting_scan"].includes(value)))
+    return "qrcode";
+  return value;
+}
+
+export function isBaileysReadyStatus(value) {
+  return ["ready", "open", "connected", "online"].includes(String(value || "").toLowerCase());
+}
+
+function shouldAutoReconnect() {
+  if (falsey(process.env.BAILEYS_AUTO_RECONNECT)) return false;
+  if (truthy(process.env.BAILEYS_AUTO_RECONNECT)) return true;
+  return !falsey(process.env.BAILEYS_ENABLED);
+}
+
+function reconnectAllowed(status, forceReconnect) {
+  if (forceReconnect) return true;
+  return !["qr", "qrcode", "awaiting_scan", "pairing", "pairing_code", "pairing-code", "logged_out"].includes(status);
 }
 
 function friendlyProviderError(response, data) {
@@ -89,6 +138,73 @@ export async function getBaileysStatus() {
   return request("/api/status");
 }
 
+export async function ensureBaileysReady({
+  source = "healthcheck",
+  reconnect = true,
+  forceReconnect = false,
+} = {}) {
+  const statusResult = await getBaileysStatus();
+  const beforeStatus = normalizeBaileysStatusValue(statusResult.data);
+
+  if (isBaileysReadyStatus(beforeStatus)) {
+    return {
+      ok: true,
+      ready: true,
+      status: beforeStatus,
+      beforeStatus,
+      reconnected: false,
+      source,
+      data: statusResult.data,
+    };
+  }
+
+  if (!reconnect || !shouldAutoReconnect() || !reconnectAllowed(beforeStatus, forceReconnect)) {
+    return {
+      ok: true,
+      ready: false,
+      status: beforeStatus,
+      beforeStatus,
+      reconnected: false,
+      skipped: true,
+      source,
+      data: statusResult.data,
+    };
+  }
+
+  const now = Date.now();
+  const cooldownMs = Number.isFinite(RECONNECT_COOLDOWN_MS)
+    ? Math.max(0, RECONNECT_COOLDOWN_MS)
+    : 120000;
+
+  if (!forceReconnect && lastReconnectAttemptAt && now - lastReconnectAttemptAt < cooldownMs) {
+    return {
+      ok: true,
+      ready: false,
+      status: beforeStatus,
+      beforeStatus,
+      reconnected: false,
+      skipped: true,
+      cooldownMs,
+      source,
+      data: statusResult.data,
+    };
+  }
+
+  lastReconnectAttemptAt = now;
+  const restartResult = await resetBaileysSession();
+  const afterStatus = normalizeBaileysStatusValue(restartResult.data);
+
+  return {
+    ok: true,
+    ready: isBaileysReadyStatus(afterStatus),
+    status: afterStatus,
+    beforeStatus,
+    reconnected: true,
+    source,
+    data: restartResult.data,
+  };
+}
+
 export async function sendBaileysTextMessage({ number, text, skipStatusCheck = false }) {
   const normalizedNumber = normalizeBaileysNumber(number);
   const message = String(text || "").trim();
@@ -98,8 +214,8 @@ export async function sendBaileysTextMessage({ number, text, skipStatusCheck = f
       code: "BAILEYS_EMPTY_MESSAGE",
     });
   if (!skipStatusCheck) {
-    const status = await getBaileysStatus();
-    if (String(status.status).toLowerCase() !== "ready")
+    const status = await ensureBaileysReady({ source: "send-text", reconnect: true });
+    if (!status.ready)
       throw new BaileysClientError(
         "O WhatsApp ainda não está conectado. Escaneie o QR Code e aguarde o status ready.",
         { status: 503, code: "BAILEYS_NOT_READY" },

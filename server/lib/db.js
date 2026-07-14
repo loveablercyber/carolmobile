@@ -2,10 +2,22 @@ import pg from 'pg'
 
 const { Pool } = pg
 
+function shouldUseSsl(connectionString) {
+  if (!connectionString) return false
+  try {
+    const url = new URL(connectionString)
+    const sslMode = url.searchParams.get('sslmode')
+    if (sslMode) return !['disable', 'allow', 'prefer'].includes(sslMode.toLowerCase())
+    return /(neon\.tech|supabase\.(co|com)|amazonaws\.com|render\.com)$/i.test(url.hostname)
+  } catch {
+    return false
+  }
+}
+
 const globalStore = globalThis
 export const pool = globalStore.__carolSolPool || new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined,
+  ssl: shouldUseSsl(process.env.DATABASE_URL) ? { rejectUnauthorized: false } : undefined,
   max: 3,
   idleTimeoutMillis: 20_000,
   connectionTimeoutMillis: 10_000

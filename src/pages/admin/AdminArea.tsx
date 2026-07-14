@@ -11,6 +11,7 @@ import {
   AdminInventoryPage,
   AdminPaymentsPage,
   AdminPlansPage,
+  AdminPromotionsPage,
   AdminProfessionalsPage,
   AdminReportsPage,
   AdminServicesPage,
@@ -36,7 +37,9 @@ export function AdminArea() {
   else if (path.includes("/pagamentos") || path.includes("/financeiro"))
     page = <AdminPaymentsPage />;
   else if (path.includes("/planos")) page = <AdminPlansPage />;
-  else if (path.includes("/cupons") || path.includes("/promocoes"))
+  else if (path.includes("/marketing/promocoes") || path.includes("/promocoes"))
+    page = <AdminPromotionsPage />;
+  else if (path.includes("/cupons"))
     page = <AdminCouponsPage />;
   else if (path.includes("/profissionais")) page = <AdminProfessionalsPage />;
   else if (path.includes("/servicos")) page = <AdminServicesPage />;

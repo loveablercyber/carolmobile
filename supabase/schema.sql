@@ -26,7 +26,7 @@ create table public.service_categories (id uuid primary key default uuid_generat
 create table public.hair_methods (id uuid primary key default uuid_generate_v4(), name text not null, description text, maintenance_days int, active boolean default true);
 create table public.services (
   id uuid primary key default uuid_generate_v4(), category_id uuid references public.service_categories(id), hair_method_id uuid references public.hair_methods(id),
-  name text not null, description text, duration_minutes int not null, base_price numeric(12,2) not null, deposit_amount numeric(12,2) default 0, active boolean default true
+  name text not null, description text, duration_minutes int not null, base_price numeric(12,2) not null, deposit_amount numeric(12,2) default 0, active boolean default true, show_online_booking boolean not null default true
 );
 create table public.professional_services (professional_id uuid references public.professionals(id) on delete cascade, service_id uuid references public.services(id) on delete cascade, custom_price numeric(12,2), commission_rate numeric(5,2), primary key(professional_id,service_id));
 

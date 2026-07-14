@@ -19,6 +19,7 @@ import {
 import {
   isConfiguredCloudinaryUrl,
   sendEmail,
+  notifyAppointment,
 } from "../server/lib/integrations.js";
 import {
   receiptSubmissionError,
@@ -298,6 +299,28 @@ async function paymentFor(user, id) {
   return rows[0];
 }
 
+async function syncPaymentFromProviderIfPending(user, payment) {
+  if (
+    payment.provider !== "sumup" ||
+    !payment.provider_checkout_id ||
+    !["pending", "processing", "awaiting_confirmation"].includes(payment.status)
+  ) {
+    return payment;
+  }
+  try {
+    const checkout = await retrieveSumupCheckout(payment.provider_checkout_id);
+    await applyProviderStatus(payment.id, checkout.status, checkout, user.id);
+    return await paymentFor(user, payment.id);
+  } catch (error) {
+    console.error("Failed to sync SumUp status on payment return", {
+      paymentId: payment.id,
+      checkoutId: payment.provider_checkout_id,
+      message: error.message,
+    });
+    return payment;
+  }
+}
+
 async function applyProviderStatus(
   paymentId,
   providerStatus,
@@ -390,11 +413,143 @@ async function applyProviderStatus(
         }
       }
       if (payment.appointment_id) {
-        await client.query(
-          `update public.appointments set status='confirmed',updated_at=now() where id=$1 and status in ('awaiting_payment','pending_deposit')`,
+        const appointmentResult = await client.query(
+          `select a.status,a.starts_at,a.estimated_value,
+                  s.name as service_name,
+                  cp.id as client_profile_id,cp.full_name as client_name,cp.phone as client_phone,cu.email as client_email,
+                  pp.id as professional_profile_id,pp.full_name as professional_name,pp.phone as professional_phone,pu.email as professional_email
+             from public.appointments a
+             join public.services s on s.id=a.service_id
+             join public.clients c on c.id=a.client_id
+             join public.profiles cp on cp.id=c.profile_id
+             join auth.users cu on cu.id=cp.id
+             join public.professionals pr on pr.id=a.professional_id
+             join public.profiles pp on pp.id=pr.profile_id
+             left join auth.users pu on pu.id=pp.id
+            where a.id=$1`,
           [payment.appointment_id],
         );
+        const app = appointmentResult.rows[0];
+        const updatedApp = await client.query(
+          `update public.appointments set status='confirmed',updated_at=now()
+             where id=$1 and status in ('requested','awaiting_payment','pending_deposit') returning id`,
+          [payment.appointment_id],
+        );
+        if (updatedApp.rowCount > 0 && app?.client_profile_id) {
+          await client.query(
+            `insert into public.appointment_status_history(appointment_id,from_status,to_status,changed_by,note)
+             values($1,$2,'confirmed',$3,'Pagamento confirmado automaticamente pela SumUp')`,
+            [payment.appointment_id, app.status || null, actorId],
+          ).catch((error) =>
+            console.error("Failed to write appointment confirmation history:", error.message),
+          );
+          const prettyDate = new Date(app.starts_at).toLocaleString("pt-BR", {
+            timeZone: "America/Sao_Paulo",
+            dateStyle: "short",
+            timeStyle: "short",
+          });
+          const text = `Seu sinal foi recebido! Seu agendamento de ${app.service_name} com ${app.professional_name} para ${prettyDate} esta confirmado!`;
+          const notificationData = JSON.stringify({
+            appointment_id: payment.appointment_id,
+            payment_id: payment.id,
+          });
+          const clientNotif = await client.query(
+            `insert into public.notifications(profile_id,kind,title,body,data,action_url,metadata)
+             values($1,'appointment_confirmed','Agendamento confirmado',$2,$3,$4,$3) returning id`,
+            [
+              app.client_profile_id,
+              text,
+              notificationData,
+              `/cliente/agendamentos/${payment.appointment_id}`,
+            ],
+          );
+          const professionalNotif = app.professional_profile_id ? await client.query(
+            `insert into public.notifications(profile_id,kind,title,body,data,action_url,metadata)
+             values($1,'appointment_confirmed','Agendamento confirmado por pagamento',$2,$3,'/profissional/agenda',$3) returning id`,
+            [
+              app.professional_profile_id,
+              `Pagamento confirmado: ${app.client_name || "Cliente"} em ${prettyDate}.`,
+              notificationData,
+            ],
+          ) : { rows: [] };
+          await notifyAppointment({
+            email: app.client_email,
+            phone: app.client_phone,
+            clientName: app.client_name,
+            service: app.service_name,
+            date: app.starts_at,
+            professional: app.professional_name,
+            professionalEmail: app.professional_email,
+            professionalPhone: app.professional_phone,
+            clientNotificationId: clientNotif.rows[0]?.id,
+            professionalNotificationId: professionalNotif.rows[0]?.id,
+            value: payment.amount || app.estimated_value || 0,
+            notes: "Pagamento confirmado automaticamente pela SumUp.",
+          }).catch(err =>
+            console.error("Immediate confirm notification failed:", err.message),
+          );
+        }
       }
+      /* Legacy appointment-confirmation notifier disabled after the provider-sync rewrite.
+        const clientProfile = await client.query(
+          "select profile_id from public.clients where id=$1",
+          [payment.client_id],
+        );
+        const profileId = clientProfile.rows[0]?.profile_id;
+
+        const appointmentResult = await client.query(
+          `select a.starts_at, s.name as service_name, p.full_name as professional_name
+           from public.appointments a
+           join public.services s on s.id=a.service_id
+           join public.professionals pr on pr.id=a.professional_id
+           join public.profiles p on p.id=pr.profile_id
+           where a.id=$1`,
+          [payment.appointment_id]
+        );
+        const app = appointmentResult.rows[0];
+
+        const updatedApp = await client.query(
+          `update public.appointments set status='confirmed',updated_at=now() where id=$1 and status in ('awaiting_payment','pending_deposit') returning id`,
+          [payment.appointment_id],
+        );
+
+        if (updatedApp.rowCount > 0 && app && profileId) {
+          const prettyDate = new Date(app.starts_at).toLocaleString("pt-BR", {
+            timeZone: "America/Sao_Paulo",
+            dateStyle: "short",
+            timeStyle: "short",
+          });
+          const text = `Seu sinal foi recebido! Seu agendamento de ${app.service_name} com ${app.professional_name} para ${prettyDate} está confirmado!`;
+
+          const notif = await client.query(
+            `insert into public.notifications(profile_id,kind,title,body,data,action_url,metadata)
+             values($1,'appointment_confirmed','Agendamento Confirmado',$2,$3,$4,$3) returning id`,
+            [
+              profileId,
+              text,
+              JSON.stringify({ appointment_id: payment.appointment_id, payment_id: payment.id }),
+              `/cliente/agendamentos/${payment.appointment_id}`
+            ]
+          );
+
+          const clientProfileInfo = await client.query(
+            `select u.email, p.phone, p.full_name from public.profiles p join auth.users u on u.id=p.id where p.id=$1`,
+            [profileId]
+          );
+          if (clientProfileInfo.rows[0]) {
+            await notifyAppointment({
+              email: clientProfileInfo.rows[0].email,
+              phone: clientProfileInfo.rows[0].phone,
+              clientName: clientProfileInfo.rows[0].full_name,
+              service: app.service_name,
+              date: app.starts_at,
+              professional: app.professional_name,
+              clientNotificationId: notif.rows[0]?.id
+            }).catch(err => console.error("Immediate confirm notification failed:", err.message));
+          }
+        }
+      }
+      */
       if (payment.coupon_id) {
         await client.query(
           `insert into public.coupon_usage(coupon_id,client_id,appointment_id,payment_id,quote_id,discount_amount,status) select $1,$2,$3,$4,$5,$6,'used' where not exists(select 1 from public.coupon_usage where coupon_id=$1 and payment_id=$4 and status='used')`,
@@ -487,6 +642,41 @@ async function webhook(req, res, body) {
   }
 }
 
+async function logSumupCheckoutAttempt({
+  paymentId,
+  eventType = "checkout.create",
+  checkout = null,
+  requestPayload = null,
+  responsePayload = null,
+  error = null,
+}) {
+  try {
+    await query(
+      `insert into public.payment_webhook_logs(provider,event_type,provider_checkout_id,payload,processing_error,processed,processed_at)
+       values('sumup',$1,$2,$3,$4,true,now())`,
+      [
+        eventType,
+        checkout?.id || responsePayload?.id || null,
+        JSON.stringify({
+          payment_id: paymentId || null,
+          request: requestPayload || checkout?.requestPayload || error?.requestPayload || null,
+          response: responsePayload || checkout?.rawResponse || checkout || error?.providerResponse || null,
+          hosted_checkout_url: checkout?.hostedUrl || checkout?.hosted_checkout_url || null,
+          transaction_id:
+            checkout?.transaction_id ||
+            checkout?.transaction_code ||
+            responsePayload?.transaction_id ||
+            responsePayload?.transaction_code ||
+            null,
+        }),
+        error ? error.message : null,
+      ],
+    );
+  } catch (logError) {
+    console.error("Failed to log SumUp checkout attempt:", logError.message);
+  }
+}
+
 export default async function handler(req, res) {
   try {
     const resource = req.query?.resource || "status";
@@ -498,8 +688,12 @@ export default async function handler(req, res) {
       return send(res, 201, await startCardSetup(user));
     if (req.method === "POST" && resource === "card-setup-complete")
       return send(res, 200, { card: await completeCardSetup(user, body) });
-    if (req.method === "GET" && resource === "status")
-      return send(res, 200, { payment: await paymentFor(user, req.query?.id) });
+    if (req.method === "GET" && resource === "status") {
+      const payment = await paymentFor(user, req.query?.id);
+      return send(res, 200, {
+        payment: await syncPaymentFromProviderIfPending(user, payment),
+      });
+    }
     if (req.method === "GET" && resource === "sumup-integration") {
       if (user.role !== "admin") throw appError("Acesso negado.", 403);
       const config = sumupConfig();
@@ -550,25 +744,50 @@ export default async function handler(req, res) {
         });
       const reference = `CAROLSOL-${String(payment.id).slice(0, 8).toUpperCase()}-${Date.now()}`;
       const returnUrl = `${sumupConfig().returnUrl}${sumupConfig().returnUrl.includes("?") ? "&" : "?"}payment_id=${encodeURIComponent(payment.id)}`;
-      const checkout = await createSumupCheckout({
-        reference,
-        amount: payment.amount,
-        description: payment.service || payment.plan || "Pagamento Carol Sol",
-        returnUrl,
-      });
-      if (!checkout.hostedUrl)
+      let checkout;
+      try {
+        checkout = await createSumupCheckout({
+          reference,
+          amount: payment.amount,
+          description: payment.service || payment.plan || "Pagamento Carol Sol",
+          returnUrl,
+          hostedCheckout: true,
+        });
+        await logSumupCheckoutAttempt({ paymentId: payment.id, checkout });
+      } catch (error) {
+        await logSumupCheckoutAttempt({ paymentId: payment.id, error });
+        console.error("SumUp checkout creation failed", {
+          paymentId: payment.id,
+          message: error.message,
+          providerStatus: error.providerStatus,
+          providerCode: error.providerCode,
+        });
         throw appError(
-          "A SumUp criou o checkout, mas não retornou uma URL de pagamento. Verifique a modalidade Hosted Checkout.",
+          "Não foi possível gerar o link de pagamento neste momento. A equipe foi notificada automaticamente. Tente novamente em alguns minutos.",
           502,
         );
+      }
+      if (!checkout.hostedUrl) {
+        await logSumupCheckoutAttempt({
+          paymentId: payment.id,
+          eventType: "checkout.create.missing_url",
+          checkout,
+          error: new Error("SumUp response missing hosted checkout URL"),
+        });
+        throw appError(
+          "Não foi possível gerar o link de pagamento neste momento. A equipe foi notificada automaticamente. Tente novamente em alguns minutos.",
+          502,
+        );
+      }
       const persisted = await query(
-        `update public.payments set provider='sumup',method='card',payment_method='card',provider_checkout_id=$2,checkout_reference=$3,hosted_checkout_url=$4,provider_status=$5,status='awaiting_confirmation',updated_at=now() where id=$1 and status in ('pending','failed','expired','awaiting_confirmation') returning id`,
+        `update public.payments set provider='sumup',method='card',payment_method='card',provider_checkout_id=$2,checkout_reference=$3,hosted_checkout_url=$4,provider_status=$5,provider_transaction_id=coalesce($6,provider_transaction_id),failure_reason=null,status='awaiting_confirmation',updated_at=now() where id=$1 and status in ('pending','failed','expired','awaiting_confirmation') returning id`,
         [
           payment.id,
           checkout.id,
           reference,
           checkout.hostedUrl,
           checkout.status || "PENDING",
+          checkout.transaction_id || checkout.transaction_code || null,
         ],
       );
       if (!persisted.rows[0])

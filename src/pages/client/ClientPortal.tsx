@@ -91,6 +91,8 @@ const brl = (value: unknown) =>
     style: "currency",
     currency: "BRL",
   });
+const servicePriceLabel = (service: Record<string, any>) =>
+  service?.is_free ? "Sem custo" : brl(service?.base_price);
 const date = (value: unknown) =>
   value ? new Date(String(value)).toLocaleDateString("pt-BR") : "—";
 const dateTime = (value: unknown) =>
@@ -190,6 +192,24 @@ export function ClientHomePage() {
   const nav = useNavigate();
   const overview = usePortal<any>("/api/portal?resource=client-overview");
   const bootstrap = usePortal<any>("/api/data?resource=bootstrap");
+  const prompt = overview.data?.firstAccessPrompt;
+  const promptKey = prompt
+    ? `carolsol:first-access:${prompt.id}:${prompt.payment_id || "no-payment"}`
+    : "";
+  const [firstAccessOpen, setFirstAccessOpen] = useState(false);
+
+  useEffect(() => {
+    if (!promptKey) return;
+    if (window.localStorage.getItem(promptKey) !== "dismissed") {
+      setFirstAccessOpen(true);
+    }
+  }, [promptKey]);
+
+  const closeFirstAccess = () => {
+    if (promptKey) window.localStorage.setItem(promptKey, "dismissed");
+    setFirstAccessOpen(false);
+  };
+
   if (overview.loading || bootstrap.loading) return <LoadingState />;
   if (!overview.data) return <Notice message={overview.error} />;
   const d = overview.data;
@@ -201,6 +221,72 @@ export function ClientHomePage() {
         title={`Olá, ${firstName}.`}
         subtitle="Seus próximos cuidados e benefícios atualizados em tempo real."
       />
+      <Modal
+        open={firstAccessOpen && Boolean(prompt)}
+        onClose={closeFirstAccess}
+        title="Seu agendamento"
+      >
+        {prompt && (
+          <div className="space-y-5">
+            <div className="rounded-2xl bg-warm p-4">
+              <Badge tone={statusTone(prompt.status)}>
+                {statusLabel[prompt.status] || prompt.status}
+              </Badge>
+              <h3 className="mt-3 font-display text-3xl font-semibold">
+                {prompt.service}
+              </h3>
+              <p className="mt-2 text-sm text-stone-500">
+                {dateTime(prompt.starts_at)} • {prompt.professional} •{" "}
+                {prompt.location || "Carol Sol"}
+              </p>
+              {prompt.booking_code && (
+                <p className="mt-3 text-xs font-bold text-stone-500">
+                  Codigo {prompt.booking_code}
+                </p>
+              )}
+            </div>
+            {prompt.payment_id && (
+              <div className="rounded-2xl border border-champagne/30 bg-champagne/10 p-4">
+                <b className="block text-xs">Fatura disponivel</b>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <span className="text-sm text-stone-600">
+                    {prompt.billing_reason || "Pagamento do agendamento"}
+                  </span>
+                  <b className="font-display text-2xl">
+                    {brl(prompt.payment_amount)}
+                  </b>
+                </div>
+              </div>
+            )}
+            <div className="grid gap-3 sm:grid-cols-2">
+              {prompt.payment_id && (
+                <button
+                  type="button"
+                  className="btn-primary justify-center"
+                  onClick={() => {
+                    closeFirstAccess();
+                    nav(`/cliente/pagamentos/${prompt.payment_id}`);
+                  }}
+                >
+                  <WalletCards size={16} />
+                  Ir para pagamento
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn-secondary justify-center"
+                onClick={() => {
+                  closeFirstAccess();
+                  nav(`/cliente/agendamentos/${prompt.id}`);
+                }}
+              >
+                <CalendarDays size={16} />
+                Ver detalhes
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
       <section className="hair-gradient rounded-[30px] p-7 text-white sm:p-10">
         <div className="eyebrow">PRÓXIMO CUIDADO</div>
         {d.nextAppointment ? (
@@ -299,7 +385,7 @@ export function ClientHomePage() {
                     <Clock3 className="mr-1 inline" size={13} />
                     {s.duration_minutes}min
                   </span>
-                  <b>{brl(s.base_price)}</b>
+                  <b>{servicePriceLabel(s)}</b>
                 </div>
                 <button
                   onClick={() => nav("/cliente/agendamentos")}
@@ -330,6 +416,7 @@ export function ClientProfilePage() {
     fullName: "",
     email: "",
     phone: "",
+    cpf: "",
     birthDate: "",
     instagram: "",
     address: {},
@@ -346,6 +433,7 @@ export function ClientProfilePage() {
         fullName: portal.data.full_name || "",
         email: portal.data.email || "",
         phone: portal.data.phone || "",
+        cpf: portal.data.cpf || "",
         birthDate: portal.data.birth_date?.slice(0, 10) || "",
         instagram: portal.data.instagram || "",
         address: portal.data.address || {},
@@ -395,6 +483,7 @@ export function ClientProfilePage() {
           fullName: portal.data.full_name || "",
           email: portal.data.email || "",
           phone: portal.data.phone || "",
+          cpf: portal.data.cpf || "",
           birthDate: portal.data.birth_date?.slice(0, 10) || "",
           instagram: portal.data.instagram || "",
           address: portal.data.address || {},
@@ -489,6 +578,11 @@ export function ClientProfilePage() {
               label="Telefone"
               value={form.phone}
               onChange={(v) => setForm({ ...form, phone: v })}
+            />
+            <Field
+              label="CPF"
+              value={form.cpf}
+              onChange={(v) => setForm({ ...form, cpf: v })}
             />
             <Field
               label="Nascimento"
@@ -603,7 +697,7 @@ export function ClientPaymentsPage() {
   const [busy, setBusy] = useState("");
   const [toast, setToast] = useState("");
   const portal = usePortal<any>(
-    `/api/portal?resource=payments${id ? `&id=${encodeURIComponent(id)}` : ""}`,
+    `/api/portal?resource=payments${id ? `&id=${encodeURIComponent(id)}` : "&id=structured"}`,
   );
   const chooseMethod = async (provider: "pix_manual" | "local") => {
     if (!id) return;
@@ -831,24 +925,73 @@ export function ClientPaymentsPage() {
       </div>
     );
   }
-  const list = portal.data as any[];
-  const pending = list.filter((p) =>
-    ["pending", "under_review", "partial"].includes(p.status),
+  const data = portal.data || { payments: [], appointments: [] };
+  const payments = data.payments || [];
+  const appointments = data.appointments || [];
+
+  // Filter payments list for statistics
+  const pendingPayments = payments.filter((p: any) =>
+    ["pending", "under_review", "partial", "awaiting_confirmation"].includes(p.status),
   );
+  const paidPayments = payments.filter((p: any) => p.status === "paid");
+
+  // Sinal do Serviço payments
+  const sinalList = payments.filter((p: any) =>
+    p.appointment_id &&
+    (p.billing_reason === "Sinal" || Number(p.amount) === Number(p.original_amount))
+  );
+
+  // Restante do Serviço rows (computed dynamically)
+  const restanteList = appointments.map((a: any) => {
+    const basePrice = Number(a.base_price || 0);
+    const discount = Number(a.discount_amount || 0);
+    const total = Number(a.estimated_value || 0);
+    const deposit = Math.min(Number(a.deposit_amount || 0), total);
+    const remainingAmount = total - deposit;
+
+    if (remainingAmount <= 0) return null; // No remaining to pay
+
+    // Find if there is an existing payment record for this remainder
+    const remainingPayment = payments.find((p: any) =>
+      p.appointment_id === a.id && p.billing_reason === "Restante do pagamento"
+    );
+
+    let status = "pending";
+    let paymentId = remainingPayment?.id || null;
+
+    if (remainingPayment) {
+      status = remainingPayment.status;
+    } else {
+      if (a.status === "completed") status = "paid";
+      else if (["cancelled", "no_show"].includes(a.status)) status = "expired";
+      else status = "pending";
+    }
+
+    return {
+      id: `remaining-${a.id}`,
+      paymentId,
+      service: a.service,
+      starts_at: a.starts_at,
+      amount: remainingAmount,
+      status,
+    };
+  }).filter(Boolean);
+
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
         eyebrow="FINANCEIRO"
         title="Meus pagamentos"
         subtitle="Acompanhe sinais, planos e pagamentos realizados."
       />
+
       <div className="grid gap-4 sm:grid-cols-3">
-        <Info label="Pendentes" value={String(pending.length)} />
+        <Info label="Pendentes" value={String(pendingPayments.length)} />
         <Info
           label="Valor pendente"
           value={brl(
-            pending.reduce(
-              (sum, p) => sum + Number(p.amount) - Number(p.paid_amount || 0),
+            pendingPayments.reduce(
+              (sum: number, p: any) => sum + Number(p.amount) - Number(p.paid_amount || 0),
               0,
             ),
           )}
@@ -856,41 +999,108 @@ export function ClientPaymentsPage() {
         <Info
           label="Total pago"
           value={brl(
-            list
-              .filter((p) => p.status === "paid")
-              .reduce((sum, p) => sum + Number(p.paid_amount || p.amount), 0),
+            paidPayments.reduce((sum: number, p: any) => sum + Number(p.paid_amount || p.amount), 0),
           )}
         />
       </div>
-      <section className="surface mt-5 overflow-hidden">
-        {list.length ? (
-          list.map((p) => (
+
+      {/* Sinal do Serviço Section */}
+      <section className="surface p-6">
+        <SectionHeading title="Sinal de Serviços" />
+        <p className="text-[11px] text-stone-400 mb-3">
+          Sinais de agendamento obrigatórios para confirmação da agenda.
+        </p>
+        <div className="overflow-hidden rounded-2xl bg-warm/5">
+          {sinalList.length ? sinalList.map((p: any) => (
             <a
               key={p.id}
               href={`/cliente/pagamentos/${p.id}`}
-              className="grid grid-cols-[1fr_auto] gap-3 border-b border-black/[.05] p-5 last:border-0 sm:grid-cols-[1.5fr_.8fr_.8fr_auto]"
+              className="grid grid-cols-[1fr_auto] gap-3 border-b border-black/[.05] p-4 last:border-0 sm:grid-cols-[1.5fr_.8fr_.8fr_auto] hover:bg-black/[.02] transition"
             >
               <span>
-                <b className="block text-xs">
-                  {p.service || p.plan || "Pagamento"}
-                </b>
-                <span className="text-[10px] text-stone-400">
-                  {dateTime(p.created_at)}
-                </span>
+                <b className="block text-xs">Sinal - {p.service}</b>
+                <span className="text-[10px] text-stone-400">{dateTime(p.created_at)}</span>
               </span>
-              <span className="hidden text-xs sm:block">{p.method}</span>
+              <span className="hidden text-xs sm:block">{p.method === "card" ? "Cartão (SumUp)" : p.method === "pix" ? "PIX" : "Manual"}</span>
               <b className="text-xs">{brl(p.amount)}</b>
               <Badge tone={statusTone(p.status)}>
                 {statusLabel[p.status] || p.status}
               </Badge>
             </a>
-          ))
-        ) : (
-          <EmptyState
-            title="Você ainda não possui pagamentos"
-            text="Seus pagamentos de serviços e planos aparecerão aqui."
-          />
-        )}
+          )) : <p className="text-xs text-stone-400">Nenhum sinal de serviço registrado.</p>}
+        </div>
+      </section>
+
+      {/* Restante do Serviço Section */}
+      <section className="surface p-6">
+        <SectionHeading title="Restante de Serviços" />
+        <p className="text-[11px] text-stone-400 mb-3">
+          Saldos restantes dos serviços para pagamento no local ou SumUp.
+        </p>
+        <div className="overflow-hidden rounded-2xl bg-warm/5">
+          {restanteList.length ? restanteList.map((r: any) => {
+            const content = (
+              <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-black/[.05] p-4 last:border-0 sm:grid-cols-[1.5fr_.8fr_.8fr_auto] transition">
+                <span>
+                  <b className="block text-xs">Restante - {r.service}</b>
+                  <span className="text-[10px] text-stone-400">{dateTime(r.starts_at)}</span>
+                </span>
+                <span className="hidden text-xs sm:block">No Local / SumUp</span>
+                <b className="text-xs">{brl(r.amount)}</b>
+                <Badge tone={statusTone(r.status)}>
+                  {statusLabel[r.status] || r.status}
+                </Badge>
+              </div>
+            );
+            return r.paymentId ? (
+              <a key={r.id} href={`/cliente/pagamentos/${r.paymentId}`} className="block hover:bg-black/[.02]">
+                {content}
+              </a>
+            ) : (
+              <div key={r.id} className="block">
+                {content}
+              </div>
+            );
+          }) : <p className="text-xs text-stone-400">Nenhum saldo restante pendente ou realizado.</p>}
+        </div>
+      </section>
+
+      {/* Histórico Cronológico Section */}
+      <section className="surface p-6">
+        <SectionHeading title="Histórico de Cobranças e Pagamentos" />
+        <p className="text-[11px] text-stone-400 mb-3">
+          Histórico cronológico completo de cobranças, pagamentos e comprovantes.
+        </p>
+        <div className="overflow-hidden rounded-2xl bg-warm/5">
+          {payments.length ? payments.map((p: any) => (
+            <a
+              key={p.id}
+              href={`/cliente/pagamentos/${p.id}`}
+              className="grid grid-cols-[1fr_auto] gap-3 border-b border-black/[.05] p-4 last:border-0 sm:grid-cols-[1.5fr_.8fr_.8fr_auto] hover:bg-black/[.02] transition"
+            >
+              <span>
+                <b className="block text-xs">
+                  {p.billing_reason ? `${p.billing_reason} - ` : ""}
+                  {p.service || p.plan || p.notes || "Pagamento"}
+                </b>
+                <span className="text-[10px] text-stone-400">{dateTime(p.created_at)}</span>
+                {p.latest_receipt_url && (
+                  <span className="mt-1 block text-[9px] font-bold text-emerald-600">✓ Comprovante enviado</span>
+                )}
+              </span>
+              <span className="hidden text-xs sm:block">{p.provider || "local"}</span>
+              <b className="text-xs">{brl(p.amount)}</b>
+              <Badge tone={statusTone(p.status)}>
+                {statusLabel[p.status] || p.status}
+              </Badge>
+            </a>
+          )) : (
+            <EmptyState
+              title="Você ainda não possui pagamentos"
+              text="Seus pagamentos de serviços e planos aparecerão aqui."
+            />
+          )}
+        </div>
       </section>
     </div>
   );
@@ -928,7 +1138,7 @@ export function ClientPaymentReturnPage() {
             ? "Pagamento confirmado"
             : "Estamos confirmando seu pagamento"
         }
-        subtitle="O retorno da página não confirma o pagamento; o status abaixo vem do backend."
+        subtitle="O backend consulta a SumUp e atualiza esta tela automaticamente."
       />
       <section className="surface p-7 text-center">
         <Badge tone={statusTone(payment.status)}>
@@ -953,42 +1163,353 @@ export function ClientPaymentReturnPage() {
 
 export function ClientAppointmentDetailPage() {
   const id = useLocation().pathname.split("/agendamentos/")[1];
-  const portal = usePortal<{ appointments: any[] }>(
-    "/api/data?resource=appointments",
-  );
-  if (portal.loading) return <LoadingState />;
-  const a = portal.data?.appointments.find((item) => item.id === id);
-  if (!a)
+  const p = usePortal<any>(`/api/data?resource=appointment-detail&id=${encodeURIComponent(id || "")}`);
+  const navigate = useNavigate();
+
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [toast, setToast] = useState("");
+  const [updating, setUpdating] = useState(false);
+
+  if (p.loading) return <LoadingState />;
+  if (!p.data?.appointment) {
     return (
       <EmptyState
         title="Agendamento não encontrado"
-        text="Este registro não existe ou não pertence à sua conta."
+        text={p.error || "Este registro não existe ou não pertence à sua conta."}
       />
     );
+  }
+
+  const a = p.data.appointment;
+  const history = p.data.history || [];
+  const payments = p.data.payments || [];
+  const record = p.data.record;
+
+  const handleCancel = async (e: FormEvent) => {
+    e.preventDefault();
+    setUpdating(true);
+    try {
+      await apiFetch("/api/data?resource=appointments", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id,
+          status: "cancelled",
+          cancellationReason: cancelReason
+        })
+      });
+      setCancelModalOpen(false);
+      await p.reload();
+      setToast("Agendamento cancelado com sucesso.");
+    } catch (err) {
+      console.error("Cancel appointment error", err);
+      setToast(err instanceof Error ? err.message : "Erro ao cancelar agendamento.");
+    } finally {
+      setUpdating(false);
+      setTimeout(() => setToast(""), 2200);
+    }
+  };
+
+  const confirmPresence = async () => {
+    setUpdating(true);
+    try {
+      await apiFetch("/api/data?resource=appointments", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id,
+          status: "confirmed",
+          statusNote: "Presença confirmada pela cliente no app"
+        })
+      });
+      await p.reload();
+      setToast("Presença confirmada com sucesso. Obrigado!");
+    } catch (err) {
+      console.error("Confirm presence error", err);
+      setToast(err instanceof Error ? err.message : "Erro ao confirmar presença.");
+    } finally {
+      setUpdating(false);
+      setTimeout(() => setToast(""), 2200);
+    }
+  };
+
+  const steps = [
+    { key: "requested", label: "Solicitado" },
+    { key: "pending_deposit", label: "Sinal" },
+    { key: "confirmed", label: "Confirmado" },
+    { key: "in_service", label: "Atendimento" },
+    { key: "completed", label: "Concluído" }
+  ];
+
+  let activeIndex = -1;
+  if (a.status === "requested") activeIndex = 0;
+  else if (["pending_deposit", "awaiting_payment"].includes(a.status)) activeIndex = 1;
+  else if (["confirmed", "rescheduled", "reschedule_requested"].includes(a.status)) activeIndex = 2;
+  else if (a.status === "in_service") activeIndex = 3;
+  else if (a.status === "completed") activeIndex = 4;
+
+  const isTerminated = ["cancelled", "no_show"].includes(a.status);
+
   return (
     <div>
+      <Toast show={!!toast} message={toast} />
+
+      <div className="mb-4">
+        <a href="/cliente/agenda" className="text-xs font-bold text-champagne flex items-center gap-1">
+          ← Meus Agendamentos
+        </a>
+      </div>
+
       <PageHeader
         eyebrow="MEU AGENDAMENTO"
-        title={a.service}
+        title={a.service_name || a.service}
         subtitle={`Código CS${String(a.id).slice(0, 8).toUpperCase()}`}
+        action={
+          <div className="flex gap-2">
+            {!isTerminated && a.status !== "completed" && (
+              <button
+                onClick={() => setCancelModalOpen(true)}
+                className="btn-secondary text-rose-500 border-rose-500/20"
+              >
+                Cancelar
+              </button>
+            )}
+
+            {["pending_deposit", "confirmed", "awaiting_payment"].includes(a.status) && (
+              <button
+                disabled={updating}
+                onClick={confirmPresence}
+                className="btn-primary"
+              >
+                Confirmar Presença
+              </button>
+            )}
+          </div>
+        }
       />
-      <section className="surface p-7">
-        <div className="flex justify-between">
-          <Badge tone={statusTone(a.status)}>
-            {statusLabel[a.status] || a.status}
-          </Badge>
-          <b className="font-display text-3xl">{a.value}</b>
+
+      {!isTerminated ? (
+        <section className="surface p-6 mb-5">
+          <SectionHeading title="Progresso do Atendimento" />
+          <div className="relative mt-6 flex justify-between items-center w-full">
+            <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1 bg-stone-100 -z-10" />
+            {activeIndex >= 0 && (
+              <div
+                className="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-champagne transition-all -z-10"
+                style={{ width: `${(activeIndex / (steps.length - 1)) * 100}%` }}
+              />
+            )}
+
+            {steps.map((step, idx) => {
+              const isActive = idx <= activeIndex;
+              const isCurrent = idx === activeIndex;
+              return (
+                <div key={step.key} className="flex flex-col items-center">
+                  <div
+                    className={`h-7 w-7 rounded-full flex items-center justify-center text-[10px] font-bold transition-all border-4 ${
+                      isCurrent
+                        ? "bg-white border-champagne text-champagne scale-110 shadow-md"
+                        : isActive
+                          ? "bg-champagne border-champagne text-white"
+                          : "bg-white border-stone-200 text-stone-300"
+                    }`}
+                  >
+                    {isActive ? "✓" : idx + 1}
+                  </div>
+                  <span
+                    className={`mt-2 text-[9px] font-bold ${
+                      isCurrent
+                        ? "text-champagne font-extrabold"
+                        : isActive
+                          ? "text-stone-700"
+                          : "text-stone-400"
+                    }`}
+                  >
+                    {step.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : (
+        <div className="rounded-2xl bg-rose-50 p-5 mb-5 text-rose-800 text-xs font-semibold">
+          Este agendamento foi finalizado com o status: <b>{statusLabel[a.status] || a.status}</b>.
+          {a.cancellation_reason && (
+            <p className="mt-2 text-stone-500 italic font-normal">
+              Motivo do cancelamento: "{a.cancellation_reason}"
+            </p>
+          )}
         </div>
-        <div className="mt-6 grid gap-4 sm:grid-cols-2">
-          <Info label="Data" value={`${a.date} às ${a.time}`} />
-          <Info label="Duração" value={a.duration} />
-          <Info label="Profissional" value={a.professional} />
-          <Info label="Local" value={a.location || "Carol Sol"} />
+      )}
+
+      <div className="grid gap-5 lg:grid-cols-[1fr_350px]">
+        <div className="space-y-5">
+          <section className="surface p-6">
+            <SectionHeading title="Detalhes do Horário" />
+            <div className="grid gap-4 sm:grid-cols-2 text-xs">
+              <div>
+                <span className="text-stone-400 block">Status</span>
+                <span className="font-bold">
+                  <Badge tone={statusTone(a.status)}>{statusLabel[a.status] || a.status}</Badge>
+                </span>
+              </div>
+              <div>
+                <span className="text-stone-400 block">Data e Hora</span>
+                <span className="font-bold">{dateTime(a.starts_at)}</span>
+              </div>
+              <div>
+                <span className="text-stone-400 block">Duração Estimada</span>
+                <span className="font-bold">{a.duration_minutes || 60} minutos</span>
+              </div>
+              <div>
+                <span className="text-stone-400 block">Localização</span>
+                <span className="font-bold">{a.location || "Carol Sol Mega Hair - Premium"}</span>
+              </div>
+            </div>
+            {a.notes && (
+              <div className="mt-5 rounded-2xl bg-warm p-4 text-xs">
+                <span className="font-bold block mb-1 text-stone-500">Observações:</span>
+                {a.notes}
+              </div>
+            )}
+          </section>
+
+          <section className="surface p-6">
+            <SectionHeading title="Pagamentos & Cobranças" />
+            {payments.length ? (
+              <div className="space-y-4">
+                {payments.map((py: any) => (
+                  <div key={py.id} className="border border-black/5 rounded-2xl p-4 text-xs bg-warm/20">
+                    <div className="flex justify-between items-center mb-3">
+                      <span className="font-bold">
+                        Cobrança #{String(py.id).slice(0, 8).toUpperCase()}
+                      </span>
+                      <Badge tone={statusTone(py.status)}>
+                        {statusLabel[py.status] || py.status}
+                      </Badge>
+                    </div>
+
+                    <div className="grid gap-2 sm:grid-cols-3 mb-4">
+                      <div>
+                        <span className="text-stone-400 block">Valor Total</span>
+                        <b className="text-sm">{brl(py.amount)}</b>
+                      </div>
+                      <div>
+                        <span className="text-stone-400 block">Valor Pago</span>
+                        <b className="text-sm text-green-600">{brl(py.paid_amount)}</b>
+                      </div>
+                      <div>
+                        <span className="text-stone-400 block">Pendente</span>
+                        <b className="text-sm text-amber-600">
+                          {brl(Number(py.amount) - Number(py.paid_amount || 0) - Number(py.discount_amount || 0))}
+                        </b>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2 border-t border-black/5 pt-3">
+                      {["pending", "failed", "expired", "awaiting_confirmation", "partial", "pending_deposit"].includes(py.status) && (
+                        <a
+                          href={`/cliente/pagamentos/${py.id}`}
+                          className="btn-primary !min-h-8 !px-3 text-[11px]"
+                        >
+                          Ir para Pagamento / Comprovante
+                        </a>
+                      )}
+                      {py.receipt_url && (
+                        <a
+                          href={py.receipt_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="btn-secondary !min-h-8 !px-3 text-[11px] flex items-center gap-1"
+                        >
+                          Ver Comprovante <ExternalLink size={13} />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-stone-400">Nenhum pagamento registrado para este atendimento.</p>
+            )}
+          </section>
         </div>
-        {a.notes && (
-          <div className="mt-5 rounded-2xl bg-warm p-4 text-xs">{a.notes}</div>
-        )}
-      </section>
+
+        <div className="space-y-5">
+          <section className="surface p-6 text-center">
+            <h4 className="font-bold text-[10px] uppercase tracking-wider text-stone-400 mb-3">Sua Profissional</h4>
+            <div className="flex justify-center">
+              <Avatar src={a.professional_photo || ""} name={a.professional_name || a.professional} size="lg" />
+            </div>
+            <h3 className="mt-3 font-display text-xl font-bold">{a.professional_name || a.professional}</h3>
+            <p className="text-xs text-stone-400 mt-1">Carol Sol Especialista</p>
+          </section>
+
+          {record && (
+            <section className="surface p-6">
+              <h4 className="font-bold text-[10px] uppercase tracking-wider text-stone-400 mb-3">Ficha Técnica</h4>
+              <div className="text-xs space-y-2">
+                <p className="text-stone-500">A profissional registrou detalhes técnicos sobre a aplicação.</p>
+                <div>
+                  <span className="text-stone-400 block">Método</span>
+                  <span className="font-bold">{record.method || "Fita Adesiva"}</span>
+                </div>
+                {record.strands_count && (
+                  <div>
+                    <span className="text-stone-400 block">Quantidade</span>
+                    <span className="font-bold">{record.strands_count} mechas</span>
+                  </div>
+                )}
+                {record.weight_grams && (
+                  <div>
+                    <span className="text-stone-400 block">Peso Utilizado</span>
+                    <span className="font-bold">{record.weight_grams}g</span>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+        </div>
+      </div>
+
+      <Modal open={cancelModalOpen} onClose={() => { if (!updating) setCancelModalOpen(false); }} title="Cancelar Agendamento">
+        <form onSubmit={handleCancel} className="space-y-4">
+          <div className="rounded-2xl bg-amber-50 p-4 text-[11px] leading-relaxed text-amber-800 border border-amber-200">
+            <b>Atenção à Política de Cancelamento:</b>
+            <p className="mt-1">
+              Cancelamentos realizados com menos de 24h de antecedência do horário agendado estão sujeitos a perda do valor pago como sinal ou cobrança de taxa de retenção capilar, conforme nossos Termos de Uso.
+            </p>
+          </div>
+
+          <label className="block">
+            <span className="mb-2 block text-xs font-bold">Descreva brevemente o motivo do cancelamento</span>
+            <textarea
+              required
+              className="field min-h-24 py-3"
+              placeholder="Ex: Imprevisto de trabalho, reagendando para outra data..."
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+            />
+          </label>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={updating}
+              onClick={() => setCancelModalOpen(false)}
+              className="btn-secondary flex-1"
+            >
+              Voltar
+            </button>
+            <button
+              disabled={updating || !cancelReason.trim()}
+              className="btn-primary flex-1 bg-rose-600 hover:bg-rose-700 border-transparent text-white"
+            >
+              {updating ? "Processando..." : "Confirmar Cancelamento"}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
@@ -1895,12 +2416,45 @@ export function ClientNotificationsPage() {
                   className={`mt-1 h-2 w-2 rounded-full ${n.read_at ? "bg-stone-200" : "bg-champagne"}`}
                 />
                 <span className="flex-1">
-                  <b className="text-xs">{n.title}</b>
+                  <div className="flex justify-between items-start gap-2 flex-wrap">
+                    <b className="text-xs">{n.title}</b>
+                    <div className="flex gap-1">
+                      {((kind: string) => {
+                        if (kind === "appointment_reminder") return ["📱 App", "💬 WhatsApp", "✉️ E-mail"];
+                        if (kind === "appointment_status") return ["📱 App", "💬 WhatsApp"];
+                        if (kind === "payment_status") return ["📱 App", "💬 WhatsApp", "✉️ E-mail"];
+                        if (kind === "referral_status") return ["📱 App", "💬 WhatsApp"];
+                        return ["📱 App"];
+                      })(n.kind).map(ch => (
+                        <span key={ch} className="rounded bg-warm px-1 py-0.5 text-[8px] font-bold text-stone-500 uppercase">
+                          {ch}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                   <span className="mt-1 block text-[11px] text-stone-500">
                     {n.body}
                   </span>
-                  <span className="mt-2 block text-[9px] text-stone-400">
-                    {dateTime(n.created_at)}
+                  <span className="mt-2 flex justify-between items-center text-[9px] text-stone-400">
+                    <span>{dateTime(n.created_at)}</span>
+                    {n.delivery_logs && n.delivery_logs.length > 0 && (
+                      <div className="flex gap-2">
+                        {n.delivery_logs.map((log: any, idx: number) => (
+                          <span
+                            key={idx}
+                            className={`rounded px-1.5 py-0.5 text-[7px] font-extrabold uppercase ${
+                              log.status === "failed"
+                                ? "bg-rose-100 text-rose-700"
+                                : "bg-emerald-100 text-emerald-800"
+                            }`}
+                            title={log.error_message || ""}
+                          >
+                            {log.channel === "email" ? "✉️ E-mail" : "💬 WhatsApp"}:{" "}
+                            {log.status === "failed" ? "Falhou" : "Enviado"}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </span>
                 </span>
               </button>

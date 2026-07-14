@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   BadgeDollarSign,
@@ -6,6 +6,8 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ClipboardCheck,
   Clock3,
   Download,
@@ -13,6 +15,7 @@ import {
   MessageCircle,
   Package,
   Pencil,
+  Plus,
   Search,
   Sparkles,
   Star,
@@ -30,7 +33,9 @@ import {
   SectionHeading,
   StatCard,
   Toast,
+  Modal,
 } from "../../components/ui";
+import { AppointmentCalendar } from "../../components/AppointmentCalendar";
 import { clients, images } from "../../data/mock";
 import { apiFetch } from "../../lib/api";
 import { WhatsAppIntegrationPage } from "../WhatsAppIntegration";
@@ -43,6 +48,7 @@ import {
   ProfessionalRecordsPage,
   ProfessionalServicesPage,
   IntakeDetailsModal,
+  ProfessionalAppointmentDetailPage,
 } from "./ProfessionalPortal";
 
 export function ProfessionalArea() {
@@ -51,6 +57,8 @@ export function ProfessionalArea() {
   let page;
   if (["/profissional", "/profissional/", "/profissional/dashboard", "/profissional/hoje"].includes(path))
     page = <ProfessionalDashboardPage />;
+  else if (path.match(/\/agenda\/[^/]+$/))
+    page = <ProfessionalAppointmentDetailPage />;
   else if (path.includes("/agenda")) page = <ProfessionalAgenda />;
   else if (path.match(/\/clientes\/[^/]+$/))
     page = <ProfessionalClientDetailPage />;
@@ -65,7 +73,6 @@ export function ProfessionalArea() {
   else if (path.includes("/servicos")) page = <ProfessionalServicesPage />;
   else if (path.includes("/disponibilidade"))
     page = <ProfessionalAvailabilityPage />;
-  else if (path.includes("/whatsapp")) page = <WhatsAppIntegrationPage />;
   else if (path.includes("/perfil")) page = <ProfessionalProfilePage />;
   else
     page = (
@@ -330,7 +337,7 @@ function ProfessionalRescheduleRequests() {
 }
 
 function ProfessionalAgenda() {
-  const [view, setView] = useState("Dia");
+  const [view, setView] = useState("Mês");
   const [anchorDate, setAnchorDate] = useState(() => new Date());
   const [updating, setUpdating] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState(false);
@@ -340,6 +347,84 @@ function ProfessionalAgenda() {
   const [loadError, setLoadError] = useState("");
   const [selectedIntake, setSelectedIntake] = useState<any>(null);
   const [selectedIntakeClient, setSelectedIntakeClient] = useState("");
+  const [appointmentOpen, setAppointmentOpen] = useState(false);
+  const [appointmentSaving, setAppointmentSaving] = useState(false);
+  const [appointmentForm, setAppointmentForm] = useState({
+    clientId: "",
+    serviceId: "",
+    professionalId: "",
+    date: new Date(Date.now() + 86400000).toISOString().slice(0, 10),
+    time: "09:00",
+    status: "confirmed",
+    notes: "",
+    paymentMethod: "pix",
+  });
+  const [clientsList, setClientsList] = useState<any[]>([]);
+  const [servicesList, setServicesList] = useState<any[]>([]);
+  const [professionalsList, setProfessionalsList] = useState<any[]>([]);
+  const [locationsList, setLocationsList] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!appointmentOpen) return;
+    apiFetch<{ clients: any[] }>("/api/data?resource=clients")
+      .then((data) => setClientsList(data.clients || []))
+      .catch((err) => console.error("Error loading clients", err));
+
+    apiFetch<any>("/api/data?resource=bootstrap")
+      .then((data) => {
+        setServicesList(data.services || []);
+        setProfessionalsList(data.professionals || []);
+        setLocationsList(data.locations || []);
+        if (data.professionals && data.professionals.length > 0) {
+          setAppointmentForm(prev => ({ ...prev, professionalId: prev.professionalId || data.professionals[0].id }));
+        }
+      })
+      .catch((err) => console.error("Error loading bootstrap data", err));
+  }, [appointmentOpen]);
+
+  const saveAppointment = async (event: FormEvent) => {
+    event.preventDefault();
+    setAppointmentSaving(true);
+    const payload = {
+      clientId: appointmentForm.clientId,
+      serviceId: appointmentForm.serviceId,
+      professionalId: appointmentForm.professionalId,
+      startsAt: `${appointmentForm.date}T${appointmentForm.time}:00-03:00`,
+      status: appointmentForm.status,
+      notes: appointmentForm.notes,
+      paymentMethod: appointmentForm.paymentMethod,
+    };
+    try {
+      await apiFetch("/api/data?resource=appointments", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      const data = await apiFetch<{ appointments: Array<Record<string, any>> }>(periodUrl);
+      setRemote(data.appointments || []);
+      setAppointmentOpen(false);
+      setAppointmentForm({
+        clientId: "",
+        serviceId: "",
+        professionalId: professionalsList[0]?.id || "",
+        date: new Date(Date.now() + 86400000).toISOString().slice(0, 10),
+        time: "09:00",
+        status: "confirmed",
+        notes: "",
+        paymentMethod: "pix",
+      });
+      setToastMessage("Agendamento criado com sucesso.");
+      setToast(true);
+      setTimeout(() => setToast(false), 2400);
+    } catch (e) {
+      console.error("Save appointment error", e);
+      setToastMessage(e instanceof Error ? e.message : "Não foi possível criar o agendamento.");
+      setToast(true);
+      setTimeout(() => setToast(false), 2400);
+    } finally {
+      setAppointmentSaving(false);
+    }
+  };
+
   const labelMap: Record<string, string> = {
     requested: "Solicitado",
     awaiting_payment: "Aguardando pagamento",
@@ -355,6 +440,10 @@ function ProfessionalAgenda() {
   const apiMap: Record<string, string> = Object.fromEntries(
     Object.entries(labelMap).map(([key, value]) => [value, key]),
   );
+  const statusOptions = Object.entries(labelMap).map(([value, label]) => ({
+    value,
+    label,
+  }));
   const period = useMemo(() => {
     const start = new Date(anchorDate);
     start.setHours(0, 0, 0, 0);
@@ -443,6 +532,43 @@ function ProfessionalAgenda() {
       return next;
     });
   };
+  const updateAppointmentStatus = async (id: string, status: string) => {
+    if (!id) return;
+    setUpdating((current) => ({
+      ...current,
+      [id]: true,
+    }));
+    try {
+      const result = await apiFetch<{
+        appointment: { id: string; status: string };
+      }>("/api/data?resource=appointments", {
+        method: "PATCH",
+        body: JSON.stringify({ id, status }),
+      });
+      setRemote((current) =>
+        current.map((item) =>
+          item.id === result.appointment.id
+            ? { ...item, status: result.appointment.status }
+            : item,
+        ),
+      );
+      setToastMessage("Agendamento atualizado com sucesso.");
+    } catch (error) {
+      console.error("Appointment status error", error);
+      setToastMessage(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível atualizar o status.",
+      );
+    } finally {
+      setUpdating((current) => ({
+        ...current,
+        [id]: false,
+      }));
+      setToast(true);
+      setTimeout(() => setToast(false), 2400);
+    }
+  };
   return (
     <div className="animate-fade-up">
       <Toast show={toast} message={toastMessage} />
@@ -451,10 +577,16 @@ function ProfessionalAgenda() {
         title="Agenda profissional"
         subtitle="Organize atendimentos, bloqueios e encaixes sem perder o ritmo do salão."
         action={
-          <a href="/profissional/disponibilidade" className="btn-secondary">
-            <X size={16} />
-            Bloquear horário
-          </a>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => setAppointmentOpen(true)} className="btn-primary">
+              <Plus size={15} />
+              Novo Agendamento
+            </button>
+            <a href="/profissional/disponibilidade" className="btn-secondary">
+              <X size={16} />
+              Bloquear horário
+            </a>
+          </div>
         }
       />
       <ProfessionalRescheduleRequests />
@@ -490,6 +622,18 @@ function ProfessionalAgenda() {
           </button>
         </div>
       </div>
+      <div className="mb-5">
+        <AppointmentCalendar
+          month={anchorDate}
+          items={remote as any}
+          statusLabels={labelMap}
+          statusOptions={statusOptions}
+          updatingId={
+            Object.entries(updating).find(([, value]) => value)?.[0] || ""
+          }
+          onStatusChange={updateAppointmentStatus}
+        />
+      </div>
       <section className="surface overflow-hidden">
         <div className="grid grid-cols-[64px_1fr] border-b border-black/[.05] bg-warm/60 p-4 text-[10px] font-bold uppercase tracking-wider text-stone-400">
           <span>Hora</span>
@@ -518,7 +662,12 @@ function ProfessionalAgenda() {
                 <div className="m-2 flex flex-col gap-3 rounded-2xl bg-warm/60 p-4 sm:flex-row sm:items-center">
                   <Avatar src={a.photo} name={a.client} />
                   <div className="min-w-0 flex-1">
-                    <div className="text-xs font-bold">{a.client}</div>
+                    <a
+                      href={`/profissional/agenda/${a.id}`}
+                      className="text-xs font-bold text-champagne hover:underline block"
+                    >
+                      {a.client}
+                    </a>
                     <div className="mt-1 text-[10px] text-stone-400">
                       {a.service} • {a.duration} • {a.value}
                     </div>
@@ -604,6 +753,133 @@ function ProfessionalAgenda() {
           </div>
         )}
       </section>
+      <Modal
+        open={appointmentOpen}
+        onClose={() => {
+          if (!appointmentSaving) setAppointmentOpen(false);
+        }}
+        title="Novo Agendamento"
+      >
+        <form onSubmit={saveAppointment} className="space-y-4">
+          <label className="block text-stone-700">
+            <span className="mb-2 block text-xs font-bold font-sans">Cliente</span>
+            <select
+              value={appointmentForm.clientId}
+              onChange={(e) => setAppointmentForm({ ...appointmentForm, clientId: e.target.value })}
+              required
+              className="field bg-white"
+            >
+              <option value="">Selecione a cliente...</option>
+              {clientsList.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.phone || c.email})
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block text-stone-700">
+            <span className="mb-2 block text-xs font-bold font-sans">Serviço</span>
+            <select
+              value={appointmentForm.serviceId}
+              onChange={(e) => setAppointmentForm({ ...appointmentForm, serviceId: e.target.value })}
+              required
+              className="field bg-white"
+            >
+              <option value="">Selecione o serviço...</option>
+              {servicesList.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} - {Number(s.base_price || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} ({s.duration_minutes} min)
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block text-stone-700">
+            <span className="mb-2 block text-xs font-bold font-sans">Profissional</span>
+            <select
+              value={appointmentForm.professionalId}
+              onChange={(e) => setAppointmentForm({ ...appointmentForm, professionalId: e.target.value })}
+              required
+              className="field bg-white"
+            >
+              <option value="">Selecione a profissional...</option>
+              {professionalsList.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block text-stone-700">
+              <span className="mb-2 block text-xs font-bold font-sans">Data</span>
+              <input
+                type="date"
+                value={appointmentForm.date}
+                onChange={(e) => setAppointmentForm({ ...appointmentForm, date: e.target.value })}
+                required
+                className="field bg-white"
+              />
+            </label>
+            <label className="block text-stone-700">
+              <span className="mb-2 block text-xs font-bold font-sans">Horário</span>
+              <input
+                type="time"
+                value={appointmentForm.time}
+                onChange={(e) => setAppointmentForm({ ...appointmentForm, time: e.target.value })}
+                required
+                className="field bg-white"
+              />
+            </label>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block text-stone-700">
+              <span className="mb-2 block text-xs font-bold font-sans">Status Inicial</span>
+              <select
+                value={appointmentForm.status}
+                onChange={(e) => setAppointmentForm({ ...appointmentForm, status: e.target.value })}
+                className="field bg-white"
+              >
+                <option value="confirmed">Confirmado</option>
+                <option value="pending_deposit">Aguardando Sinal</option>
+                <option value="requested">Solicitado</option>
+              </select>
+            </label>
+            <label className="block text-stone-700">
+              <span className="mb-2 block text-xs font-bold font-sans">Forma de Pagamento (Sinal)</span>
+              <select
+                value={appointmentForm.paymentMethod}
+                onChange={(e) => setAppointmentForm({ ...appointmentForm, paymentMethod: e.target.value })}
+                className="field bg-white"
+              >
+                <option value="pix">Pix</option>
+                <option value="card">Cartão de Crédito (SumUp)</option>
+                <option value="local">Pagar no local</option>
+              </select>
+            </label>
+          </div>
+
+          <label className="block text-stone-700">
+            <span className="mb-2 block text-xs font-bold font-sans">Observações</span>
+            <textarea
+              value={appointmentForm.notes}
+              onChange={(e) => setAppointmentForm({ ...appointmentForm, notes: e.target.value })}
+              className="field min-h-20 py-2 bg-white"
+              placeholder="Anotações internas sobre o agendamento"
+            />
+          </label>
+
+          <button
+            disabled={appointmentSaving || !appointmentForm.clientId || !appointmentForm.serviceId || !appointmentForm.professionalId}
+            className="btn-primary w-full disabled:opacity-50"
+          >
+            {appointmentSaving ? "Salvando..." : "Salvar Agendamento"}
+          </button>
+        </form>
+      </Modal>
       <IntakeDetailsModal
         open={!!selectedIntake}
         onClose={() => {
@@ -622,6 +898,19 @@ function ProfessionalClients() {
   const [search, setSearch] = useState("");
   const [remote, setRemote] = useState<Array<Record<string, any>>>([]);
   const [loaded, setLoaded] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+  const [form, setForm] = useState({
+    fullName: "",
+    whatsapp: "",
+    email: "",
+    cpf: "",
+    birthDate: "",
+    notes: "",
+    password: "",
+  });
+
   useEffect(() => {
     apiFetch<{ clients: Array<Record<string, any>> }>(
       "/api/data?resource=clients",
@@ -630,27 +919,70 @@ function ProfessionalClients() {
       .catch((error) => console.error("Professional clients error", error))
       .finally(() => setLoaded(true));
   }, []);
+
+  const createClient = async (event: FormEvent) => {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      await apiFetch("/api/portal?resource=admin-client", {
+        method: "POST",
+        body: JSON.stringify(form),
+      });
+      const data = await apiFetch<{ clients: Array<Record<string, any>> }>(
+        "/api/data?resource=clients",
+      );
+      setRemote(data.clients || []);
+      setOpen(false);
+      setForm({
+        fullName: "",
+        whatsapp: "",
+        email: "",
+        cpf: "",
+        birthDate: "",
+        notes: "",
+        password: "",
+      });
+      setToast("Cliente cadastrada com sucesso.");
+    } catch (error) {
+      console.error("Create client error", error);
+      setToast(
+        error instanceof Error ? error.message : "Não foi possível cadastrar a cliente.",
+      );
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2600);
+    }
+  };
+
   const filtered = remote.filter((c) =>
     String(c.name).toLowerCase().includes(search.toLowerCase()),
   );
+
   return (
     <div className="animate-fade-up">
+      <Toast show={!!toast} message={toast} />
       <PageHeader
         eyebrow="RELACIONAMENTO"
         title="Suas clientes"
         subtitle="Informações importantes para um atendimento atento e consistente."
         action={
-          <div className="relative">
-            <Search
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-400"
-              size={16}
-            />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="field pl-11 sm:w-72"
-              placeholder="Buscar cliente"
-            />
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => setOpen(true)} className="btn-primary">
+              <Plus size={15} />
+              Novo Cliente
+            </button>
+            <div className="relative">
+              <Search
+                className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-400"
+                size={16}
+              />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="field pl-11 sm:w-72"
+                placeholder="Buscar cliente"
+              />
+            </div>
           </div>
         }
       />
@@ -731,6 +1063,68 @@ function ProfessionalClients() {
           </p>
         </div>
       )}
+
+      <Modal
+        open={open}
+        onClose={() => {
+          if (!saving) setOpen(false);
+        }}
+        title="Novo Cliente"
+      >
+        <form onSubmit={createClient} className="space-y-4">
+          <Input
+            label="Nome completo"
+            value={form.fullName}
+            set={(value) => setForm({ ...form, fullName: value })}
+          />
+          <Input
+            label="WhatsApp"
+            value={form.whatsapp}
+            set={(value) => setForm({ ...form, whatsapp: value })}
+          />
+          <Input
+            label="E-mail"
+            type="email"
+            value={form.email}
+            set={(value) => setForm({ ...form, email: value })}
+          />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <OptionalInput
+              label="CPF"
+              value={form.cpf}
+              set={(value) => setForm({ ...form, cpf: value })}
+            />
+            <OptionalInput
+              label="Data de nascimento"
+              type="date"
+              value={form.birthDate}
+              set={(value) => setForm({ ...form, birthDate: value })}
+            />
+          </div>
+          <Input
+            label="Senha de acesso"
+            type="password"
+            value={form.password}
+            set={(value) => setForm({ ...form, password: value })}
+          />
+          <label className="block text-stone-700">
+            <span className="mb-2 block text-xs font-bold font-sans">Observações</span>
+            <textarea
+              className="field min-h-24 py-3 bg-white"
+              value={form.notes}
+              onChange={(event) =>
+                setForm({ ...form, notes: event.target.value })
+              }
+            />
+          </label>
+          <button
+            disabled={saving || !form.fullName.trim() || !form.email.trim()}
+            className="btn-primary w-full disabled:opacity-50"
+          >
+            {saving ? "Salvando..." : "Salvar cliente"}
+          </button>
+        </form>
+      </Modal>
     </div>
   );
 }
@@ -921,5 +1315,59 @@ function Info({ label, value }: { label: string; value: string }) {
       </span>
       <b className="mt-2 block text-xs">{value}</b>
     </div>
+  );
+}
+
+function Input({
+  label,
+  value,
+  set,
+  type = "text",
+  required = true,
+}: {
+  label: string;
+  value: string;
+  set: (v: string) => void;
+  type?: string;
+  required?: boolean;
+}) {
+  return (
+    <label className="block text-stone-700">
+      <span className="mb-2 block text-xs font-bold">{label}</span>
+      <input
+        className="field bg-white"
+        required={required}
+        type={type}
+        value={value}
+        onChange={(e) => set(e.target.value)}
+      />
+    </label>
+  );
+}
+
+function OptionalInput({
+  label,
+  value,
+  set,
+  type = "text",
+  required = false,
+}: {
+  label: string;
+  value: string;
+  set: (v: string) => void;
+  type?: string;
+  required?: boolean;
+}) {
+  return (
+    <label className="block text-stone-700">
+      <span className="mb-2 block text-xs font-bold">{label}</span>
+      <input
+        className="field bg-white"
+        required={required}
+        type={type}
+        value={value}
+        onChange={(e) => set(e.target.value)}
+      />
+    </label>
   );
 }

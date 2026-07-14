@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { sendBaileysTextMessage } from "./baileys-client.js";
+import { query } from "./db.js";
 
 const truthy = (value) =>
   ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
@@ -98,13 +99,26 @@ export async function sendWhatsApp({ to, text }) {
     !to
   )
     return { skipped: true };
-  const result = await sendBaileysTextMessage({ number: to, text });
+  let number = String(to).replace(/\D/g, "");
+  if ((number.length === 10 || number.length === 11) && !number.startsWith("55")) {
+    number = "55" + number;
+  }
+  const result = await sendBaileysTextMessage({ number, text });
   return {
     sent: true,
     provider: "baileys",
     messageId: result.data?.messageId || null,
-    number: result.data?.number || String(to).replace(/\D/g, ""),
+    number: result.data?.number || number,
   };
+}
+
+export async function getMessageTemplate(name, defaults) {
+  try {
+    const { rows } = await query("select public_config from public.integration_settings where provider='message_templates'");
+    return rows[0]?.public_config?.[name] || defaults;
+  } catch {
+    return defaults;
+  }
 }
 
 export async function notifyAppointment({
@@ -116,35 +130,160 @@ export async function notifyAppointment({
   professional,
   professionalEmail,
   professionalPhone,
+  clientNotificationId,
+  professionalNotificationId,
+  notes = "",
+  value = 0,
 }) {
   const prettyDate = new Date(date).toLocaleString("pt-BR", {
     timeZone: "America/Sao_Paulo",
     dateStyle: "short",
     timeStyle: "short",
   });
-  const text = `Olá, ${clientName}! Seu agendamento de ${service} com ${professional} foi reservado para ${prettyDate}. — Carol Sol`;
-  const professionalText = `Novo pedido Carol Sol: ${clientName} solicitou ${service} para ${prettyDate}. Acesse sua agenda para confirmar.`;
-  return Promise.allSettled([
-    sendEmail({
-      to: email,
-      subject: "Agendamento Carol Sol confirmado",
-      html: `<div style="font-family:Arial,sans-serif;color:#181511"><h1>Seu horário está reservado ✨</h1><p>${text}</p><p>Em caso de dúvida, responda esta mensagem.</p></div>`,
-    }),
-    sendWhatsApp({ to: phone, text }),
-    sendEmail({
-      to: professionalEmail,
-      subject: "Novo agendamento recebido — Carol Sol",
-      html: `<div style="font-family:Arial,sans-serif;color:#181511"><h1>Novo pedido de atendimento</h1><p>${professionalText}</p></div>`,
-    }),
-    sendWhatsApp({ to: professionalPhone, text: professionalText }),
-    process.env.ADMIN_NOTIFICATION_EMAIL
-      ? sendEmail({
-          to: process.env.ADMIN_NOTIFICATION_EMAIL,
-          subject: "Novo agendamento — Carol Sol",
-          html: `<p>${clientName} reservou ${service} para ${prettyDate} com ${professional}.</p>`,
-        })
-      : Promise.resolve({ skipped: true }),
-  ]);
+  const formattedVal = Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const confirmationTemplate = await getMessageTemplate(
+    'confirmation',
+    [
+      "Olá, {name}.",
+      "",
+      "Seu agendamento foi registrado.",
+      "",
+      "Serviço: {service}",
+      "Profissional: {professional}",
+      "Data/Horário: {date}",
+      "Valor: {value}",
+      "",
+      "Em breve você receberá as orientações.",
+    ].join("\n"),
+  );
+  const text = confirmationTemplate
+    .replace('{name}', clientName)
+    .replace('{service}', service)
+    .replace('{professional}', professional)
+    .replace('{date}', prettyDate)
+    .replace('{value}', formattedVal);
+
+  const professionalText = `Novo agendamento recebido! 📅\n\n*Cliente:* ${clientName}\n*Telefone:* ${phone || 'Não informado'}\n*Serviço:* ${service}\n*Data/Horário:* ${prettyDate}\n*Valor:* ${formattedVal}\n*Observações:* ${notes || 'Nenhuma'}\n\nPor favor, acesse seu painel profissional para acompanhar.`;
+
+  let wantsEmail = true;
+  let wantsWhatsapp = true;
+  try {
+    if (phone || email) {
+      const { rows } = await query(
+        `select coalesce(email, true) as wants_email, coalesce(whatsapp, true) as wants_whatsapp
+         from public.notification_preferences
+         where profile_id = (select id from public.profiles where phone = $1 or lower(email) = lower($2) limit 1)`,
+        [phone || "", email || ""]
+      );
+      if (rows[0]) {
+        wantsEmail = rows[0].wants_email;
+        wantsWhatsapp = rows[0].wants_whatsapp;
+      }
+    }
+  } catch (err) {
+    console.error("Failed to fetch client preferences:", err.message);
+  }
+
+  let profWantsEmail = true;
+  let profWantsWhatsapp = true;
+  try {
+    if (professionalPhone || professionalEmail) {
+      const { rows } = await query(
+        `select coalesce(email, true) as wants_email, coalesce(whatsapp, true) as wants_whatsapp
+         from public.notification_preferences
+         where profile_id = (select id from public.profiles where phone = $1 or lower(email) = lower($2) limit 1)`,
+        [professionalPhone || "", professionalEmail || ""]
+      );
+      if (rows[0]) {
+        profWantsEmail = rows[0].wants_email;
+        profWantsWhatsapp = rows[0].wants_whatsapp;
+      }
+    }
+  } catch (err) {
+    console.error("Failed to fetch professional preferences:", err.message);
+  }
+
+  const deliveries = [];
+
+  if (email && wantsEmail) {
+    deliveries.push((async () => {
+      try {
+        const res = await sendEmail({
+          to: email,
+          subject: "Agendamento Carol Sol confirmado",
+          html: `<div style="font-family:Arial,sans-serif;color:#181511"><h1>Seu horário está reservado ✨</h1><p>${text}</p><p>Em caso de dúvida, responda esta mensagem.</p></div>`,
+        });
+        if (clientNotificationId) {
+          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, provider_reference) values($1, 'email', $2, 'delivered', $3)`, [clientNotificationId, email, res.id || 'resend-ok']);
+        }
+      } catch (err) {
+        if (clientNotificationId) {
+          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, error_message) values($1, 'email', $2, 'failed', $3)`, [clientNotificationId, email, err.message]);
+        }
+      }
+    })());
+  }
+
+  if (phone && wantsWhatsapp) {
+    deliveries.push((async () => {
+      try {
+        const res = await sendWhatsApp({ to: phone, text });
+        if (clientNotificationId) {
+          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, provider_reference) values($1, 'whatsapp', $2, 'delivered', $3)`, [clientNotificationId, phone, res.messageId || 'baileys-ok']);
+        }
+      } catch (err) {
+        if (clientNotificationId) {
+          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, error_message) values($1, 'whatsapp', $2, 'failed', $3)`, [clientNotificationId, phone, err.message]);
+        }
+      }
+    })());
+  }
+
+  if (professionalEmail && profWantsEmail) {
+    deliveries.push((async () => {
+      try {
+        const res = await sendEmail({
+          to: professionalEmail,
+          subject: "Novo agendamento recebido — Carol Sol",
+          html: `<div style="font-family:Arial,sans-serif;color:#181511"><h1>Novo pedido de atendimento</h1><p>${professionalText}</p></div>`,
+        });
+        if (professionalNotificationId) {
+          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, provider_reference) values($1, 'email', $2, 'delivered', $3)`, [professionalNotificationId, professionalEmail, res.id || 'resend-ok']);
+        }
+      } catch (err) {
+        if (professionalNotificationId) {
+          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, error_message) values($1, 'email', $2, 'failed', $3)`, [professionalNotificationId, professionalEmail, err.message]);
+        }
+      }
+    })());
+  }
+
+  if (professionalPhone && profWantsWhatsapp) {
+    deliveries.push((async () => {
+      try {
+        const res = await sendWhatsApp({ to: professionalPhone, text: professionalText });
+        if (professionalNotificationId) {
+          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, provider_reference) values($1, 'whatsapp', $2, 'delivered', $3)`, [professionalNotificationId, professionalPhone, res.messageId || 'baileys-ok']);
+        }
+      } catch (err) {
+        if (professionalNotificationId) {
+          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, error_message) values($1, 'whatsapp', $2, 'failed', $3)`, [professionalNotificationId, professionalPhone, err.message]);
+        }
+      }
+    })());
+  }
+
+  if (process.env.ADMIN_NOTIFICATION_EMAIL) {
+    deliveries.push(
+      sendEmail({
+        to: process.env.ADMIN_NOTIFICATION_EMAIL,
+        subject: "Novo agendamento — Carol Sol",
+        html: `<p>${clientName} reservou ${service} para ${prettyDate} com ${professional}.</p>`,
+      }).catch(err => console.error("Admin notification email error:", err.message))
+    );
+  }
+
+  return Promise.allSettled(deliveries);
 }
 
 export function parseCloudinaryAssetUrl(value) {

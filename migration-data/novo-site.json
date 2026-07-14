@@ -1,0 +1,2353 @@
+{
+  "filename": "backup_carolsol_20260709221109.json",
+  "data": {
+    "tables": {
+      "plans": [
+        {
+          "id": "70000000-0000-0000-0000-000000000001",
+          "name": "Essencial",
+          "price": "349.00",
+          "active": true,
+          "archived": false,
+          "benefits": [
+            "1 manutenção",
+            "5% em produtos"
+          ],
+          "billing_cycle": "monthly"
+        },
+        {
+          "id": "70000000-0000-0000-0000-000000000002",
+          "name": "Completo",
+          "price": "599.00",
+          "active": true,
+          "archived": false,
+          "benefits": [
+            "2 manutenções",
+            "10% em produtos",
+            "Prioridade na agenda"
+          ],
+          "billing_cycle": "monthly"
+        },
+        {
+          "id": "70000000-0000-0000-0000-000000000003",
+          "name": "VIP",
+          "price": "899.00",
+          "active": true,
+          "archived": false,
+          "benefits": [
+            "3 manutenções",
+            "15% em produtos",
+            "Cashback"
+          ],
+          "billing_cycle": "monthly"
+        },
+        {
+          "id": "70000000-0000-0000-0000-000000000004",
+          "name": "Premium Gold",
+          "price": "1299.00",
+          "active": true,
+          "archived": false,
+          "benefits": [
+            "4 manutenções",
+            "20% em produtos",
+            "Concierge"
+          ],
+          "billing_cycle": "monthly"
+        },
+        {
+          "id": "64c04dd1-973b-4448-8770-d35ed755ecc7",
+          "name": "frrr",
+          "price": "44.00",
+          "active": true,
+          "archived": true,
+          "benefits": [],
+          "billing_cycle": "monthly"
+        }
+      ],
+      "admins": [
+        {
+          "id": "30000000-0000-0000-0000-000000000001",
+          "profile_id": "00000000-0000-0000-0000-000000000001",
+          "permissions": {
+            "all": true
+          }
+        }
+      ],
+      "clients": [
+        {
+          "id": "a4ca777f-a790-4b6f-a6c2-ada609ad0bda",
+          "cpf": "35454345434",
+          "source": "Cadastro manual admin",
+          "created_at": "2026-07-09T21:55:49.365Z",
+          "profile_id": "f87e751b-b45b-44e6-9349-1a6bee45c373",
+          "preferences": {
+            "manual_contact": {
+              "phone": "14997334863",
+              "whatsapp": "14997334863"
+            }
+          },
+          "lifetime_value": "0.00",
+          "personal_notes": null,
+          "technical_notes": null,
+          "sumup_customer_id": null
+        }
+      ],
+      "coupons": [
+        {
+          "id": "90000000-0000-0000-0000-000000000001",
+          "code": "CAROLSOL15",
+          "active": false,
+          "target": {
+            "level": "gold"
+          },
+          "ends_at": "2026-06-30T23:59:00.000Z",
+          "archived": false,
+          "starts_at": "2026-05-31T21:00:00.000Z",
+          "description": "15% OFF no Kit Home Care Carol Sol",
+          "usage_limit": 200,
+          "discount_type": "percentage",
+          "discount_value": "15.00"
+        }
+      ],
+      "reviews": [],
+      "payments": [],
+      "products": [
+        {
+          "id": "81000000-0000-0000-0000-000000000001",
+          "sku": "KIT-HC-01",
+          "cost": "118.00",
+          "name": "Kit Home Care Carol Sol",
+          "price": "349.00",
+          "active": true,
+          "category": "Manutenção",
+          "minimum_stock": 8,
+          "stock_quantity": 21
+        }
+      ],
+      "profiles": [
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "cpf": null,
+          "role": "admin",
+          "phone": "(11) 4002-8922",
+          "address": {},
+          "full_name": "Carolina Alves",
+          "instagram": null,
+          "avatar_url": null,
+          "birth_date": "1988-04-12T00:00:00.000Z",
+          "created_at": "2026-06-21T17:20:09.063Z",
+          "updated_at": "2026-06-21T17:20:09.063Z",
+          "account_status": "active",
+          "notification_preferences": {}
+        },
+        {
+          "id": "b86eadff-6135-47d2-bba3-598ee3e043bd",
+          "cpf": null,
+          "role": "professional",
+          "phone": null,
+          "address": {},
+          "full_name": "Carol Sol",
+          "instagram": null,
+          "avatar_url": null,
+          "birth_date": null,
+          "created_at": "2026-07-09T21:27:18.997Z",
+          "updated_at": "2026-07-09T21:27:18.997Z",
+          "account_status": "active",
+          "notification_preferences": {
+            "push": true,
+            "email": true,
+            "whatsapp": true
+          }
+        },
+        {
+          "id": "f87e751b-b45b-44e6-9349-1a6bee45c373",
+          "cpf": "35454345434",
+          "role": "client",
+          "phone": "14997334863",
+          "address": {},
+          "full_name": "teste teste",
+          "instagram": null,
+          "avatar_url": null,
+          "birth_date": "1999-06-08T00:00:00.000Z",
+          "created_at": "2026-07-09T21:55:49.365Z",
+          "updated_at": "2026-07-09T21:55:49.365Z",
+          "account_status": "active",
+          "notification_preferences": {
+            "push": true,
+            "email": true,
+            "whatsapp": true
+          }
+        }
+      ],
+      "services": [
+        {
+          "id": "52000000-0000-0000-0000-000000000001",
+          "name": "Aplicação Fita Adesiva",
+          "active": true,
+          "base_price": "950.00",
+          "category_id": "50000000-0000-0000-0000-000000000001",
+          "description": "Aplicação premium personalizada.",
+          "deposit_amount": "190.00",
+          "hair_method_id": "51000000-0000-0000-0000-000000000001",
+          "duration_minutes": 210,
+          "show_online_booking": true
+        },
+        {
+          "id": "52000000-0000-0000-0000-000000000002",
+          "name": "Aplicação Microlink",
+          "active": true,
+          "base_price": "1250.00",
+          "category_id": "50000000-0000-0000-0000-000000000001",
+          "description": "Aplicação sem cola com movimento natural.",
+          "deposit_amount": "250.00",
+          "hair_method_id": "51000000-0000-0000-0000-000000000002",
+          "duration_minutes": 240,
+          "show_online_booking": true
+        },
+        {
+          "id": "52000000-0000-0000-0000-000000000004",
+          "name": "Avaliação personalizada",
+          "active": true,
+          "base_price": "80.00",
+          "category_id": "50000000-0000-0000-0000-000000000003",
+          "description": "Diagnóstico capilar com especialista.",
+          "deposit_amount": "80.00",
+          "hair_method_id": null,
+          "duration_minutes": 45,
+          "show_online_booking": true
+        },
+        {
+          "id": "52000000-0000-0000-0000-000000000003",
+          "name": "Manutenção Fita Adesiva",
+          "active": true,
+          "base_price": "420.00",
+          "category_id": "50000000-0000-0000-0000-000000000002",
+          "description": "Reposicionamento, higienização e finalização.",
+          "deposit_amount": "80.00",
+          "hair_method_id": "51000000-0000-0000-0000-000000000001",
+          "duration_minutes": 150,
+          "show_online_booking": true
+        }
+      ],
+      "waitlist": [],
+      "campaigns": [],
+      "referrals": [],
+      "audit_logs": [
+        {
+          "id": "89",
+          "action": "create",
+          "actor_id": "00000000-0000-0000-0000-000000000001",
+          "new_data": {
+            "email": "carolsol@carolsol.com.br",
+            "fullName": "Carol Sol"
+          },
+          "entity_id": "a000e61c-64dd-448f-b52c-d18fd8a31a92",
+          "created_at": "2026-07-09T21:27:18.997Z",
+          "entity_type": "professional",
+          "previous_data": null
+        },
+        {
+          "id": "90",
+          "action": "update",
+          "actor_id": "00000000-0000-0000-0000-000000000001",
+          "new_data": {
+            "id": "52000000-0000-0000-0000-000000000001",
+            "name": "Aplicação Fita Adesiva",
+            "active": true,
+            "base_price": "950.00",
+            "category_id": "50000000-0000-0000-0000-000000000001",
+            "description": "Aplicação premium personalizada.",
+            "deposit_amount": "190.00",
+            "hair_method_id": "51000000-0000-0000-0000-000000000001",
+            "duration_minutes": 210,
+            "professionalLinks": [
+              {
+                "customPrice": null,
+                "commissionRate": 100,
+                "professionalId": "a000e61c-64dd-448f-b52c-d18fd8a31a92"
+              }
+            ],
+            "show_online_booking": true
+          },
+          "entity_id": "52000000-0000-0000-0000-000000000001",
+          "created_at": "2026-07-09T21:29:42.398Z",
+          "entity_type": "service",
+          "previous_data": {
+            "id": "52000000-0000-0000-0000-000000000001",
+            "name": "Aplicação Fita Adesiva",
+            "active": true,
+            "base_price": "950.00",
+            "category_id": "50000000-0000-0000-0000-000000000001",
+            "description": "Aplicação premium personalizada.",
+            "deposit_amount": "190.00",
+            "hair_method_id": "51000000-0000-0000-0000-000000000001",
+            "duration_minutes": 210,
+            "show_online_booking": true
+          }
+        },
+        {
+          "id": "91",
+          "action": "update",
+          "actor_id": "00000000-0000-0000-0000-000000000001",
+          "new_data": {
+            "id": "52000000-0000-0000-0000-000000000002",
+            "name": "Aplicação Microlink",
+            "active": true,
+            "base_price": "1250.00",
+            "category_id": "50000000-0000-0000-0000-000000000001",
+            "description": "Aplicação sem cola com movimento natural.",
+            "deposit_amount": "250.00",
+            "hair_method_id": "51000000-0000-0000-0000-000000000002",
+            "duration_minutes": 240,
+            "professionalLinks": [
+              {
+                "customPrice": null,
+                "commissionRate": 100,
+                "professionalId": "a000e61c-64dd-448f-b52c-d18fd8a31a92"
+              }
+            ],
+            "show_online_booking": true
+          },
+          "entity_id": "52000000-0000-0000-0000-000000000002",
+          "created_at": "2026-07-09T21:29:47.246Z",
+          "entity_type": "service",
+          "previous_data": {
+            "id": "52000000-0000-0000-0000-000000000002",
+            "name": "Aplicação Microlink",
+            "active": true,
+            "base_price": "1250.00",
+            "category_id": "50000000-0000-0000-0000-000000000001",
+            "description": "Aplicação sem cola com movimento natural.",
+            "deposit_amount": "250.00",
+            "hair_method_id": "51000000-0000-0000-0000-000000000002",
+            "duration_minutes": 240,
+            "show_online_booking": true
+          }
+        },
+        {
+          "id": "92",
+          "action": "update",
+          "actor_id": "00000000-0000-0000-0000-000000000001",
+          "new_data": {
+            "id": "52000000-0000-0000-0000-000000000004",
+            "name": "Avaliação personalizada",
+            "active": true,
+            "base_price": "80.00",
+            "category_id": "50000000-0000-0000-0000-000000000003",
+            "description": "Diagnóstico capilar com especialista.",
+            "deposit_amount": "80.00",
+            "hair_method_id": null,
+            "duration_minutes": 45,
+            "professionalLinks": [
+              {
+                "customPrice": null,
+                "commissionRate": 100,
+                "professionalId": "a000e61c-64dd-448f-b52c-d18fd8a31a92"
+              }
+            ],
+            "show_online_booking": true
+          },
+          "entity_id": "52000000-0000-0000-0000-000000000004",
+          "created_at": "2026-07-09T21:29:51.787Z",
+          "entity_type": "service",
+          "previous_data": {
+            "id": "52000000-0000-0000-0000-000000000004",
+            "name": "Avaliação personalizada",
+            "active": true,
+            "base_price": "80.00",
+            "category_id": "50000000-0000-0000-0000-000000000003",
+            "description": "Diagnóstico capilar com especialista.",
+            "deposit_amount": "80.00",
+            "hair_method_id": null,
+            "duration_minutes": 45,
+            "show_online_booking": true
+          }
+        },
+        {
+          "id": "93",
+          "action": "update",
+          "actor_id": "00000000-0000-0000-0000-000000000001",
+          "new_data": {
+            "id": "52000000-0000-0000-0000-000000000003",
+            "name": "Manutenção Fita Adesiva",
+            "active": true,
+            "base_price": "420.00",
+            "category_id": "50000000-0000-0000-0000-000000000002",
+            "description": "Reposicionamento, higienização e finalização.",
+            "deposit_amount": "80.00",
+            "hair_method_id": "51000000-0000-0000-0000-000000000001",
+            "duration_minutes": 150,
+            "professionalLinks": [
+              {
+                "customPrice": null,
+                "commissionRate": 100,
+                "professionalId": "a000e61c-64dd-448f-b52c-d18fd8a31a92"
+              }
+            ],
+            "show_online_booking": true
+          },
+          "entity_id": "52000000-0000-0000-0000-000000000003",
+          "created_at": "2026-07-09T21:29:58.035Z",
+          "entity_type": "service",
+          "previous_data": {
+            "id": "52000000-0000-0000-0000-000000000003",
+            "name": "Manutenção Fita Adesiva",
+            "active": true,
+            "base_price": "420.00",
+            "category_id": "50000000-0000-0000-0000-000000000002",
+            "description": "Reposicionamento, higienização e finalização.",
+            "deposit_amount": "80.00",
+            "hair_method_id": "51000000-0000-0000-0000-000000000001",
+            "duration_minutes": 150,
+            "show_online_booking": true
+          }
+        },
+        {
+          "id": "94",
+          "action": "create",
+          "actor_id": "b86eadff-6135-47d2-bba3-598ee3e043bd",
+          "new_data": {
+            "email": "teste@teste.com",
+            "phone": "14997334863",
+            "fullName": "teste teste",
+            "whatsapp": "14997334863",
+            "temporaryPasswordGenerated": true
+          },
+          "entity_id": "a4ca777f-a790-4b6f-a6c2-ada609ad0bda",
+          "created_at": "2026-07-09T21:55:49.365Z",
+          "entity_type": "client",
+          "previous_data": null
+        },
+        {
+          "id": "95",
+          "action": "send_credentials",
+          "actor_id": "b86eadff-6135-47d2-bba3-598ee3e043bd",
+          "new_data": {
+            "emailSent": true,
+            "whatsappSent": true
+          },
+          "entity_id": "a4ca777f-a790-4b6f-a6c2-ada609ad0bda",
+          "created_at": "2026-07-09T21:55:49.581Z",
+          "entity_type": "client",
+          "previous_data": null
+        }
+      ],
+      "ai_settings": [
+        {
+          "id": "174fff4b-80d0-4bb4-82f1-f16938e21c9f",
+          "model": "gpt-5.4-mini",
+          "enabled": true,
+          "provider": "openai",
+          "timezone": "America/Sao_Paulo",
+          "allow_24h": true,
+          "created_at": "2026-06-25T01:08:27.025Z",
+          "salon_name": "Carol Sol Mega Hair",
+          "timeout_ms": 7000,
+          "updated_at": "2026-07-04T16:15:39.194Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "ai_end_time": null,
+          "business_id": "default",
+          "max_retries": 2,
+          "stop_keyword": "parar",
+          "ai_start_time": null,
+          "cache_enabled": true,
+          "context_limit": 8,
+          "pause_keyword": "atendente",
+          "primary_model": "gpt-5.4-mini",
+          "system_prompt": "Você é a assistente virtual do salão [NOME_SALAO], especializado em Mega Hair premium.\n\nSeu objetivo é acolher, orientar e ajudar a cliente a encontrar serviços, valores, planos, horários e agendamentos reais.\n\nVocê deve usar apenas informações fornecidas pelas ferramentas do sistema.\n\nNunca invente valores, horários, cupons, disponibilidade, formas de pagamento ou políticas.\n\nAntes de confirmar um agendamento, sempre mostre resumo completo e peça confirmação explícita.\n\nQuando houver dúvida, pedido de desconto fora das regras, reclamação, pagamento com problema ou pedido de atendente, transfira para uma pessoa da equipe.\n\nUse o modo de humor configurado pelo administrador.\n\nResponda em português do Brasil, com mensagens curtas, claras e elegantes.",
+          "assistant_name": "Carol",
+          "fallback_model": "gpt-5.4-mini",
+          "resume_keyword": "voltar ao bot",
+          "closing_message": "Obrigada pelo contato! Se precisar de algo mais, é só me chamar.",
+          "welcome_message": "Olá!.",
+          "fallback_enabled": false,
+          "max_idle_minutes": 30,
+          "personality_mode": "humana_descontraida",
+          "primary_provider": "openai",
+          "fallback_provider": "openai",
+          "max_auto_messages": 12,
+          "allow_auto_booking": true,
+          "allow_new_contacts": true,
+          "grouping_window_ms": 1500,
+          "handoff_on_payment": true,
+          "handoff_on_urgency": true,
+          "after_hours_message": "No momento estamos fora do horário de atendimento. Posso registrar sua mensagem e nossa equipe continua assim que possível.",
+          "contingency_enabled": false,
+          "max_response_tokens": 220,
+          "handoff_on_complaint": true,
+          "human_handoff_message": "Vou encaminhar sua mensagem para nossa equipe. Em breve uma pessoa do salão continuará seu atendimento por aqui.",
+          "allow_existing_clients": true,
+          "human_transfer_enabled": true,
+          "allow_auto_payment_links": false,
+          "groq_circuit_breaker_until": null,
+          "gemini_circuit_breaker_until": "2026-07-01T03:01:17.441Z",
+          "require_booking_confirmation": true,
+          "circuit_breaker_cooldown_seconds": 60
+        }
+      ],
+      "commissions": [],
+      "appointments": [],
+      "consent_logs": [
+        {
+          "id": "fd2d77c9-968c-49bf-9d46-07b23e4040ca",
+          "source": "admin_panel",
+          "granted": true,
+          "ip_hash": null,
+          "created_at": "2026-07-09T21:55:49.365Z",
+          "profile_id": "f87e751b-b45b-44e6-9349-1a6bee45c373",
+          "consent_type": "admin_manual_registration",
+          "policy_version": "1.0"
+        }
+      ],
+      "hair_methods": [
+        {
+          "id": "51000000-0000-0000-0000-000000000001",
+          "name": "Fita Adesiva",
+          "active": true,
+          "description": "Leve, discreta e com resultado natural.",
+          "maintenance_days": 45
+        },
+        {
+          "id": "51000000-0000-0000-0000-000000000002",
+          "name": "Microlink",
+          "active": true,
+          "description": "Aplicação sem cola e com movimento.",
+          "maintenance_days": 60
+        },
+        {
+          "id": "51000000-0000-0000-0000-000000000003",
+          "name": "Queratina",
+          "active": true,
+          "description": "Mechas precisas para longa duração.",
+          "maintenance_days": 90
+        },
+        {
+          "id": "51000000-0000-0000-0000-000000000004",
+          "name": "Tic Tac",
+          "active": true,
+          "description": "Transformação temporária e versátil.",
+          "maintenance_days": 0
+        }
+      ],
+      "ai_tool_calls": [],
+      "client_photos": [],
+      "product_sales": [],
+      "professionals": [
+        {
+          "id": "a000e61c-64dd-448f-b52c-d18fd8a31a92",
+          "bio": "",
+          "active": true,
+          "hired_at": "2026-07-09T00:00:00.000Z",
+          "profile_id": "b86eadff-6135-47d2-bba3-598ee3e043bd",
+          "specialties": [
+            "queratina",
+            "microlink",
+            "mega hair"
+          ],
+          "commission_rate": "100.00"
+        }
+      ],
+      "subscriptions": [],
+      "hair_inventory": [
+        {
+          "id": "80000000-0000-0000-0000-000000000003",
+          "lot": "CS2605",
+          "code": "MIC-0812",
+          "color": "Morena iluminada",
+          "shade": "6/7",
+          "status": "active",
+          "texture": "Ondulado",
+          "archived": false,
+          "category": "Microlink",
+          "quantity": "12.00",
+          "supplier": "Brasil Hair Premium",
+          "length_cm": 65,
+          "unit_cost": "790.00",
+          "created_at": "2026-06-21T17:20:09.063Z",
+          "weight_grams": "100.00",
+          "minimum_stock": "4.00",
+          "suggested_price": "1650.00"
+        },
+        {
+          "id": "80000000-0000-0000-0000-000000000002",
+          "lot": "CS2602",
+          "code": "FIT-2110",
+          "color": "Loiro",
+          "shade": "8.1",
+          "status": "active",
+          "texture": "Ondulado",
+          "archived": false,
+          "category": "Fita adesiva",
+          "quantity": "3.00",
+          "supplier": "Carol Sol Imports",
+          "length_cm": 55,
+          "unit_cost": "520.00",
+          "created_at": "2026-06-21T17:20:09.063Z",
+          "weight_grams": "100.00",
+          "minimum_stock": "6.00",
+          "suggested_price": "1100.00"
+        },
+        {
+          "id": "80000000-0000-0000-0000-000000000001",
+          "lot": "CS2604",
+          "code": "CAB-4571",
+          "color": "Castanho",
+          "shade": "4",
+          "status": "active",
+          "texture": "Liso",
+          "archived": false,
+          "category": "Cabelo humano",
+          "quantity": "7.00",
+          "supplier": "Brasil Hair Premium",
+          "length_cm": 60,
+          "unit_cost": "680.00",
+          "created_at": "2026-06-21T17:20:09.063Z",
+          "weight_grams": "100.00",
+          "minimum_stock": "5.00",
+          "suggested_price": "1300.00"
+        }
+      ],
+      "loyalty_points": [],
+      "ai_interactions": [],
+      "ai_request_logs": [],
+      "chairs_or_rooms": [
+        {
+          "id": "41000000-0000-0000-0000-000000000001",
+          "kind": "Sala privativa",
+          "name": "Suíte Gold",
+          "active": true,
+          "location_id": "40000000-0000-0000-0000-000000000001"
+        },
+        {
+          "id": "41000000-0000-0000-0000-000000000002",
+          "kind": "Atendimento",
+          "name": "Cadeira 02",
+          "active": true,
+          "location_id": "40000000-0000-0000-0000-000000000001"
+        }
+      ],
+      "salon_locations": [
+        {
+          "id": "40000000-0000-0000-0000-000000000001",
+          "name": "Carol Sol Jardins",
+          "phone": "(11) 4002-8922",
+          "active": true,
+          "address": {
+            "zip": "01418-100",
+            "city": "São Paulo",
+            "state": "SP",
+            "number": "1240",
+            "street": "Alameda Santos",
+            "district": "Jardins"
+          }
+        }
+      ],
+      "ai_plan_settings": [],
+      "blocked_schedule": [],
+      "payment_receipts": [],
+      "business_settings": [
+        {
+          "key": "business_profile",
+          "value": {
+            "email": "",
+            "phone": "",
+            "address": "",
+            "timezone": "America/Sao_Paulo",
+            "whatsapp": "",
+            "businessName": "Carol Sol"
+          },
+          "updated_at": "2026-07-09T20:59:54.895Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001"
+        }
+      ],
+      "conversation_tags": [],
+      "technical_records": [],
+      "whatsapp_messages": [],
+      "ai_prompt_versions": [],
+      "knowledge_articles": [
+        {
+          "id": "d87bf918-16a3-44c1-90d8-e971b8c41c8a",
+          "slug": "o-que-e-mega-hair",
+          "title": "O que é Mega Hair?",
+          "status": "active",
+          "category": "O que é Mega Hair",
+          "priority": 100,
+          "created_at": "2026-06-25T13:54:45.187Z",
+          "updated_at": "2026-06-25T13:54:45.187Z",
+          "full_answer": "Mega Hair é uma técnica de alongamento ou aumento de volume feita com mechas adicionais de cabelo. Existem vários métodos, como fita adesiva, microlink, queratina e tic tac. O melhor depende do seu comprimento atual, espessura dos fios, rotina e resultado desejado. Você busca mais volume, mais comprimento ou os dois?",
+          "short_answer": "Mega Hair é uma técnica de alongamento ou aumento de volume feita com mechas adicionais de cabelo.",
+          "question_variations": [
+            "o que e mega hair",
+            "oque e mega hair",
+            "alongamento de cabelo",
+            "o que e alongamento"
+          ],
+          "requires_evaluation": false,
+          "medical_safety_level": "normal",
+          "recommended_services": [],
+          "requires_human_handoff": false,
+          "recommended_followup_questions": [
+            "Você busca mais volume, mais comprimento ou os dois?",
+            "Qual o comprimento atual do seu cabelo?"
+          ]
+        },
+        {
+          "id": "4ec51e15-743f-4da8-a442-7d4cbc1d2913",
+          "slug": "mega-hair-faz-cair-cabelo",
+          "title": "Mega Hair faz o cabelo cair?",
+          "status": "active",
+          "category": "Mega Hair e queda de cabelo",
+          "priority": 100,
+          "created_at": "2026-06-25T13:54:45.205Z",
+          "updated_at": "2026-06-25T13:54:45.205Z",
+          "full_answer": "O Mega Hair não deve causar queda quando a técnica é bem indicada, aplicada corretamente e recebe manutenção no prazo. Mas peso excessivo, tensão, aplicação inadequada, manutenção atrasada ou um couro cabeludo sensível podem causar desconforto e prejudicar os fios. Para indicar a técnica certa, preciso entender como está seu cabelo hoje. Você sente quebra, queda intensa, dor ou sensibilidade no couro cabeludo?",
+          "short_answer": "O Mega Hair não deve causar queda quando a técnica é bem indicada, aplicada corretamente e recebe manutenção no prazo.",
+          "question_variations": [
+            "mega hair faz cair cabelo",
+            "mega hair prejudica o cabelo",
+            "mega hair causa queda",
+            "estragou meu cabelo",
+            "cabelo caindo"
+          ],
+          "requires_evaluation": false,
+          "medical_safety_level": "normal",
+          "recommended_services": [],
+          "requires_human_handoff": false,
+          "recommended_followup_questions": [
+            "Você sente quebra, queda intensa, dor ou sensibilidade no couro cabeludo?",
+            "Qual técnica você usa ou está pesquisando?"
+          ]
+        },
+        {
+          "id": "3d346bf7-3f45-48ac-9010-36342d38536d",
+          "slug": "o-que-e-mega-hair-de-queratina",
+          "title": "O que é Mega Hair de queratina?",
+          "status": "active",
+          "category": "Queratina",
+          "priority": 100,
+          "created_at": "2026-06-25T13:54:45.208Z",
+          "updated_at": "2026-06-25T13:54:45.208Z",
+          "full_answer": "É uma técnica em que pequenas mechas são fixadas aos fios naturais com pontos de queratina específicos para alongamento. Ela pode oferecer um resultado discreto e personalizado, mas exige aplicação cuidadosa e manutenção profissional. Para saber se é indicada para você, preciso avaliar o comprimento, a espessura e o estado atual do seu cabelo.",
+          "short_answer": "É uma técnica em que pequenas mechas são fixadas aos fios naturais com pontos de queratina específicos para alongamento.",
+          "question_variations": [
+            "o que e mega hair de queratina",
+            "tecnica de queratina",
+            "como funciona a queratina",
+            "megahair de queratina"
+          ],
+          "requires_evaluation": true,
+          "medical_safety_level": "normal",
+          "recommended_services": [],
+          "requires_human_handoff": false,
+          "recommended_followup_questions": [
+            "Qual é a textura do seu cabelo atualmente?",
+            "Você já fez aplicação com queratina antes?"
+          ]
+        },
+        {
+          "id": "1aa0513e-b66c-4039-97a3-ef8d5e18b680",
+          "slug": "qual-o-melhor-metodo-para-cabelo-curto",
+          "title": "Qual o melhor método para cabelo curto?",
+          "status": "active",
+          "category": "Cabelo curto",
+          "priority": 100,
+          "created_at": "2026-06-25T13:54:45.210Z",
+          "updated_at": "2026-06-25T13:54:45.210Z",
+          "full_answer": "Para cabelo curto, a escolha depende principalmente do comprimento atual, da densidade dos fios e de quanto você deseja alongar. Em alguns casos, técnicas com mechas menores podem ajudar a deixar o resultado mais discreto, mas a indicação correta precisa de avaliação. Você consegue me dizer aproximadamente até onde vai seu cabelo hoje e qual comprimento gostaria de alcançar?",
+          "short_answer": "Para cabelo curto, a escolha depende do comprimento atual, densidade dos fios e do quanto você deseja alongar.",
+          "question_variations": [
+            "qual o melhor metodo para cabelo curto",
+            "tenho cabelo curto o que fazer",
+            "mega hair em cabelo curto",
+            "qual e melhor para cabelo curto"
+          ],
+          "requires_evaluation": true,
+          "medical_safety_level": "normal",
+          "recommended_services": [],
+          "requires_human_handoff": false,
+          "recommended_followup_questions": [
+            "Você consegue me dizer aproximadamente até onde vai seu cabelo hoje?",
+            "Qual comprimento você gostaria de alcançar?"
+          ]
+        },
+        {
+          "id": "12e192af-9193-482b-bb65-382b7d97a095",
+          "slug": "qual-metodo-e-melhor-para-cabelo-fino",
+          "title": "Qual método é melhor para cabelo fino?",
+          "status": "active",
+          "category": "Cabelo fino",
+          "priority": 100,
+          "created_at": "2026-06-25T13:54:45.212Z",
+          "updated_at": "2026-06-25T13:54:45.212Z",
+          "full_answer": "Em cabelos finos, o principal é escolher uma técnica com distribuição adequada de peso e quantidade de mechas compatível com os fios naturais. A avaliação é importante para evitar excesso de peso e garantir um resultado natural. Você procura mais volume, comprimento ou ambos?",
+          "short_answer": "Em cabelos finos, o principal é escolher uma técnica com distribuição adequada de peso e quantidade de mechas compatível.",
+          "question_variations": [
+            "qual metodo e melhor para cabelo fino",
+            "tenho cabelo muito fino",
+            "mega hair em cabelo fino",
+            "qual e melhor para cabelo fino"
+          ],
+          "requires_evaluation": true,
+          "medical_safety_level": "normal",
+          "recommended_services": [],
+          "requires_human_handoff": false,
+          "recommended_followup_questions": [
+            "Você procura mais volume, comprimento ou ambos?",
+            "Já teve problemas com quebra em cabelos finos?"
+          ]
+        },
+        {
+          "id": "06c93eff-a569-49c5-b813-3e1e200d0764",
+          "slug": "quanto-tempo-dura-o-mega-hair",
+          "title": "Quanto tempo dura o Mega Hair?",
+          "status": "active",
+          "category": "Durabilidade",
+          "priority": 100,
+          "created_at": "2026-06-25T13:54:45.215Z",
+          "updated_at": "2026-06-25T13:54:45.215Z",
+          "full_answer": "A durabilidade varia conforme a técnica, velocidade de crescimento do cabelo e cuidados em casa. Além da duração da aplicação, existe o prazo ideal de manutenção, que é fundamental para preservar o resultado e a saúde dos fios. Posso mostrar as opções de manutenção disponíveis para cada técnica.",
+          "short_answer": "A durabilidade varia conforme a técnica, velocidade de crescimento do cabelo e cuidados em casa.",
+          "question_variations": [
+            "quanto tempo dura o mega hair",
+            "durabilidade do mega hair",
+            "de quanto em quanto tempo faz manutencao",
+            "quanto tempo dura"
+          ],
+          "requires_evaluation": false,
+          "medical_safety_level": "normal",
+          "recommended_services": [],
+          "requires_human_handoff": false,
+          "recommended_followup_questions": [
+            "Gostaria de conhecer as opções de manutenção disponíveis?",
+            "Qual método você tem mais interesse?"
+          ]
+        },
+        {
+          "id": "f9a32bea-4d81-453b-ae4c-db58f184369e",
+          "slug": "posso-lavar-usar-secador-piscina-ou-praia",
+          "title": "Posso lavar, usar secador, piscina ou praia?",
+          "status": "active",
+          "category": "Cuidados em casa",
+          "priority": 100,
+          "created_at": "2026-06-25T13:54:45.217Z",
+          "updated_at": "2026-06-25T13:54:45.217Z",
+          "full_answer": "Em geral, é possível manter uma rotina normal com alguns cuidados específicos, como usar produtos adequados, secar bem a região das fixações e respeitar as orientações da técnica escolhida. Os cuidados podem variar conforme o método. Você já usa Mega Hair ou está pesquisando para fazer pela primeira vez?",
+          "short_answer": "Em geral, é possível manter uma rotina normal com alguns cuidados específicos, como usar produtos adequados e secar bem a região das fixações.",
+          "question_variations": [
+            "posso lavar",
+            "usar secador",
+            "piscina ou praia",
+            "mega hair na piscina",
+            "como lavar o mega hair",
+            "piscina",
+            "praia",
+            "secador"
+          ],
+          "requires_evaluation": false,
+          "medical_safety_level": "normal",
+          "recommended_services": [],
+          "requires_human_handoff": false,
+          "recommended_followup_questions": [
+            "Você já usa Mega Hair ou está pesquisando para fazer pela primeira vez?"
+          ]
+        },
+        {
+          "id": "f9ed982b-8c51-4a56-ba7d-62fd891dbbf7",
+          "slug": "mega-hair-com-progressiva",
+          "title": "Mega Hair e progressiva ou química",
+          "status": "active",
+          "category": "Cabelo com química",
+          "priority": 100,
+          "created_at": "2026-06-25T13:54:45.219Z",
+          "updated_at": "2026-06-25T13:54:45.219Z",
+          "full_answer": "Sim, é possível aplicar Mega Hair em cabelos com progressiva ou outra química, contanto que os fios estejam saudáveis e resistentes. O alisamento diminui o atrito, mas a fixação precisa ser feita de forma correta para evitar escorregamento da mecha. Para recomendar a melhor técnica para o seu caso, preciso entender melhor: faz quanto tempo que você realizou a progressiva?",
+          "short_answer": "Sim, é possível aplicar Mega Hair em cabelos com progressiva ou química, mas exige cuidados adicionais e uma avaliação da resistência dos fios.",
+          "question_variations": [
+            "posso fazer se tenho progressiva",
+            "progressiva e mega hair",
+            "mega hair com quimica",
+            "alisamento e mega hair",
+            "mega hair loiro",
+            "loira mega hair",
+            "mega hair com progressiva"
+          ],
+          "requires_evaluation": true,
+          "medical_safety_level": "normal",
+          "recommended_services": [],
+          "requires_human_handoff": false,
+          "recommended_followup_questions": [
+            "Faz quanto tempo que você realizou a última progressiva?",
+            "Você sente alguma quebra nos fios após a química?"
+          ]
+        },
+        {
+          "id": "c4154a61-5d2f-4f73-835a-d6e8d50b8272",
+          "slug": "dor-coceira-couro-cabeludo",
+          "title": "Dor e coceira intensa no couro cabeludo",
+          "status": "active",
+          "category": "Contraindicações",
+          "priority": 100,
+          "created_at": "2026-06-25T13:54:45.221Z",
+          "updated_at": "2026-06-25T13:54:45.221Z",
+          "full_answer": "Se você percebe dor, coceira intensa, feridas, quebra acentuada ou queda importante, recomendamos pausar qualquer procedimento, evitar coçar a região e procurar uma profissional qualificada para avaliação física do couro cabeludo e, se necessário, um dermatologista. Sintomas inflamatórios requerem cuidados especializados.",
+          "short_answer": "Se você percebe dor, coceira intensa, feridas ou queda importante, recomendamos pausar procedimentos e procurar ajuda médica.",
+          "question_variations": [
+            "meu couro cabeludo esta cocando e doendo",
+            "dor no couro cabeludo",
+            "irritacao couro cabeludo",
+            "ferida na cabeca",
+            "dor intensa",
+            "meu couro cabeludo esta cocando"
+          ],
+          "requires_evaluation": true,
+          "medical_safety_level": "alert",
+          "recommended_services": [],
+          "requires_human_handoff": true,
+          "recommended_followup_questions": []
+        },
+        {
+          "id": "e8afbc4b-31f2-4739-9788-4bc57228db5a",
+          "slug": "mega-hair-quebrando-cabelo",
+          "title": "Quebra de cabelo associada ao Mega Hair",
+          "status": "active",
+          "category": "Segurança e contraindicações",
+          "priority": 100,
+          "created_at": "2026-06-25T13:54:45.223Z",
+          "updated_at": "2026-06-25T13:54:45.223Z",
+          "full_answer": "A quebra excessiva dos fios associada ao Mega Hair pode ser causada por excesso de peso das mechas, tensionagem inadequada na aplicação, atraso no prazo de manutenção ou fragilidade prévia do cabelo. Recomendamos pausar a tração e agendar uma avaliação presencial para verificar a integridade da haste capilar.",
+          "short_answer": "A quebra excessiva pode ocorrer por excesso de peso, manutenção atrasada ou aplicação inadequada.",
+          "question_variations": [
+            "meu mega hair esta quebrando meu cabelo",
+            "quebrando meu cabelo",
+            "dano no cabelo por mega hair",
+            "mega hair quebrando"
+          ],
+          "requires_evaluation": true,
+          "medical_safety_level": "alert",
+          "recommended_services": [],
+          "requires_human_handoff": true,
+          "recommended_followup_questions": [
+            "Há quanto tempo você está com este Mega Hair?",
+            "Quando foi sua última manutenção?"
+          ]
+        },
+        {
+          "id": "8ab5fbf1-dfe4-4a17-8534-26d5107cdd04",
+          "slug": "qual-tecnica-combina-comigo",
+          "title": "Técnica recomendada / Triagem",
+          "status": "active",
+          "category": "Avaliação profissional",
+          "priority": 100,
+          "created_at": "2026-06-25T13:54:45.226Z",
+          "updated_at": "2026-06-25T13:54:45.226Z",
+          "full_answer": "A escolha do melhor método depende de fatores como a espessura do seu fio, o estado do couro cabeludo, sua rotina e o resultado desejado. Para te dar uma orientação personalizada inicial, você poderia me dizer: você busca mais volume, comprimento ou ambos? Seus fios são finos, médios ou grossos?",
+          "short_answer": "A escolha do melhor método depende de uma análise dos seus fios, rotina e preferências.",
+          "question_variations": [
+            "quero saber qual tecnica combina comigo",
+            "qual o melhor metodo para mim",
+            "qual mega hair escolher",
+            "quero indicacao de tecnica"
+          ],
+          "requires_evaluation": true,
+          "medical_safety_level": "normal",
+          "recommended_services": [],
+          "requires_human_handoff": false,
+          "recommended_followup_questions": [
+            "Você busca mais volume, comprimento ou ambos?",
+            "Seus fios são finos, médios ou grossos?",
+            "Você possui química no cabelo?"
+          ]
+        }
+      ],
+      "professional_goals": [],
+      "service_categories": [
+        {
+          "id": "50000000-0000-0000-0000-000000000001",
+          "name": "Aplicação",
+          "sort_order": 1
+        },
+        {
+          "id": "50000000-0000-0000-0000-000000000002",
+          "name": "Manutenção",
+          "sort_order": 2
+        },
+        {
+          "id": "50000000-0000-0000-0000-000000000003",
+          "name": "Avaliação e cuidados",
+          "sort_order": 3
+        }
+      ],
+      "ai_automation_flows": [
+        {
+          "id": "951c86ae-93cf-4068-a662-7263d9ff9dcd",
+          "name": "Solicitação de fotos",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": false,
+          "flow_key": "solicitacao_fotos",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.203Z",
+          "updated_at": "2026-06-25T01:09:16.203Z",
+          "updated_by": null,
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "9f9c063e-eb9b-4f21-a83d-0c310b4fc8e6",
+          "name": "Cobrança de pagamento pendente",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": false,
+          "flow_key": "cobranca_pagamento",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.229Z",
+          "updated_at": "2026-06-25T01:09:16.229Z",
+          "updated_by": null,
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "13bab778-dbef-43d4-b9d1-4e5445452939",
+          "name": "Envio de link SumUp",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": false,
+          "flow_key": "envio_link_sumup",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.233Z",
+          "updated_at": "2026-06-25T01:09:16.233Z",
+          "updated_by": null,
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "51113f0d-bc86-4a03-a329-282eb4d616c3",
+          "name": "Oferta de plano",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": false,
+          "flow_key": "oferta_plano",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.235Z",
+          "updated_at": "2026-06-25T01:09:16.235Z",
+          "updated_by": null,
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "a898ca5b-5a5c-41ce-9aaa-2803952e5ee4",
+          "name": "Aplicação de cupom",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": false,
+          "flow_key": "aplicacao_cupom",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.238Z",
+          "updated_at": "2026-06-25T01:09:16.238Z",
+          "updated_by": null,
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "9d869f6d-6b40-4d29-90c6-71a38132a2db",
+          "name": "Indique e Ganhe",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": false,
+          "flow_key": "indique_ganhe",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.244Z",
+          "updated_at": "2026-06-25T01:09:16.244Z",
+          "updated_by": null,
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "2b11ae39-43d1-4fb8-a817-d2b2a23312e3",
+          "name": "Boas-vindas",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "boas_vindas",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.175Z",
+          "updated_at": "2026-06-25T03:14:29.579Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": false,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "c290df14-8487-444b-b573-d1daa0625616",
+          "name": "Apresentação de serviços",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "apresentacao_servicos",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.191Z",
+          "updated_at": "2026-06-25T04:20:40.699Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "d346ee57-b7b9-447c-af81-a1282ffcf3ee",
+          "name": "Confirmação de agendamento",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "confirmacao_agendamento",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.216Z",
+          "updated_at": "2026-06-25T12:33:59.103Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "45d61d8e-bee8-441f-b689-c85ab68dea08",
+          "name": "Consulta de valores",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "consulta_valores",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.195Z",
+          "updated_at": "2026-06-25T12:34:01.174Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "0163420f-6855-4b37-888d-bd75d415fbed",
+          "name": "Identificação de cliente nova",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "cliente_nova",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.184Z",
+          "updated_at": "2026-07-01T02:46:02.448Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "bfa3893e-f95d-4d0a-99f6-ac5808dccc55",
+          "name": "Identificação de cliente existente",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "cliente_existente",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.187Z",
+          "updated_at": "2026-07-01T02:46:05.863Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "3e81de72-1db5-4aa5-99f0-191d81a9d3c5",
+          "name": "Pré-agendamento",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "pre_agendamento",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.212Z",
+          "updated_at": "2026-07-01T02:46:29.003Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "08ba127d-dfb0-475f-bce1-be8f7750fbe6",
+          "name": "Verificação de agenda",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "verificacao_agenda",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.207Z",
+          "updated_at": "2026-07-01T02:46:38.503Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "b0f62c6e-794f-47a2-902e-de8fa5245f87",
+          "name": "Pré-orçamento",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "pre_orcamento",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.199Z",
+          "updated_at": "2026-07-01T02:46:43.790Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "04e40876-1a15-4a6c-838d-5c7a31d977b5",
+          "name": "Pedido de avaliação",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "pedido_avaliacao",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.251Z",
+          "updated_at": "2026-07-08T02:31:51.438Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "fdf93325-b06b-485a-b1ca-07a448043a24",
+          "name": "Lembrete de atendimento",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "lembrete_atendimento",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.219Z",
+          "updated_at": "2026-07-08T13:02:55.658Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "3937f97e-c4b9-41b2-9730-dd75c50c0e04",
+          "name": "Manutenção próxima",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "manutencao_proxima",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.227Z",
+          "updated_at": "2026-07-08T13:03:00.689Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "ef4b4e48-6390-4aa4-9c9c-73b087bd9891",
+          "name": "Pós-atendimento",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "pos_atendimento",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.249Z",
+          "updated_at": "2026-07-08T13:03:15.568Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "a1498215-eecc-49a9-8650-80fbbe1b8d2d",
+          "name": "Reagendamento",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "reagendamento",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.223Z",
+          "updated_at": "2026-07-08T13:03:20.905Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        },
+        {
+          "id": "e8868d82-3a95-45df-b1d5-0363ecf1e6c4",
+          "name": "Transferência para humano",
+          "tags": [],
+          "channel": "whatsapp",
+          "enabled": true,
+          "flow_key": "transferencia_humano",
+          "conditions": {},
+          "created_at": "2026-06-25T01:09:16.246Z",
+          "updated_at": "2026-07-08T13:03:25.941Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "initial_message": null,
+          "internal_instructions": null,
+          "trigger_delay_minutes": 0,
+          "requires_human_approval": true,
+          "responsible_professional_id": null
+        }
+      ],
+      "ai_service_settings": [
+        {
+          "id": "7683c84c-7dc9-4d13-8660-ca46694941cd",
+          "active": true,
+          "created_at": "2026-06-25T02:16:30.128Z",
+          "service_id": "52000000-0000-0000-0000-000000000004",
+          "updated_at": "2026-07-04T16:11:43.247Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "deposit_type": "amount",
+          "deposit_value": "880.00",
+          "initial_price": "80.00",
+          "priority_order": 10,
+          "commercial_name": "Avaliação personalizada",
+          "allow_auto_quote": true,
+          "professional_ids": [],
+          "requires_deposit": true,
+          "short_description": "Diagnóstico capilar com especialista.",
+          "allow_auto_booking": true,
+          "required_questions": [],
+          "recommended_message": "Informar que a equipe confirma detalhes antes de qualquer agendamento.",
+          "requires_assessment": true,
+          "detailed_description": "Diagnóstico capilar com especialista.",
+          "reference_photos_required": false,
+          "estimated_duration_minutes": 45
+        },
+        {
+          "id": "1288e793-47af-4f72-b1fc-17bcfab6dc26",
+          "active": true,
+          "created_at": "2026-07-01T02:44:56.505Z",
+          "service_id": "52000000-0000-0000-0000-000000000001",
+          "updated_at": "2026-07-05T00:55:33.440Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "deposit_type": "amount",
+          "deposit_value": "190.00",
+          "initial_price": "950.00",
+          "priority_order": 100,
+          "commercial_name": "Aplicação Fita Adesiva",
+          "allow_auto_quote": true,
+          "professional_ids": [],
+          "requires_deposit": true,
+          "short_description": "Aplicação premium personalizada.",
+          "allow_auto_booking": true,
+          "required_questions": [],
+          "recommended_message": "",
+          "requires_assessment": true,
+          "detailed_description": "Aplicação premium personalizada.",
+          "reference_photos_required": false,
+          "estimated_duration_minutes": 210
+        },
+        {
+          "id": "4dd9882c-e91f-42b9-b721-d89c8bd8e380",
+          "active": true,
+          "created_at": "2026-07-01T02:45:03.089Z",
+          "service_id": "52000000-0000-0000-0000-000000000002",
+          "updated_at": "2026-07-05T00:55:56.779Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "deposit_type": "amount",
+          "deposit_value": "250.00",
+          "initial_price": "1250.00",
+          "priority_order": 100,
+          "commercial_name": "Aplicação Microlink",
+          "allow_auto_quote": true,
+          "professional_ids": [],
+          "requires_deposit": true,
+          "short_description": "Aplicação sem cola com movimento natural.",
+          "allow_auto_booking": true,
+          "required_questions": [],
+          "recommended_message": "",
+          "requires_assessment": true,
+          "detailed_description": "Aplicação sem cola com movimento natural.",
+          "reference_photos_required": false,
+          "estimated_duration_minutes": 240
+        },
+        {
+          "id": "1138dc1e-1bd4-4b21-957a-28df8d12829b",
+          "active": true,
+          "created_at": "2026-07-01T02:45:12.382Z",
+          "service_id": "52000000-0000-0000-0000-000000000003",
+          "updated_at": "2026-07-05T00:56:21.826Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "deposit_type": "amount",
+          "deposit_value": "80.00",
+          "initial_price": "420.00",
+          "priority_order": 100,
+          "commercial_name": "Manutenção Fita Adesiva",
+          "allow_auto_quote": true,
+          "professional_ids": [],
+          "requires_deposit": true,
+          "short_description": "Reposicionamento, higienização e finalização.",
+          "allow_auto_booking": true,
+          "required_questions": [],
+          "recommended_message": "",
+          "requires_assessment": true,
+          "detailed_description": "Reposicionamento, higienização e finalização.",
+          "reference_photos_required": false,
+          "estimated_duration_minutes": 150
+        }
+      ],
+      "inventory_movements": [],
+      "before_after_gallery": [],
+      "integration_settings": [
+        {
+          "enabled": false,
+          "provider": "sumup",
+          "last_error": null,
+          "updated_at": "2026-06-22T13:14:29.624Z",
+          "updated_by": null,
+          "public_config": {
+            "environment": "sandbox"
+          },
+          "last_success_at": null
+        },
+        {
+          "enabled": false,
+          "provider": "whatsapp",
+          "last_error": null,
+          "updated_at": "2026-06-22T13:14:29.624Z",
+          "updated_by": null,
+          "public_config": {},
+          "last_success_at": null
+        },
+        {
+          "enabled": false,
+          "provider": "resend",
+          "last_error": null,
+          "updated_at": "2026-06-22T13:14:29.624Z",
+          "updated_by": null,
+          "public_config": {},
+          "last_success_at": null
+        },
+        {
+          "enabled": true,
+          "provider": "message_templates",
+          "last_error": null,
+          "updated_at": "2026-07-09T20:59:54.890Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "public_config": {
+            "reminder": "Olá, {name}! Lembrete Carol Sol: seu atendimento de {service} com {professional} será {window}.",
+            "reschedule": "{client} solicitou reagendamento de {service} para {date}. Acesse sua agenda para responder.",
+            "cancellation": "Olá, {name}. Seu agendamento de {service} em {date} foi cancelado.",
+            "confirmation": "Olá, {name}! Seu agendamento de {service} com {professional} foi reservado para {date}. — Carol Sol\nLembrete de Agendamento"
+          },
+          "last_success_at": null
+        }
+      ],
+      "marketing_promotions": [
+        {
+          "id": "f4a4c6a2-f6ac-42e6-a105-726bfa9b9e1a",
+          "title": "Doação de cabelo",
+          "active": true,
+          "ends_at": "2026-07-11T00:00:00.000Z",
+          "archived": false,
+          "keywords": [
+            "promoção",
+            "doação de cabelo",
+            "doação"
+          ],
+          "starts_at": "2026-07-01T00:00:00.000Z",
+          "created_at": "2026-07-09T20:45:05.170Z",
+          "created_by": "00000000-0000-0000-0000-000000000001",
+          "updated_at": "2026-07-09T20:45:05.170Z",
+          "updated_by": "00000000-0000-0000-0000-000000000001",
+          "description": "promoção, doação de cabelo, doação",
+          "show_on_site": false,
+          "whatsapp_only": true,
+          "original_value": "300.00",
+          "promotional_value": "150.00"
+        }
+      ],
+      "human_handoff_tickets": [],
+      "professional_services": [
+        {
+          "service_id": "52000000-0000-0000-0000-000000000001",
+          "custom_price": null,
+          "commission_rate": "100.00",
+          "professional_id": "a000e61c-64dd-448f-b52c-d18fd8a31a92"
+        },
+        {
+          "service_id": "52000000-0000-0000-0000-000000000002",
+          "custom_price": null,
+          "commission_rate": "100.00",
+          "professional_id": "a000e61c-64dd-448f-b52c-d18fd8a31a92"
+        },
+        {
+          "service_id": "52000000-0000-0000-0000-000000000004",
+          "custom_price": null,
+          "commission_rate": "100.00",
+          "professional_id": "a000e61c-64dd-448f-b52c-d18fd8a31a92"
+        },
+        {
+          "service_id": "52000000-0000-0000-0000-000000000003",
+          "custom_price": null,
+          "commission_rate": "100.00",
+          "professional_id": "a000e61c-64dd-448f-b52c-d18fd8a31a92"
+        }
+      ],
+      "whatsapp_message_logs": [],
+      "conversation_tag_links": [],
+      "payment_status_history": [],
+      "whatsapp_conversations": [],
+      "whatsapp_incoming_queue": [
+        {
+          "id": "013404e7-28ae-4c5b-9524-e9ba2e06ac46",
+          "text": "Oi",
+          "processed": true,
+          "created_at": "2026-07-08T02:20:41.934Z",
+          "message_id": "ACF1F21840F2B1BCA254163671EA092F",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T02:20:43.711Z"
+        },
+        {
+          "id": "b0a8ae4b-fa8b-44cb-890d-57c033cac7d0",
+          "text": "Gostaria de saber se cabelo curto da pra fazer aplicação de megahair",
+          "processed": true,
+          "created_at": "2026-07-08T02:23:32.010Z",
+          "message_id": "AC7B8207CDABE56BC6E795FDB1165763",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T02:23:33.777Z"
+        },
+        {
+          "id": "bb6cb31d-0ad8-4376-9041-cf618a9be299",
+          "text": "Sim",
+          "processed": true,
+          "created_at": "2026-07-08T02:24:06.501Z",
+          "message_id": "AC91C9D313CC8E2EF28F38DF37173A82",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T02:24:08.107Z"
+        },
+        {
+          "id": "cd7c992f-84c3-40c6-a082-3c0225f87571",
+          "text": "2",
+          "processed": true,
+          "created_at": "2026-07-08T02:24:15.816Z",
+          "message_id": "AC342343000308AD11E6C9579A9071A9",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T02:24:17.427Z"
+        },
+        {
+          "id": "a709f829-f490-4984-a849-9e4084649d8f",
+          "text": "Mas você tem o cabelo pronto ou tenho que comprar?",
+          "processed": true,
+          "created_at": "2026-07-08T02:24:35.754Z",
+          "message_id": "ACF5D68B8FD038564076F7608FE405B3",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T02:24:37.529Z"
+        },
+        {
+          "id": "c63ce5af-6bd2-4d71-826d-bd6d4d95f9fb",
+          "text": "Vocês vendem cabelo?",
+          "processed": true,
+          "created_at": "2026-07-08T02:25:12.911Z",
+          "message_id": "ACFB6CCEB10E4A2FCE4C851B44EFE6CB",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T02:25:14.664Z"
+        },
+        {
+          "id": "b58b443b-3f85-417d-b006-90a3b884d91c",
+          "text": "Eu quero comprar pra por em outro lugar",
+          "processed": true,
+          "created_at": "2026-07-08T02:25:44.329Z",
+          "message_id": "AC9D4976E765627693828CACFBF9C136",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T02:25:45.955Z"
+        },
+        {
+          "id": "e87ac08f-3d1b-43dc-bb7f-01fb39463d25",
+          "text": "Eu quero comprar cabelo pra colocar em outro lugar",
+          "processed": true,
+          "created_at": "2026-07-08T02:26:04.547Z",
+          "message_id": "AC0CF4FD9436CA7EDA9EB89C9B6A9B3B",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T02:26:06.159Z"
+        },
+        {
+          "id": "73664350-18ab-4a4f-ae8f-f7736648d397",
+          "text": "Dia",
+          "processed": true,
+          "created_at": "2026-07-08T12:11:04.792Z",
+          "message_id": "AC206F900CB924A5D3DDD91E3BE05D1D",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T12:11:06.428Z"
+        },
+        {
+          "id": "ba70e96f-cdb4-485e-9d68-c91c7d7f55e9",
+          "text": "*Jhulia Fernanda ㅤ:*\nOlá, bom dia! Aqui é da Orthodontic.\nPassando para confirmar a consulta do(a) Antonio amanhã 09/07 ás 09:00h. Podemos confirmar?",
+          "processed": true,
+          "created_at": "2026-07-08T12:11:09.548Z",
+          "message_id": "AC241978BB67A278992043BA1ECE9725",
+          "phone_number": "5514997092652",
+          "processed_at": "2026-07-08T12:11:11.164Z"
+        },
+        {
+          "id": "982cf5f5-a9e8-4c56-8ae6-53319c9f54bb",
+          "text": "Bom dia",
+          "processed": true,
+          "created_at": "2026-07-08T12:11:14.609Z",
+          "message_id": "AC3BFBDA946CB3D8B9DED47DF6BBADC3",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T12:11:16.234Z"
+        },
+        {
+          "id": "c5d35f78-2335-46f1-ba1b-491f7085e983",
+          "text": "Você vende cabelo?",
+          "processed": true,
+          "created_at": "2026-07-08T12:11:25.484Z",
+          "message_id": "AC9234E0B39E45D52AE609B32BBD7AB5",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T12:11:27.251Z"
+        },
+        {
+          "id": "4cdff07d-e408-49fd-9c9f-0871195b8c92",
+          "text": "Sim quero",
+          "processed": true,
+          "created_at": "2026-07-08T12:12:35.789Z",
+          "message_id": "ACD7C1EDB2AE03126A6731BF1CFF2925",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T12:12:37.408Z"
+        },
+        {
+          "id": "765488ff-0e49-43d6-a955-7902a098862d",
+          "text": "¹",
+          "processed": true,
+          "created_at": "2026-07-08T12:12:46.483Z",
+          "message_id": "ACA8BB12E06189880840C9AFF96CC494",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T12:12:48.257Z"
+        },
+        {
+          "id": "2cbd04f4-8673-4d58-84e2-593145937be1",
+          "text": "Avaliação",
+          "processed": true,
+          "created_at": "2026-07-08T12:13:09.550Z",
+          "message_id": "AC39C5AA5A03DD6E035C6ECA75D04532",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T12:13:11.338Z"
+        },
+        {
+          "id": "e665ab91-34e0-4fed-a1c5-b917d41af35f",
+          "text": "1",
+          "processed": true,
+          "created_at": "2026-07-08T12:13:16.372Z",
+          "message_id": "ACB6880976E9B230B08565131AF6F52F",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T12:13:17.974Z"
+        },
+        {
+          "id": "15c36fd5-0753-4f72-a91d-e38fb9e10422",
+          "text": "5",
+          "processed": true,
+          "created_at": "2026-07-08T12:13:26.353Z",
+          "message_id": "AC53EEA0E24733966FC1F55739CAF125",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T12:13:27.975Z"
+        },
+        {
+          "id": "b04089e1-0903-42d3-9825-88e41c935e18",
+          "text": "Carla oliva cjenri@jsiie.com",
+          "processed": true,
+          "created_at": "2026-07-08T12:14:01.908Z",
+          "message_id": "ACFA64B2A2913B9E952525562E75481B",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T12:14:03.509Z"
+        },
+        {
+          "id": "ba672f49-271e-4599-bd74-a8f9b11da25a",
+          "text": "Sim",
+          "processed": true,
+          "created_at": "2026-07-08T12:14:10.142Z",
+          "message_id": "AC755E57AD3BE734DEBFB60C811EEB15",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T12:14:11.769Z"
+        },
+        {
+          "id": "76e759c4-c409-4b34-9789-955c0d575d12",
+          "text": "2",
+          "processed": true,
+          "created_at": "2026-07-08T12:14:32.592Z",
+          "message_id": "ACAC83D6D07D132AB720573196ED7404",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T12:14:34.225Z"
+        },
+        {
+          "id": "83925103-d470-42dd-8ef0-63b1ebf8a6db",
+          "text": "Eu queria formatar meu Pc quanto custa?",
+          "processed": true,
+          "created_at": "2026-07-08T12:14:51.786Z",
+          "message_id": "AC4A64AD640925CCF327BB50347C8A5B",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T12:14:53.547Z"
+        },
+        {
+          "id": "c17e9d6b-d358-4cfe-a7bd-d2bf5e5ad212",
+          "text": "Meu cabelo está quebradiço gostaria de fazer hidratação ou corta ele o que vc recomenda?",
+          "processed": true,
+          "created_at": "2026-07-08T12:15:32.540Z",
+          "message_id": "AC1C9E633C5D1C954A2BC41378CACB67",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T12:15:34.160Z"
+        },
+        {
+          "id": "8477a027-9ed5-4b63-bca6-ace2ebbf0612",
+          "text": "Entendi",
+          "processed": true,
+          "created_at": "2026-07-08T12:16:07.873Z",
+          "message_id": "AC8AA85B7787F31E2B2C5DE569B80738",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T12:16:09.493Z"
+        },
+        {
+          "id": "0827d416-576c-4311-a049-1247dd6a2847",
+          "text": "Bom dia",
+          "processed": true,
+          "created_at": "2026-07-08T14:29:20.048Z",
+          "message_id": "AC40E6619F1CF14377E9188B4FD9A29F",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T14:29:21.794Z"
+        },
+        {
+          "id": "9a3d8c6d-7da8-4438-b205-e109bf30b228",
+          "text": "Agendar horária quais serviços vc tem?",
+          "processed": true,
+          "created_at": "2026-07-08T14:30:42.631Z",
+          "message_id": "ACEFCC5C9F63491A113C3696FE7BF35E",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T14:30:44.393Z"
+        },
+        {
+          "id": "ca0be3c2-3322-4604-bb5b-d34c2e1f15e1",
+          "text": "Manutenção, Antônio César, 14997334863, amanhã 9h",
+          "processed": true,
+          "created_at": "2026-07-08T14:31:48.123Z",
+          "message_id": "AC48BDDCED489E4C6B7F6953BFA666A8",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T14:31:49.768Z"
+        },
+        {
+          "id": "f3b87fc6-e9b2-4c7b-b988-a939b8ec32de",
+          "text": "9/9/2026",
+          "processed": true,
+          "created_at": "2026-07-08T14:32:17.971Z",
+          "message_id": "AC8BC6671919AB0336B3E05DDA9CED6F",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T14:32:19.589Z"
+        },
+        {
+          "id": "85580535-898f-4b61-97a1-161fb9ef36f4",
+          "text": "09/09/2026",
+          "processed": true,
+          "created_at": "2026-07-08T14:32:36.441Z",
+          "message_id": "AC0983E1E051788DC34A566E752C2E75",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T14:32:38.228Z"
+        },
+        {
+          "id": "b9d1fbb3-57f9-4996-b5d6-c00912bed569",
+          "text": "Oi",
+          "processed": true,
+          "created_at": "2026-07-08T14:51:32.210Z",
+          "message_id": "ACCC34882439252725958B0FEAD86F49",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T14:51:33.863Z"
+        },
+        {
+          "id": "98cb4c2b-a878-4cdf-8d0f-91e7f08c70c8",
+          "text": "Meu cabelo é curto e queimou como eu resolvo isso?",
+          "processed": true,
+          "created_at": "2026-07-08T14:52:00.506Z",
+          "message_id": "AC6621732C41B2DB1CA327CBA02A45E3",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T14:52:02.156Z"
+        },
+        {
+          "id": "6a1952fb-2c52-4de4-a2a1-401beee0a195",
+          "text": "Quero fazer avaliação",
+          "processed": true,
+          "created_at": "2026-07-08T14:53:34.547Z",
+          "message_id": "AC75D7FF4A84C750FF70CE08BB460A85",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T14:53:36.184Z"
+        },
+        {
+          "id": "661111b1-d08a-4603-8732-956288cd0105",
+          "text": "Sexta feira 10/7",
+          "processed": true,
+          "created_at": "2026-07-08T14:53:55.452Z",
+          "message_id": "ACD196EBEED99BE1987DEF354F1100CF",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T14:53:57.222Z"
+        },
+        {
+          "id": "fd1ce8a3-f084-489f-ac08-df9f5fb0fa01",
+          "text": "6",
+          "processed": true,
+          "created_at": "2026-07-08T14:54:17.671Z",
+          "message_id": "AC3388CF4FCC320F94ADAEE70101E416",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T14:54:19.305Z"
+        },
+        {
+          "id": "51ce695a-349a-4acb-81d8-a02eff71655d",
+          "text": "10",
+          "processed": true,
+          "created_at": "2026-07-08T14:54:25.036Z",
+          "message_id": "AC770E080810C9A4BA19DB7E83663124",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T14:54:26.794Z"
+        },
+        {
+          "id": "98a67a32-9847-48ce-8547-08688a252e3e",
+          "text": "Antônio Nascimento, cyberfenix@gmail.com, 303.917.468-12, 15/02/1981",
+          "processed": true,
+          "created_at": "2026-07-08T14:55:46.365Z",
+          "message_id": "AC705C9C066DBD8B1BECB0D90EC07233",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T14:55:47.999Z"
+        },
+        {
+          "id": "d9d45737-9355-4924-809c-86c26e35d8a0",
+          "text": "Sim",
+          "processed": true,
+          "created_at": "2026-07-08T14:56:00.941Z",
+          "message_id": "ACBC45A2FCB61FC0B3C0C861AEDA96A2",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T14:56:02.712Z"
+        },
+        {
+          "id": "708b34fe-acc0-4723-802f-4376d42de152",
+          "text": "De onde é está cobrança?",
+          "processed": true,
+          "created_at": "2026-07-08T15:07:52.603Z",
+          "message_id": "ACB43C746D4488EAF3AAE3DD1E7777C0",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T15:07:54.323Z"
+        },
+        {
+          "id": "6e25cedb-1deb-42fb-b6c8-42b4de987fb8",
+          "text": "Boa tarde você tem horário para sábado?",
+          "processed": true,
+          "created_at": "2026-07-08T15:26:29.181Z",
+          "message_id": "AC82AA67229205810D704AEC634EB2A2",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T15:26:31.817Z"
+        },
+        {
+          "id": "f704a848-c512-49e7-be7e-37fb465b822c",
+          "text": "?",
+          "processed": true,
+          "created_at": "2026-07-08T15:26:31.700Z",
+          "message_id": "AC90AC5F5F5F05C2992E23FD8F889D22",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T15:26:31.817Z"
+        },
+        {
+          "id": "85c42616-8a09-466c-906e-c9bac440340b",
+          "text": "Atendente",
+          "processed": true,
+          "created_at": "2026-07-08T15:27:00.343Z",
+          "message_id": "ACE0886E9456427D8D9637DF36D5D873",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T15:27:01.973Z"
+        },
+        {
+          "id": "e4a52c26-1c29-4a24-9a86-dd074f43a5e6",
+          "text": "Boa tarde Carol mudança de planos tem como vc mudar o horário para amanhã às dez da manhã falei com minha patroa amanhã é feriado e não preciso vir obrigada e desculpa",
+          "processed": true,
+          "created_at": "2026-07-08T17:08:59.062Z",
+          "message_id": "AC24DE9934F2EFA22983633AD64BF120",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T17:09:00.691Z"
+        },
+        {
+          "id": "b26e2743-4109-4eda-933b-b5cd7f194c06",
+          "text": "Deixa eu perguntar, quanto está pra preenchimento de pontas??",
+          "processed": true,
+          "created_at": "2026-07-08T17:10:36.309Z",
+          "message_id": "ACF1D965D70A64E441E3C29F7976BCA5",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T17:10:38.027Z"
+        },
+        {
+          "id": "d29c8e40-fc46-4e62-bb69-46772ffef638",
+          "text": "A tarde vc consegue ? Esse horário pra mim complica precisa ser tipo das 12 amiga",
+          "processed": true,
+          "created_at": "2026-07-08T17:12:50.697Z",
+          "message_id": "AC35566390FE67A4272F84A17540FE44",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T17:12:52.324Z"
+        },
+        {
+          "id": "545f1825-48fb-4370-b92f-e3c5d5be7e28",
+          "text": "2",
+          "processed": true,
+          "created_at": "2026-07-08T17:13:01.904Z",
+          "message_id": "ACC40CC7B3B5E1204000798E1C0CC8BC",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T17:13:03.535Z"
+        },
+        {
+          "id": "d700b0ff-a1bb-4ce2-ac60-59c0962a5421",
+          "text": "A tarde vc consegue ? Esse horário pra mim complica precisa ser tipo das12 amiga",
+          "processed": true,
+          "created_at": "2026-07-08T17:13:26.473Z",
+          "message_id": "ACFD73396C4F73E40CBB6A4DD92A67CE",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T17:13:28.283Z"
+        },
+        {
+          "id": "44ac5bd3-e9c4-4a45-ad70-094bf8a97d1c",
+          "text": "2",
+          "processed": true,
+          "created_at": "2026-07-08T17:13:32.120Z",
+          "message_id": "AC877390C6A1B2229D2CF8AF19F08697",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T17:13:33.735Z"
+        },
+        {
+          "id": "2661aad9-90df-4e65-a8bd-5ed2323467aa",
+          "text": "Tem outro horário?",
+          "processed": true,
+          "created_at": "2026-07-08T17:13:44.529Z",
+          "message_id": "ACC55C9D2826D13780A3FF4812DAC143",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T17:13:46.310Z"
+        },
+        {
+          "id": "a0a3518b-727f-4e13-9e00-1be33c9b7e4c",
+          "text": "Hoje a tarde",
+          "processed": true,
+          "created_at": "2026-07-08T17:13:58.531Z",
+          "message_id": "ACBB0F2BFD841C27D0927051E5324FD5",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T17:14:00.178Z"
+        },
+        {
+          "id": "6cfd019b-85dd-4987-929e-5c77566dfd0e",
+          "text": "Oii bom dia tudo bem vc tem microlink de mega pra vender",
+          "processed": true,
+          "created_at": "2026-07-08T19:07:28.222Z",
+          "message_id": "AC7F31175FBD538EF110965155A2C3BF",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:07:30.012Z"
+        },
+        {
+          "id": "4095c162-6344-4820-b663-a6ec30bca622",
+          "text": "Mais detalhes",
+          "processed": true,
+          "created_at": "2026-07-08T19:08:03.175Z",
+          "message_id": "AC9EAA2BBCDBF2BBC6BFC29C317183CC",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:08:04.787Z"
+        },
+        {
+          "id": "ab5752c3-2957-4161-a56e-89c297308008",
+          "text": "Quero saber mais sobre microlink",
+          "processed": true,
+          "created_at": "2026-07-08T19:08:31.588Z",
+          "message_id": "AC72B6541295729DA2014AD81EA00541",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:08:33.220Z"
+        },
+        {
+          "id": "f2f1f9b0-ef1c-4378-b42a-37f636e15ec0",
+          "text": "Sim",
+          "processed": true,
+          "created_at": "2026-07-08T19:09:25.134Z",
+          "message_id": "AC9A28D8B7B0C96A4DB73847E4789CF9",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:09:26.772Z"
+        },
+        {
+          "id": "22abe699-5334-4ce1-98e2-f610ee7eaa4c",
+          "text": "Ok obrigado",
+          "processed": true,
+          "created_at": "2026-07-08T19:09:42.202Z",
+          "message_id": "ACA8C5C989666BB3AB6BA5D682E952B3",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:09:43.981Z"
+        },
+        {
+          "id": "1e72dd30-ca6a-49c9-a616-978c6a0cd048",
+          "text": "Vc tem horário hj?",
+          "processed": true,
+          "created_at": "2026-07-08T19:11:01.109Z",
+          "message_id": "ACCE164361400921B575942C6A444D87",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:11:02.756Z"
+        },
+        {
+          "id": "2f891406-3209-4ce1-be4e-473fbc60e577",
+          "text": "2",
+          "processed": true,
+          "created_at": "2026-07-08T19:11:14.789Z",
+          "message_id": "ACB198005B832C166D60D78E30DFE432",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:11:16.557Z"
+        },
+        {
+          "id": "76cd35e9-0131-4aba-ab15-71d2398cdbea",
+          "text": "Queria saber sobre a doação de cabelos",
+          "processed": true,
+          "created_at": "2026-07-08T19:12:04.690Z",
+          "message_id": "ACEE6CEBFD5D11A9912BB18ACBD7E9FA",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:12:06.456Z"
+        },
+        {
+          "id": "1e6562f5-c86e-4b7f-aa2f-d324405ca56f",
+          "text": "cyberfenix@gmail.com",
+          "processed": true,
+          "created_at": "2026-07-08T19:16:01.213Z",
+          "message_id": "AC30AED6B1EB94970BBA0B3B6531C5B2",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:16:02.829Z"
+        },
+        {
+          "id": "c311e75b-bf94-47a8-80ef-1a370c4d0d16",
+          "text": "Agora não",
+          "processed": true,
+          "created_at": "2026-07-08T19:12:49.894Z",
+          "message_id": "ACCB6146534D434ACC0B662D8A3BC809",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:12:51.525Z"
+        },
+        {
+          "id": "a87170b5-4c1b-4dda-bae9-672fecf1651d",
+          "text": "A tarde vc consegue ? Esse horário pra mim complica precisa ser tipo das12 amiga",
+          "processed": true,
+          "created_at": "2026-07-08T19:14:01.161Z",
+          "message_id": "ACF4238FD8ADE3F7AF3B016667AB3AEE",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:14:02.938Z"
+        },
+        {
+          "id": "17888c3e-275b-4ae3-81b8-87bd3cd995f0",
+          "text": "Boa tarde",
+          "processed": true,
+          "created_at": "2026-07-09T19:51:41.674Z",
+          "message_id": "AC4A4C0E7FF459E30C8214D4EAB6DE3D",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T19:51:43.475Z"
+        },
+        {
+          "id": "0760ff89-5212-497e-903f-b36015b67172",
+          "text": "2",
+          "processed": true,
+          "created_at": "2026-07-08T19:14:13.819Z",
+          "message_id": "ACC08F386B6781D885F38F81CF71CE0D",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:14:15.619Z"
+        },
+        {
+          "id": "bde877ac-f0ae-44b1-ab30-8d434f651bd8",
+          "text": "Aplicação fita adesiva",
+          "processed": true,
+          "created_at": "2026-07-08T19:14:45.315Z",
+          "message_id": "ACB978FDC8BD55EC7235EEF885A01646",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:14:46.946Z"
+        },
+        {
+          "id": "8197e23d-0d53-4eca-912f-bb53852a3f83",
+          "text": "Tem horário amanhã?",
+          "processed": true,
+          "created_at": "2026-07-09T19:51:59.588Z",
+          "message_id": "AC33472E773D5C541D9DFBCB2BF68240",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T19:52:01.209Z"
+        },
+        {
+          "id": "9dc96cce-9162-4f7f-8302-4fa6dd6be757",
+          "text": "Hoje a tarde",
+          "processed": true,
+          "created_at": "2026-07-08T19:14:58.843Z",
+          "message_id": "ACDB4D060F3ADC9E3F3DC5139C05777A",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:15:00.524Z"
+        },
+        {
+          "id": "627c2910-af13-474d-9bec-4a3e14418d4d",
+          "text": "Rogogo kareo",
+          "processed": true,
+          "created_at": "2026-07-08T19:15:18.142Z",
+          "message_id": "ACBAF9070F4A277907EEF33020FE94B0",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:15:19.775Z"
+        },
+        {
+          "id": "32c4558e-f567-490c-81a7-799e76988ea2",
+          "text": "4",
+          "processed": true,
+          "created_at": "2026-07-09T19:52:13.633Z",
+          "message_id": "ACE370931684D33B318825F59182C3E3",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T19:52:15.433Z"
+        },
+        {
+          "id": "b97218e1-bc90-4bbb-903c-b0d97c323031",
+          "text": "Carlos silva",
+          "processed": true,
+          "created_at": "2026-07-08T19:15:45.542Z",
+          "message_id": "AC0F3678D9E38460B5776D5027874F83",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-08T19:15:47.316Z"
+        },
+        {
+          "id": "8d946a28-d41f-4a7d-a963-94971c586fd5",
+          "text": "Amanhã",
+          "processed": true,
+          "created_at": "2026-07-09T19:52:35.092Z",
+          "message_id": "AC0DCC1998A61C954A1462E612AC35F4",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T19:52:36.709Z"
+        },
+        {
+          "id": "ea16278a-6d04-4c3d-89e3-791f17048d83",
+          "text": "As 14h",
+          "processed": true,
+          "created_at": "2026-07-09T19:52:54.596Z",
+          "message_id": "ACB13D8B702838364A9ED50B11DB3CDD",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T19:52:56.358Z"
+        },
+        {
+          "id": "7c474d8a-b9f7-4e64-b999-a434e3d25669",
+          "text": "Andreza silva",
+          "processed": true,
+          "created_at": "2026-07-09T19:53:09.033Z",
+          "message_id": "AC10469700820EB9198556D91628BCAD",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T19:53:10.637Z"
+        },
+        {
+          "id": "61b587c3-a064-4652-a063-e3aa241f0ec7",
+          "text": "sjfiej@kdod.com",
+          "processed": true,
+          "created_at": "2026-07-09T19:53:25.871Z",
+          "message_id": "ACE6F9F7F5D974B26806ABA4D748E624",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T19:53:27.623Z"
+        },
+        {
+          "id": "b2d7d526-89cd-4834-8122-21de338381fb",
+          "text": "1498873387",
+          "processed": true,
+          "created_at": "2026-07-09T19:54:06.652Z",
+          "message_id": "ACE959EF4564E16BCF452A6B2D1E3BF0",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T19:54:08.414Z"
+        },
+        {
+          "id": "c60b0f3d-77e0-4619-975d-b584c768c739",
+          "text": "Amanhã às 14h",
+          "processed": true,
+          "created_at": "2026-07-09T19:54:24.392Z",
+          "message_id": "AC616E65D2E3E2984519923AECCD72C2",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T19:54:26.148Z"
+        },
+        {
+          "id": "109db04a-59dd-44d6-b566-ab0b79cf0bf4",
+          "text": "Boa noite",
+          "processed": true,
+          "created_at": "2026-07-09T20:15:16.916Z",
+          "message_id": "AC6367D68EB8E98D424DF1359299A448",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T20:15:18.776Z"
+        },
+        {
+          "id": "0ba57e44-84e5-4e5d-b5b3-25d739262e69",
+          "text": "Tem promoção?",
+          "processed": true,
+          "created_at": "2026-07-09T20:15:35.912Z",
+          "message_id": "ACAEB9DA62AC8B6676BCB33A03D54BEA",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T20:15:37.559Z"
+        },
+        {
+          "id": "a9103ad1-4223-48fa-82d5-817bcaf50f47",
+          "text": "Promoção de doação de cabelo",
+          "processed": true,
+          "created_at": "2026-07-09T20:15:54.344Z",
+          "message_id": "AC7B460301E50E38D80CAFDDFF635DF8",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T20:15:55.964Z"
+        },
+        {
+          "id": "b7b8e97d-eb92-420d-8f14-436236f9eedd",
+          "text": "Oi boa tarde",
+          "processed": true,
+          "created_at": "2026-07-09T21:01:19.741Z",
+          "message_id": "ACD2E735CD5E9AAFE45AE12449D87F19",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T21:01:21.574Z"
+        },
+        {
+          "id": "1ba56367-7615-4bf7-a178-e47dc513e7fa",
+          "text": "Boa noite",
+          "processed": true,
+          "created_at": "2026-07-09T21:11:59.466Z",
+          "message_id": "ACC4872453B0360F3BEDB4E161C8B6A5",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T21:12:01.171Z"
+        },
+        {
+          "id": "308c2c4b-c05f-4268-ac2d-3cc71ce4ab75",
+          "text": "Gostaria de saber se vocês fazem aplicação de cabelo humano",
+          "processed": true,
+          "created_at": "2026-07-09T21:12:28.283Z",
+          "message_id": "AC43659575C35EC7E1E06F1107A56C01",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T21:12:30.103Z"
+        },
+        {
+          "id": "6605921c-3fe3-4a29-a6e4-1a8c2d54c87b",
+          "text": "Valores da aplicação",
+          "processed": true,
+          "created_at": "2026-07-09T21:14:26.262Z",
+          "message_id": "AC1586E1C739303D76EF67CD4E05253C",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T21:14:27.898Z"
+        },
+        {
+          "id": "3e6c60ca-0697-4954-b201-dcf097b4a18c",
+          "text": "Opções de cabelo disponível",
+          "processed": true,
+          "created_at": "2026-07-09T21:15:01.681Z",
+          "message_id": "AC27ADBBEE87D79FF2EFF640919E0223",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T21:15:03.444Z"
+        },
+        {
+          "id": "29194e0c-5575-4413-b0c7-b4e602295c97",
+          "text": "Microlink morena",
+          "processed": true,
+          "created_at": "2026-07-09T21:15:49.647Z",
+          "message_id": "ACC514A127927FCD4D404B081C0DD130",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T21:15:51.410Z"
+        },
+        {
+          "id": "3db97810-8c75-47bf-a14d-5d0b42d7068c",
+          "text": "Quero fazer avaliação",
+          "processed": true,
+          "created_at": "2026-07-09T21:16:13.938Z",
+          "message_id": "ACC1E89C356F8E1D5749F0A7A90DAF38",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T21:16:15.588Z"
+        },
+        {
+          "id": "858eac90-72b8-4466-aa14-e6ec2c586a2a",
+          "text": "2",
+          "processed": true,
+          "created_at": "2026-07-09T21:16:22.207Z",
+          "message_id": "AC81F07E6AB204E78F6F72E3D0B8B619",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T21:16:23.808Z"
+        },
+        {
+          "id": "bd4a67b4-49d9-48d3-9263-e6f0d4885761",
+          "text": "5",
+          "processed": true,
+          "created_at": "2026-07-09T21:16:34.800Z",
+          "message_id": "AC4EEF6ED581C78B09231A26E8C1C8B1",
+          "phone_number": "5514997334863",
+          "processed_at": "2026-07-09T21:16:36.407Z"
+        }
+      ],
+      "professional_availability": [
+        {
+          "id": "025c23ef-6c43-4c02-953d-ab0ea610b907",
+          "active": true,
+          "ends_at": "18:00:00",
+          "weekday": 1,
+          "starts_at": "09:00:00",
+          "professional_id": "a000e61c-64dd-448f-b52c-d18fd8a31a92"
+        },
+        {
+          "id": "2c61ecbc-093c-48eb-b9c6-1afea3d60b5c",
+          "active": true,
+          "ends_at": "18:00:00",
+          "weekday": 2,
+          "starts_at": "09:00:00",
+          "professional_id": "a000e61c-64dd-448f-b52c-d18fd8a31a92"
+        },
+        {
+          "id": "46c1fce4-2d5a-4f5d-86bd-6c141e8a4c1c",
+          "active": true,
+          "ends_at": "18:00:00",
+          "weekday": 3,
+          "starts_at": "09:00:00",
+          "professional_id": "a000e61c-64dd-448f-b52c-d18fd8a31a92"
+        },
+        {
+          "id": "8c68af74-56b3-4d12-9dde-37d519fc1de1",
+          "active": true,
+          "ends_at": "18:00:00",
+          "weekday": 4,
+          "starts_at": "09:00:00",
+          "professional_id": "a000e61c-64dd-448f-b52c-d18fd8a31a92"
+        },
+        {
+          "id": "52003171-db03-4274-817e-32414ea56468",
+          "active": true,
+          "ends_at": "18:00:00",
+          "weekday": 5,
+          "starts_at": "09:00:00",
+          "professional_id": "a000e61c-64dd-448f-b52c-d18fd8a31a92"
+        }
+      ],
+      "appointment_status_history": []
+    },
+    "created_at": "2026-07-09T22:11:09.014Z",
+    "backup_version": "1.0"
+  }
+}
