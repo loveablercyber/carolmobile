@@ -146,11 +146,28 @@ SUMUP_WEBHOOK_SECRET=...
 Uploads:
 
 ```env
+MINIO_ENDPOINT=http://minio:9000
+MINIO_PUBLIC_URL=https://minio.seudominio.com
+MINIO_BUCKET=carolmobile
+MINIO_ACCESS_KEY=...
+MINIO_SECRET_KEY=...
+MINIO_REGION=us-east-1
+MINIO_UPLOAD_FOLDER=carol-sol
+MINIO_FORCE_PATH_STYLE=true
+```
+
+O MinIO/S3 é o storage recomendado no Coolify. O backend recebe o arquivo,
+assina a operação internamente e envia para o bucket sem expor chaves no
+navegador.
+
+Cloudinary ficou como integração legada/opcional:
+
+```env
 CLOUDINARY_PROVIDERS_JSON=[]
 CLOUDINARY_DEFAULT_FOLDER=carol-sol
 ```
 
-Quando Cloudinary não estiver disponível, use o storage local persistente do Coolify:
+Quando MinIO/Cloudinary não estiver disponível, use o storage local persistente do Coolify:
 
 ```env
 LOCAL_UPLOAD_ENABLED=true
@@ -230,7 +247,7 @@ CRON_SECRET="seu-segredo" npm run coolify:smoke -- https://dominio-temporario-do
    - SumUp checkout
    - retorno SumUp
    - webhook SumUp
-   - uploads Cloudinary
+   - uploads MinIO
 5. Só depois trocar `APP_URL`, `SUMUP_RETURN_URL` e webhooks para `https://carolsol.com.br`.
 
 ## Cutover Final

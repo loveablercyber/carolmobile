@@ -5,6 +5,7 @@ import {
   cloudinaryProviderForRotation,
   createCloudinaryUploadSignature,
   isConfiguredCloudinaryUrl,
+  isConfiguredMinioUrl,
   parseCloudinaryAssetUrl,
 } from "../server/lib/integrations.js";
 
@@ -79,5 +80,32 @@ test("accepts local upload URLs when local storage is enabled", () => {
   } finally {
     if (previous === undefined) delete process.env.LOCAL_UPLOAD_ENABLED;
     else process.env.LOCAL_UPLOAD_ENABLED = previous;
+  }
+});
+
+test("accepts MinIO upload URLs when S3 storage is configured", () => {
+  const previous = {
+    MINIO_ENDPOINT: process.env.MINIO_ENDPOINT,
+    MINIO_PUBLIC_URL: process.env.MINIO_PUBLIC_URL,
+    MINIO_BUCKET: process.env.MINIO_BUCKET,
+    MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY,
+    MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY,
+  };
+  process.env.MINIO_ENDPOINT = "https://minio.example.com";
+  process.env.MINIO_PUBLIC_URL = "https://cdn.example.com";
+  process.env.MINIO_BUCKET = "carolmobile";
+  process.env.MINIO_ACCESS_KEY = "key";
+  process.env.MINIO_SECRET_KEY = "secret";
+  try {
+    const imageUrl = "https://cdn.example.com/carolmobile/carol-sol/client-photo/2026/07/14/photo.jpg";
+    const rawUrl = "https://cdn.example.com/carolmobile/carol-sol/payment-receipt/2026/07/14/file.pdf";
+    assert.equal(isConfiguredMinioUrl(imageUrl, ["image"]), true);
+    assert.equal(isConfiguredCloudinaryUrl(rawUrl, ["raw"]), true);
+    assert.equal(isConfiguredCloudinaryUrl(rawUrl, ["image"]), false);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });

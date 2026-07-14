@@ -51,7 +51,11 @@ const groups = [
   },
   {
     name: "Uploads",
-    required: ["CLOUDINARY_PROVIDERS_JSON", "CLOUDINARY_DEFAULT_FOLDER"],
+    alternatives: [
+      ["MINIO_ENDPOINT", "MINIO_BUCKET", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY"],
+      ["CLOUDINARY_PROVIDERS_JSON", "CLOUDINARY_DEFAULT_FOLDER"],
+      ["LOCAL_UPLOAD_ENABLED", "UPLOAD_DIR", "LOCAL_UPLOAD_FOLDER"],
+    ],
   },
 ];
 
@@ -65,10 +69,19 @@ function hasValue(key) {
 let missing = 0;
 for (const group of groups) {
   console.log(`\n${group.name}`);
-  for (const key of group.required) {
+  for (const key of group.required || []) {
     const ok = hasValue(key);
     if (!ok) missing += 1;
     console.log(`${ok ? "OK" : "FALTANDO"} ${key}`);
+  }
+  if (group.alternatives) {
+    const okGroup = group.alternatives.find((items) => items.every(hasValue));
+    if (!okGroup) {
+      missing += 1;
+      console.log(`FALTANDO uma das opcoes: ${group.alternatives.map((items) => items.join(" + ")).join(" OU ")}`);
+    } else {
+      console.log(`OK ${okGroup.join(" + ")}`);
+    }
   }
   for (const key of group.optional || []) {
     console.log(`${hasValue(key) ? "OK" : "OPCIONAL"} ${key}`);

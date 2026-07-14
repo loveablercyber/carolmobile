@@ -8,6 +8,9 @@ import {
   cloudinaryProviders,
   cloudinaryProviderForRotation,
   createCloudinaryUploadSignature,
+  isMinioConfigured,
+  minioConfig,
+  uploadBufferToMinio,
 } from '../server/lib/integrations.js'
 import { appError, getBody, handleError, methodNotAllowed, send } from '../server/lib/http.js'
 
@@ -188,6 +191,55 @@ async function handleLocalUpload(req, res) {
   })
 }
 
+async function handleMinioUpload(req, res) {
+  if (!isMinioConfigured()) {
+    throw appError('MinIO nao configurado.', 503)
+  }
+  const parsed = parseMultipart(req, await readRawBody(req))
+  const kind = String(parsed.fields.kind || 'attachment').trim().toLowerCase()
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(kind))
+    throw appError('Tipo de arquivo invalido.')
+  const file = parsed.file
+  if (!file?.buffer?.length) throw appError('Arquivo nao informado.')
+  if (file.buffer.length > MAX_UPLOAD_BYTES)
+    throw appError('O arquivo deve ter no maximo 20 MB.')
+  if (!contentTypeAllowed(file.contentType, kind))
+    throw appError('Formato de arquivo nao permitido.')
+
+  const cfg = minioConfig()
+  const now = new Date()
+  const dateFolder = [
+    now.getUTCFullYear(),
+    String(now.getUTCMonth() + 1).padStart(2, '0'),
+    String(now.getUTCDate()).padStart(2, '0'),
+  ].join('/')
+  const originalExt = extname(file.filename || '').toLowerCase().replace(/[^a-z0-9.]/g, '')
+  const extension = originalExt || extensionByType.get(file.contentType) || ''
+  const id = randomUUID()
+  const key = `${cfg.baseFolder}/${kind}/${dateFolder}/${id}${extension}`
+  const uploaded = await uploadBufferToMinio({
+    key,
+    buffer: file.buffer,
+    contentType: file.contentType,
+  })
+  const resourceType = file.contentType.startsWith('image/')
+    ? 'image'
+    : file.contentType.startsWith('video/')
+      ? 'video'
+      : 'raw'
+  return send(res, 200, {
+    url: uploaded.url,
+    secure_url: uploaded.url,
+    publicId: uploaded.publicId,
+    public_id: uploaded.publicId,
+    resourceType,
+    resource_type: resourceType,
+    format: extension.replace(/^\./, '') || undefined,
+    bytes: file.buffer.length,
+    provider: 'minio',
+  })
+}
+
 async function nextRotationValue() {
   try {
     const { rows } = await query(
@@ -221,10 +273,19 @@ export default async function handler(req, res) {
   try {
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST'])
     await requireUser(req)
-    if (String(req.headers['content-type'] || '').toLowerCase().includes('multipart/form-data'))
+    if (String(req.headers['content-type'] || '').toLowerCase().includes('multipart/form-data')) {
+      const url = new URL(req.url || '/api/upload', 'http://localhost')
+      if (url.searchParams.get('storage') === 'minio') return await handleMinioUpload(req, res)
       return await handleLocalUpload(req, res)
+    }
     const body = getBody(req)
     const { kind } = uploadInput(body)
+    if (isMinioConfigured()) {
+      return send(res, 200, {
+        provider: 'minio',
+        uploadUrl: '/api/upload?storage=minio',
+      })
+    }
     if (truthy(process.env.LOCAL_UPLOAD_ENABLED) && !cloudinaryProviders().length) {
       return send(res, 200, {
         provider: 'local',

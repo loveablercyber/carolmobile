@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { unlink } from "node:fs/promises";
 import { join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,12 @@ const truthy = (value) =>
   ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
 
 const uploadsRoot = process.env.UPLOAD_DIR || fileURLToPath(new URL("../../uploads", import.meta.url));
+
+function cleanFolder(value, fallback = "carol-sol") {
+  return String(value || fallback)
+    .replace(/[^a-zA-Z0-9/_-]/g, "-")
+    .replace(/^\/+|\/+$/g, "");
+}
 
 export function cloudinaryProviders() {
   let parsed;
@@ -78,6 +84,126 @@ export function createCloudinaryUploadSignature(
     folder,
     signature,
     provider: provider.name,
+  };
+}
+
+export function minioConfig() {
+  const endpoint = process.env.MINIO_ENDPOINT || process.env.S3_ENDPOINT || "";
+  const bucket = process.env.MINIO_BUCKET || process.env.S3_BUCKET || "";
+  const accessKey = process.env.MINIO_ACCESS_KEY || process.env.S3_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || "";
+  const secretKey = process.env.MINIO_SECRET_KEY || process.env.S3_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY || "";
+  const region = process.env.MINIO_REGION || process.env.S3_REGION || process.env.AWS_REGION || "us-east-1";
+  const publicUrl = process.env.MINIO_PUBLIC_URL || process.env.S3_PUBLIC_URL || endpoint;
+  return {
+    endpoint: String(endpoint).replace(/\/+$/, ""),
+    publicUrl: String(publicUrl || endpoint).replace(/\/+$/, ""),
+    bucket: String(bucket),
+    accessKey: String(accessKey),
+    secretKey: String(secretKey),
+    region: String(region),
+    baseFolder: cleanFolder(process.env.MINIO_UPLOAD_FOLDER || process.env.S3_UPLOAD_FOLDER || process.env.LOCAL_UPLOAD_FOLDER),
+    pathStyle: !["0", "false", "no"].includes(String(process.env.MINIO_FORCE_PATH_STYLE || "true").toLowerCase()),
+  };
+}
+
+export function isMinioConfigured() {
+  const cfg = minioConfig();
+  return Boolean(cfg.endpoint && cfg.bucket && cfg.accessKey && cfg.secretKey);
+}
+
+function hmac(key, value, encoding) {
+  return createHmac("sha256", key).update(value).digest(encoding);
+}
+
+function s3SigningKey(secretKey, dateStamp, region) {
+  const kDate = hmac(`AWS4${secretKey}`, dateStamp);
+  const kRegion = hmac(kDate, region);
+  const kService = hmac(kRegion, "s3");
+  return hmac(kService, "aws4_request");
+}
+
+function encodeObjectKey(key) {
+  return String(key || "")
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
+function minioRequestUrl(cfg, objectKey) {
+  const base = new URL(cfg.endpoint);
+  const encodedKey = encodeObjectKey(objectKey);
+  if (cfg.pathStyle) {
+    base.pathname = `${base.pathname.replace(/\/+$/, "")}/${encodeURIComponent(cfg.bucket)}/${encodedKey}`;
+    return base;
+  }
+  base.hostname = `${cfg.bucket}.${base.hostname}`;
+  base.pathname = `${base.pathname.replace(/\/+$/, "")}/${encodedKey}`;
+  return base;
+}
+
+function minioPublicUrl(cfg, objectKey) {
+  const base = new URL(cfg.publicUrl || cfg.endpoint);
+  const encodedKey = encodeObjectKey(objectKey);
+  if (cfg.pathStyle) {
+    base.pathname = `${base.pathname.replace(/\/+$/, "")}/${encodeURIComponent(cfg.bucket)}/${encodedKey}`;
+  } else {
+    base.hostname = `${cfg.bucket}.${base.hostname}`;
+    base.pathname = `${base.pathname.replace(/\/+$/, "")}/${encodedKey}`;
+  }
+  return base.toString();
+}
+
+async function signedMinioFetch(method, objectKey, { body, contentType } = {}) {
+  const cfg = minioConfig();
+  if (!isMinioConfigured()) throw new Error("MinIO nao configurado.");
+  const url = minioRequestUrl(cfg, objectKey);
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const dateStamp = amzDate.slice(0, 8);
+  const payload = body ? Buffer.from(body) : Buffer.alloc(0);
+  const payloadHash = createHash("sha256").update(payload).digest("hex");
+  const headers = {
+    host: url.host,
+    "x-amz-content-sha256": payloadHash,
+    "x-amz-date": amzDate,
+  };
+  if (contentType) headers["content-type"] = contentType;
+  const sortedKeys = Object.keys(headers).sort();
+  const canonicalHeaders = sortedKeys.map((key) => `${key}:${headers[key]}\n`).join("");
+  const signedHeaders = sortedKeys.join(";");
+  const canonicalRequest = [
+    method,
+    url.pathname,
+    url.searchParams.toString(),
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join("\n");
+  const credentialScope = `${dateStamp}/${cfg.region}/s3/aws4_request`;
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    credentialScope,
+    createHash("sha256").update(canonicalRequest).digest("hex"),
+  ].join("\n");
+  const signature = hmac(s3SigningKey(cfg.secretKey, dateStamp, cfg.region), stringToSign, "hex");
+  headers.authorization = `AWS4-HMAC-SHA256 Credential=${cfg.accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+  return fetch(url, { method, headers, body: payload.length ? payload : undefined });
+}
+
+export async function uploadBufferToMinio({ key, buffer, contentType }) {
+  const response = await signedMinioFetch("PUT", key, {
+    body: buffer,
+    contentType: contentType || "application/octet-stream",
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`MinIO respondeu ${response.status}${text ? `: ${text.slice(0, 160)}` : ""}`);
+  }
+  return {
+    url: minioPublicUrl(minioConfig(), key),
+    publicId: key,
+    provider: "minio",
   };
 }
 
@@ -331,6 +457,7 @@ export function extractPublicId(url) {
 
 export function isConfiguredCloudinaryUrl(value, resourceTypes = []) {
   if (isConfiguredLocalUploadUrl(value, resourceTypes)) return true;
+  if (isConfiguredMinioUrl(value, resourceTypes)) return true;
   const asset = parseCloudinaryAssetUrl(value);
   if (!asset || asset.deliveryType !== "upload") return false;
   if (resourceTypes.length && !resourceTypes.includes(asset.resourceType))
@@ -338,6 +465,40 @@ export function isConfiguredCloudinaryUrl(value, resourceTypes = []) {
   return cloudinaryProviders().some(
     (provider) => provider.cloudName === asset.cloudName,
   );
+}
+
+function minioObjectKeyFromUrl(value) {
+  if (!isMinioConfigured()) return null;
+  const raw = String(value || "");
+  let parsed;
+  try {
+    parsed = new URL(raw, process.env.APP_URL || "http://localhost");
+  } catch {
+    return null;
+  }
+  for (const baseValue of [minioConfig().publicUrl, minioConfig().endpoint].filter(Boolean)) {
+    try {
+      const base = new URL(baseValue);
+      if (parsed.protocol !== base.protocol || parsed.host !== base.host) continue;
+      const prefix = minioConfig().pathStyle
+        ? `${base.pathname.replace(/\/+$/, "")}/${minioConfig().bucket}/`
+        : `${base.pathname.replace(/\/+$/, "")}/`;
+      if (!parsed.pathname.startsWith(prefix)) continue;
+      const key = decodeURIComponent(parsed.pathname.slice(prefix.length));
+      return key && !key.includes("..") ? key : null;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+export function isConfiguredMinioUrl(value, resourceTypes = []) {
+  const key = minioObjectKeyFromUrl(value);
+  if (!key) return false;
+  if (resourceTypes.length && !resourceTypes.includes(localResourceType(key)))
+    return false;
+  return true;
 }
 
 function localUploadPath(value) {
@@ -381,6 +542,14 @@ export async function deleteFromCloudinary(url) {
         if (error.code !== "ENOENT") throw error;
       });
       return { success: true, provider: "local" };
+    }
+    const minioKey = minioObjectKeyFromUrl(url);
+    if (minioKey) {
+      const response = await signedMinioFetch("DELETE", minioKey);
+      if (!response.ok && response.status !== 404) {
+        return { success: false, provider: "minio", status: response.status };
+      }
+      return { success: true, provider: "minio" };
     }
     const asset = parseCloudinaryAssetUrl(url);
     if (!asset) return { skipped: true, reason: "URL inválida ou sem upload" };

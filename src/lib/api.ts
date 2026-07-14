@@ -36,7 +36,7 @@ const uploadKind = (value: string) =>
 
 export async function uploadFile(file: File, kind = 'attachment'): Promise<UploadedFile> {
   const signed = await apiFetch<{
-    provider?: 'cloudinary' | 'local'
+    provider?: 'cloudinary' | 'local' | 'minio'
     apiKey: string
     timestamp: number
     folder: string
@@ -54,7 +54,7 @@ export async function uploadFile(file: File, kind = 'attachment'): Promise<Uploa
   const form = new FormData()
   form.append('file', file)
   form.append('kind', uploadKind(kind))
-  if (signed.provider === 'local') {
+  if (signed.provider === 'local' || signed.provider === 'minio') {
     const response = await fetch(signed.uploadUrl, {
       method: 'POST',
       credentials: 'include',

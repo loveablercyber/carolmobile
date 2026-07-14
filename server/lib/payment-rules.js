@@ -14,11 +14,9 @@ export function receiptSubmissionError({
     return "Este pagamento não aceita um novo comprovante.";
   if (hasActiveReceipt) return "Já existe um comprovante em análise.";
   try {
-    const parsed = new URL(String(url || ""));
-    if (
-      parsed.protocol !== "https:" ||
-      parsed.hostname !== "res.cloudinary.com"
-    )
+    const parsed = new URL(String(url || ""), "http://localhost");
+    const isLocalUpload = parsed.pathname.startsWith("/uploads/");
+    if (!isLocalUpload && parsed.protocol !== "https:")
       throw new Error("invalid receipt location");
   } catch {
     return "A URL do comprovante é inválida.";
