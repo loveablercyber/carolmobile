@@ -156,7 +156,19 @@ GET https://dominio-temporario-do-coolify/api/cron-renewals?execute=1&secret=CRO
 ## Teste Antes Do DNS
 
 1. Abrir domínio temporário.
-2. Validar:
+2. Rodar o teste automatico:
+
+```bash
+npm run coolify:smoke -- https://dominio-temporario-do-coolify
+```
+
+Com `CRON_SECRET` no ambiente local, o teste tambem tenta o keepalive autenticado:
+
+```bash
+CRON_SECRET="seu-segredo" npm run coolify:smoke -- https://dominio-temporario-do-coolify
+```
+
+3. Validar manualmente:
    - `/api/health`
    - login admin
    - painel admin
@@ -170,7 +182,7 @@ GET https://dominio-temporario-do-coolify/api/cron-renewals?execute=1&secret=CRO
    - retorno SumUp
    - webhook SumUp
    - uploads Cloudinary
-3. Só depois trocar `APP_URL`, `SUMUP_RETURN_URL` e webhooks para `https://carolsol.com.br`.
+4. Só depois trocar `APP_URL`, `SUMUP_RETURN_URL` e webhooks para `https://carolsol.com.br`.
 
 ## Cutover Final
 
@@ -189,5 +201,10 @@ SUMUP_RETURN_URL=https://carolsol.com.br/cliente/pagamento/retorno
    - n8n
    - crons externos
 5. Redeploy.
-6. Validar `/api/health`.
+6. Validar:
+
+```bash
+npm run coolify:smoke -- https://carolsol.com.br
+```
+
 7. Só então desligar Vercel.
