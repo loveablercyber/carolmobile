@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
+import { unlink } from "node:fs/promises";
+import { join, normalize } from "node:path";
+import { fileURLToPath } from "node:url";
 import { sendBaileysTextMessage } from "./baileys-client.js";
 import { query } from "./db.js";
 
 const truthy = (value) =>
   ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
+
+const uploadsRoot = process.env.UPLOAD_DIR || fileURLToPath(new URL("../../uploads", import.meta.url));
 
 export function cloudinaryProviders() {
   let parsed;
@@ -325,6 +330,7 @@ export function extractPublicId(url) {
 }
 
 export function isConfiguredCloudinaryUrl(value, resourceTypes = []) {
+  if (isConfiguredLocalUploadUrl(value, resourceTypes)) return true;
   const asset = parseCloudinaryAssetUrl(value);
   if (!asset || asset.deliveryType !== "upload") return false;
   if (resourceTypes.length && !resourceTypes.includes(asset.resourceType))
@@ -334,8 +340,48 @@ export function isConfiguredCloudinaryUrl(value, resourceTypes = []) {
   );
 }
 
+function localUploadPath(value) {
+  const raw = String(value || "");
+  let pathname = raw;
+  try {
+    const parsed = new URL(raw, process.env.APP_URL || "http://localhost");
+    pathname = parsed.pathname;
+  } catch {
+    pathname = raw;
+  }
+  if (!pathname.startsWith("/uploads/")) return null;
+  const relative = normalize(pathname.replace(/^\/uploads\/?/, ""))
+    .replace(/^(\.\.(\\|\/|$))+/, "")
+    .replace(/^[/\\]+/, "");
+  if (!relative) return null;
+  return relative;
+}
+
+function localResourceType(value) {
+  const ext = String(value || "").split("?")[0].split(".").pop()?.toLowerCase() || "";
+  if (["jpg", "jpeg", "png", "gif", "webp", "avif"].includes(ext)) return "image";
+  if (["mp4", "webm", "mov"].includes(ext)) return "video";
+  return "raw";
+}
+
+export function isConfiguredLocalUploadUrl(value, resourceTypes = []) {
+  if (!truthy(process.env.LOCAL_UPLOAD_ENABLED)) return false;
+  if (!localUploadPath(value)) return false;
+  if (resourceTypes.length && !resourceTypes.includes(localResourceType(value)))
+    return false;
+  return true;
+}
+
 export async function deleteFromCloudinary(url) {
   try {
+    const localPath = localUploadPath(url);
+    if (localPath && truthy(process.env.LOCAL_UPLOAD_ENABLED)) {
+      const target = join(uploadsRoot, ...localPath.split(/[\\/]+/));
+      await unlink(target).catch((error) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+      return { success: true, provider: "local" };
+    }
     const asset = parseCloudinaryAssetUrl(url);
     if (!asset) return { skipped: true, reason: "URL inválida ou sem upload" };
     const providers = cloudinaryProviders();

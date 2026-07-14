@@ -36,6 +36,7 @@ const uploadKind = (value: string) =>
 
 export async function uploadFile(file: File, kind = 'attachment'): Promise<UploadedFile> {
   const signed = await apiFetch<{
+    provider?: 'cloudinary' | 'local'
     apiKey: string
     timestamp: number
     folder: string
@@ -52,6 +53,27 @@ export async function uploadFile(file: File, kind = 'attachment'): Promise<Uploa
   })
   const form = new FormData()
   form.append('file', file)
+  form.append('kind', uploadKind(kind))
+  if (signed.provider === 'local') {
+    const response = await fetch(signed.uploadUrl, {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(data.error || 'Falha ao enviar o arquivo.')
+    }
+    return {
+      url: data.url as string,
+      publicId: data.publicId || data.public_id,
+      resourceType: data.resourceType || data.resource_type,
+      format: data.format as string | undefined,
+      bytes: data.bytes as number | undefined,
+      width: data.width as number | undefined,
+      height: data.height as number | undefined,
+    }
+  }
   form.append('api_key', signed.apiKey)
   form.append('timestamp', String(signed.timestamp))
   form.append('folder', signed.folder)

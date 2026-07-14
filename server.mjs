@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 const appRoot = fileURLToPath(new URL('.', import.meta.url))
 const staticRoot = join(appRoot, 'dist')
+const uploadsRoot = process.env.UPLOAD_DIR || join(appRoot, 'uploads')
 const port = Number(process.env.PORT || 5173)
 const host = process.env.HOST || '0.0.0.0'
 const maxBodyBytes = Number(process.env.MAX_BODY_BYTES || 5 * 1024 * 1024)
@@ -78,6 +79,8 @@ function queryObject(searchParams) {
 
 async function readBody(req) {
   if (req.method === 'GET' || req.method === 'HEAD') return undefined
+  const contentType = String(req.headers['content-type'] || '').toLowerCase()
+  if (contentType.includes('multipart/form-data')) return undefined
   const chunks = []
   let total = 0
   for await (const chunk of req) {
@@ -91,7 +94,6 @@ async function readBody(req) {
   }
   if (!chunks.length) return undefined
   const raw = Buffer.concat(chunks).toString('utf8')
-  const contentType = String(req.headers['content-type'] || '').toLowerCase()
   if (contentType.includes('application/json')) {
     try {
       return JSON.parse(raw)
@@ -143,6 +145,25 @@ async function handleStatic(req, res, pathname) {
   res.writeHead(200, {
     'Content-Type': mime[extension] || 'application/octet-stream',
     'Cache-Control': extension === '.html' ? 'no-cache' : 'public, max-age=3600',
+  })
+  res.end(content)
+}
+
+async function handleUploadAsset(req, res, pathname) {
+  const relative = normalize(pathname.replace(/^\/uploads\/?/, ''))
+    .replace(/^(\.\.(\\|\/|$))+/, '')
+    .replace(/^[/\\]+/, '')
+  if (!relative) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+    res.end('Arquivo nao encontrado.')
+    return
+  }
+  const file = join(uploadsRoot, relative)
+  const content = await readFile(file)
+  const extension = extname(file)
+  res.writeHead(200, {
+    'Content-Type': mime[extension] || 'application/octet-stream',
+    'Cache-Control': 'public, max-age=31536000, immutable',
   })
   res.end(content)
 }
@@ -227,6 +248,10 @@ const server = createServer(async (req, res) => {
     }
     if (pathname.startsWith('/api/')) {
       await handleApi(req, res, url)
+      return
+    }
+    if (pathname.startsWith('/uploads/')) {
+      await handleUploadAsset(req, res, pathname)
       return
     }
     await handleStatic(req, res, pathname)

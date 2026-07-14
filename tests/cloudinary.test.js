@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   cloudinaryProviderForRotation,
   createCloudinaryUploadSignature,
+  isConfiguredCloudinaryUrl,
   parseCloudinaryAssetUrl,
 } from "../server/lib/integrations.js";
 
@@ -57,4 +58,26 @@ test("parses image and raw Cloudinary URLs for safe deletion", () => {
     },
   );
   assert.equal(parseCloudinaryAssetUrl("https://example.com/file.jpg"), null);
+});
+
+test("accepts local upload URLs when local storage is enabled", () => {
+  const previous = process.env.LOCAL_UPLOAD_ENABLED;
+  process.env.LOCAL_UPLOAD_ENABLED = "true";
+  try {
+    assert.equal(
+      isConfiguredCloudinaryUrl("/uploads/carol-sol/profile-photo/2026/07/14/avatar.jpg", ["image"]),
+      true,
+    );
+    assert.equal(
+      isConfiguredCloudinaryUrl("https://example.com/uploads/carol-sol/payment/file.pdf", ["raw"]),
+      true,
+    );
+    assert.equal(
+      isConfiguredCloudinaryUrl("/uploads/carol-sol/payment/file.pdf", ["image"]),
+      false,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.LOCAL_UPLOAD_ENABLED;
+    else process.env.LOCAL_UPLOAD_ENABLED = previous;
+  }
 });

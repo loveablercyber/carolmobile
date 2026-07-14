@@ -2,6 +2,9 @@ import { query } from "../server/lib/db.js";
 import { cloudinaryProviders } from "../server/lib/integrations.js";
 import { handleError, send } from "../server/lib/http.js";
 
+const truthy = (value) =>
+  ["1", "true", "yes", "on", "sim"].includes(String(value || "").toLowerCase());
+
 export default async function handler(req, res) {
   try {
     const { rows } = await query("select now() as now");
@@ -18,7 +21,7 @@ export default async function handler(req, res) {
             process.env.BAILEYS_API_URL &&
             process.env.BAILEYS_API_KEY,
         ),
-        cloudinary: Boolean(cloudinaryProviders().length),
+        cloudinary: Boolean(cloudinaryProviders().length || truthy(process.env.LOCAL_UPLOAD_ENABLED)),
         sumup: Boolean(
           process.env.SUMUP_ENABLED &&
             process.env.SUMUP_API_KEY &&
