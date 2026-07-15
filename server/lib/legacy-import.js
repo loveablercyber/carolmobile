@@ -242,6 +242,7 @@ async function importUsers(client, input, stats) {
   const contacts = contactMaps(appointments)
   const clientByLegacyId = new Map()
   const clientByEmail = new Map()
+  const clientByAppointmentId = new Map()
 
   for (const user of users) {
     const legacyId = String(user.id)
@@ -346,7 +347,127 @@ async function importUsers(client, input, stats) {
     }
     stats.profiles += 1
   }
-  return { clientByLegacyId, clientByEmail }
+
+  for (const appointment of appointments) {
+    const email = normalizeEmail(
+      appointment.customer_email || appointment.questionnaire_data?.email,
+    )
+    if (
+      clientByLegacyId.has(String(appointment.user_id || '')) ||
+      (email && clientByEmail.has(email))
+    )
+      continue
+
+    const phone = normalizePhone(
+      appointment.customer_phone || appointment.questionnaire_data?.phone,
+    )
+    const contactKey = email || phone || String(appointment.id)
+    const legacyId = `appointment-contact:${contactKey}`
+    const createdAt = safeDate(appointment.created_at, new Date().toISOString())
+    const updatedAt = safeDate(appointment.updated_at, createdAt)
+    const preferredId = deterministicLegacyUuid('profile', legacyId)
+    const account = await client.query(
+      `select u.id,p.role,p.legacy_id
+       from auth.users u left join public.profiles p on p.id=u.id
+       where ($1::text is not null and lower(u.email)=lower($1))
+          or ($2::text is not null and p.phone=$2)
+          or p.legacy_id=$3
+       order by (p.legacy_id=$3) desc limit 1`,
+      [email, phone, legacyId],
+    )
+    const profileId = account.rows[0]?.id || preferredId
+    const role = account.rows[0]?.role || 'client'
+    const fullName = String(
+      appointment.customer_name || appointment.questionnaire_data?.name || 'Cliente importada',
+    ).trim()
+    const cpf = normalizeCpf(appointment.questionnaire_data?.cpf)
+
+    if (!account.rows[0]) {
+      await client.query(
+        `insert into auth.users(
+           id,email,phone,encrypted_password,email_confirmed_at,raw_user_meta_data,created_at,updated_at
+         ) values($1,$2,null,null,$3,$4,$3,$5)
+         on conflict(id) do nothing`,
+        [
+          profileId,
+          email,
+          email ? createdAt : null,
+          JSON.stringify({ name: fullName, legacy_id: legacyId, password_reset_required: true }),
+          updatedAt,
+        ],
+      )
+    }
+
+    await client.query(
+      `insert into public.profiles(
+         id,role,full_name,phone,cpf,notification_preferences,account_status,
+         legacy_id,legacy_data,created_at,updated_at
+       ) values($1,$2,$3,$4,$5,'{"email":true,"whatsapp":true,"push":true}',
+         'active',$6,$7,$8,$9)
+       on conflict(id) do update set
+         full_name=coalesce(nullif(public.profiles.full_name,''),excluded.full_name),
+         phone=coalesce(public.profiles.phone,excluded.phone),
+         cpf=coalesce(public.profiles.cpf,excluded.cpf),
+         legacy_id=coalesce(public.profiles.legacy_id,excluded.legacy_id),
+         legacy_data=coalesce(public.profiles.legacy_data,'{}') || excluded.legacy_data,
+         updated_at=greatest(public.profiles.updated_at,excluded.updated_at)`,
+      [
+        profileId,
+        role,
+        fullName,
+        phone,
+        cpf,
+        legacyId,
+        JSON.stringify({
+          source_appointment_id: appointment.id,
+          password_reset_required: true,
+        }),
+        createdAt,
+        updatedAt,
+      ],
+    )
+
+    const preferredClientId = deterministicLegacyUuid('client', legacyId)
+    await client.query(
+      `insert into public.clients(id,profile_id,source,preferences,cpf,created_at)
+       values($1,$2,'Migração do sistema anterior',$3,$4,$5)
+       on conflict(profile_id) do update set
+         source=coalesce(public.clients.source,excluded.source),
+         preferences=coalesce(public.clients.preferences,'{}') || excluded.preferences,
+         cpf=coalesce(public.clients.cpf,excluded.cpf)`,
+      [
+        preferredClientId,
+        profileId,
+        JSON.stringify({ legacy_id: legacyId, password_reset_required: true }),
+        cpf,
+        createdAt,
+      ],
+    )
+    const linked = await client.query(
+      'select id from public.clients where profile_id=$1 limit 1',
+      [profileId],
+    )
+    const clientId = linked.rows[0].id
+    if (email) clientByEmail.set(email, clientId)
+    if (appointment.user_id)
+      clientByLegacyId.set(String(appointment.user_id), clientId)
+    clientByAppointmentId.set(String(appointment.id), clientId)
+    await client.query(
+      'insert into public.notification_preferences(profile_id) values($1) on conflict(profile_id) do nothing',
+      [profileId],
+    )
+    for (const consentType of ['marketing', 'whatsapp', 'email', 'photos', 'referrals']) {
+      await client.query(
+        `insert into public.privacy_consents(profile_id,consent_type,accepted,policy_version)
+         values($1,$2,false,'1.0') on conflict(profile_id,consent_type) do nothing`,
+        [profileId, consentType],
+      )
+    }
+    stats.profiles += 1
+    stats.clients += 1
+    stats.appointmentClientsCreated += 1
+  }
+  return { clientByLegacyId, clientByEmail, clientByAppointmentId }
 }
 
 async function importServices(client, input, stats) {
@@ -543,7 +664,8 @@ async function importAppointments(client, input, users, serviceIds, stats) {
     )
     const clientId =
       users.clientByLegacyId.get(String(appointment.user_id || '')) ||
-      (email && users.clientByEmail.get(email))
+      (email && users.clientByEmail.get(email)) ||
+      users.clientByAppointmentId.get(legacyId)
     if (!clientId) {
       stats.skippedAppointments += 1
       stats.warnings.push(`Agendamento ${legacyId} sem cliente correspondente.`)
@@ -668,6 +790,7 @@ export async function applyLegacyImport() {
     archivedRecords: 0,
     profiles: 0,
     clients: 0,
+    appointmentClientsCreated: 0,
     servicesCreated: 0,
     appointments: 0,
     skippedAppointments: 0,
