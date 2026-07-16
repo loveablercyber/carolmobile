@@ -27,6 +27,16 @@ export function baileysConfig() {
   return { baseUrl, apiKey, provider, instance, configured: Boolean(baseUrl && apiKey) };
 }
 
+export function buildEvolutionWebhookUrl() {
+  const appUrl = String(process.env.APP_URL || "").trim().replace(/\/+$/, "");
+  const secret = String(process.env.BAILEYS_WEBHOOK_SECRET || "").trim();
+  if (!appUrl || !secret) return "";
+  const url = new URL(`${appUrl}/api/whatsapp`);
+  url.searchParams.set("resource", "webhook");
+  url.searchParams.set("secret", secret);
+  return url.toString();
+}
+
 function truthy(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
 }
@@ -162,6 +172,19 @@ function evolutionRequestOptions(path, { method = "GET", body } = {}, config) {
       data: { status: "skipped", reason: "presence_not_required" },
     };
   }
+  if (path === "/api/webhook") {
+    return {
+      path: `/webhook/set/${instance}`,
+      method: "POST",
+      body: {
+        enabled: true,
+        url: body?.url,
+        webhook_by_events: false,
+        webhook_base64: false,
+        events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
+      },
+    };
+  }
   return { path, method, body };
 }
 
@@ -212,6 +235,24 @@ export async function getBaileysStatus() {
   return request("/api/status");
 }
 
+export async function configureBaileysWebhook() {
+  const config = baileysConfig();
+  if (config.provider !== "evolution") {
+    return { ok: true, skipped: true, reason: "provider_not_evolution" };
+  }
+  if (falsey(process.env.BAILEYS_AUTO_CONFIGURE_WEBHOOK)) {
+    return { ok: true, skipped: true, reason: "disabled" };
+  }
+  const webhookUrl = buildEvolutionWebhookUrl();
+  if (!webhookUrl) {
+    return { ok: true, skipped: true, reason: "missing_app_url_or_secret" };
+  }
+  return request("/api/webhook", {
+    method: "POST",
+    body: { url: webhookUrl },
+  });
+}
+
 export async function ensureBaileysReady({
   source = "healthcheck",
   reconnect = true,
@@ -219,14 +260,33 @@ export async function ensureBaileysReady({
 } = {}) {
   const statusResult = await getBaileysStatus();
   const beforeStatus = normalizeBaileysStatusValue(statusResult.data);
+  let webhookResult = null;
+
+  async function tryConfigureWebhook() {
+    try {
+      webhookResult = await configureBaileysWebhook();
+    } catch (error) {
+      webhookResult = {
+        ok: false,
+        code: error.code || "BAILEYS_WEBHOOK_CONFIG_FAILED",
+        message: error.message,
+      };
+      console.error("Evolution webhook auto-config failed", {
+        code: webhookResult.code,
+        message: webhookResult.message,
+      });
+    }
+  }
 
   if (isBaileysReadyStatus(beforeStatus)) {
+    await tryConfigureWebhook();
     return {
       ok: true,
       ready: true,
       status: beforeStatus,
       beforeStatus,
       reconnected: false,
+      webhook: webhookResult,
       source,
       data: statusResult.data,
     };
@@ -240,6 +300,7 @@ export async function ensureBaileysReady({
       beforeStatus,
       reconnected: false,
       skipped: true,
+      webhook: webhookResult,
       source,
       data: statusResult.data,
     };
@@ -259,6 +320,7 @@ export async function ensureBaileysReady({
       reconnected: false,
       skipped: true,
       cooldownMs,
+      webhook: webhookResult,
       source,
       data: statusResult.data,
     };
@@ -267,6 +329,7 @@ export async function ensureBaileysReady({
   lastReconnectAttemptAt = now;
   const restartResult = await resetBaileysSession();
   const afterStatus = normalizeBaileysStatusValue(restartResult.data);
+  if (isBaileysReadyStatus(afterStatus)) await tryConfigureWebhook();
 
   return {
     ok: true,
@@ -274,6 +337,7 @@ export async function ensureBaileysReady({
     status: afterStatus,
     beforeStatus,
     reconnected: true,
+    webhook: webhookResult,
     source,
     data: restartResult.data,
   };

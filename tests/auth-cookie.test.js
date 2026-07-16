@@ -53,7 +53,7 @@ test('HTTPS deployment uses a secure session cookie', () => {
   withEnvironment(
     {
       NODE_ENV: 'production',
-      APP_URL: 'https://carolsol.com.br',
+      APP_URL: 'https://agenda.carolsol.com.br',
       SESSION_COOKIE_SECURE: '',
     },
     () => {

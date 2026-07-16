@@ -6,7 +6,7 @@ Repositório: `https://github.com/loveablercyber/carolmobile`
 
 Branch sugerida: `main`
 
-Domínio final: `carolsol.com.br`
+Domínio final: `agenda.carolsol.com.br`
 
 ## Status do Código
 
@@ -92,7 +92,7 @@ Use `docs/coolify.env.example` como base para preencher o painel do Coolify.
 ```env
 NODE_ENV=production
 PORT=3000
-APP_URL=https://dominio-temporario-do-coolify
+APP_URL=https://agenda.carolsol.com.br
 DATABASE_URL=postgresql://...
 JWT_SECRET=...
 CRON_SECRET=...
@@ -139,7 +139,7 @@ SUMUP_ENABLED=true
 SUMUP_API_KEY=...
 SUMUP_MERCHANT_CODE=...
 SUMUP_ENVIRONMENT=sandbox
-SUMUP_RETURN_URL=https://dominio-temporario-do-coolify/cliente/pagamento/retorno
+SUMUP_RETURN_URL=https://agenda.carolsol.com.br/cliente/pagamento/retorno
 SUMUP_WEBHOOK_SECRET=...
 ```
 
@@ -190,10 +190,10 @@ entre redeploys.
 Configure no Coolify, EasyCron, cron-job.org ou outro monitor:
 
 ```txt
-GET https://dominio-temporario-do-coolify/api/whatsapp-keepalive?force=1&secret=CRON_SECRET
-GET https://dominio-temporario-do-coolify/api/cron-reminders?execute=1&secret=CRON_SECRET
-GET https://dominio-temporario-do-coolify/api/cron-billing-whatsapp?execute=1&secret=CRON_SECRET
-GET https://dominio-temporario-do-coolify/api/cron-renewals?execute=1&secret=CRON_SECRET
+GET https://agenda.carolsol.com.br/api/whatsapp-keepalive?force=1&secret=CRON_SECRET
+GET https://agenda.carolsol.com.br/api/cron-reminders?execute=1&secret=CRON_SECRET
+GET https://agenda.carolsol.com.br/api/cron-billing-whatsapp?execute=1&secret=CRON_SECRET
+GET https://agenda.carolsol.com.br/api/cron-renewals?execute=1&secret=CRON_SECRET
 ```
 
 Alternativa no Coolify: se a tela de Scheduled Tasks não persistir todas as tarefas,
@@ -225,13 +225,13 @@ npm run coolify:env-check
 3. Rodar o teste automatico:
 
 ```bash
-npm run coolify:smoke -- https://dominio-temporario-do-coolify
+npm run coolify:smoke -- https://agenda.carolsol.com.br
 ```
 
 Com `CRON_SECRET` no ambiente local, o teste tambem tenta o keepalive autenticado:
 
 ```bash
-CRON_SECRET="seu-segredo" npm run coolify:smoke -- https://dominio-temporario-do-coolify
+CRON_SECRET="seu-segredo" npm run coolify:smoke -- https://agenda.carolsol.com.br
 ```
 
 4. Validar manualmente:
@@ -248,17 +248,17 @@ CRON_SECRET="seu-segredo" npm run coolify:smoke -- https://dominio-temporario-do
    - retorno SumUp
    - webhook SumUp
    - uploads MinIO
-5. Só depois trocar `APP_URL`, `SUMUP_RETURN_URL` e webhooks para `https://carolsol.com.br`.
+5. Só depois trocar `APP_URL`, `SUMUP_RETURN_URL` e webhooks para `https://agenda.carolsol.com.br`.
 
 ## Cutover Final
 
-1. Adicionar `carolsol.com.br` no app do Coolify.
+1. Adicionar `agenda.carolsol.com.br` no app do Coolify.
 2. Atualizar DNS para o servidor do Coolify.
 3. Atualizar envs:
 
 ```env
-APP_URL=https://carolsol.com.br
-SUMUP_RETURN_URL=https://carolsol.com.br/cliente/pagamento/retorno
+APP_URL=https://agenda.carolsol.com.br
+SUMUP_RETURN_URL=https://agenda.carolsol.com.br/cliente/pagamento/retorno
 ```
 
 4. Atualizar webhooks externos:
@@ -270,7 +270,7 @@ SUMUP_RETURN_URL=https://carolsol.com.br/cliente/pagamento/retorno
 6. Validar:
 
 ```bash
-npm run coolify:smoke -- https://carolsol.com.br
+npm run coolify:smoke -- https://agenda.carolsol.com.br
 ```
 
 7. Só então desligar Vercel.
