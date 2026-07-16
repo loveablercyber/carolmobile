@@ -234,7 +234,7 @@ create index if not exists human_handoff_status_idx on public.human_handoff_tick
 create table if not exists public.whatsapp_incoming_queue (
   id uuid primary key default uuid_generate_v4(),
   phone_number text not null,
-  message_id text not null unique,
+  message_id text unique,
   text text not null,
   processed boolean not null default false,
   created_at timestamptz not null default now(),
@@ -308,6 +308,10 @@ create table if not exists public.marketing_promotions (
 create index if not exists marketing_promotions_active_idx on public.marketing_promotions(active, archived, starts_at, ends_at);
 
 alter table public.whatsapp_conversations add column if not exists booking_state jsonb not null default '{}';
+
+create index if not exists whatsapp_conversations_phone_ai_idx on public.whatsapp_conversations(phone_number, ai_enabled, status);
+create index if not exists whatsapp_incoming_queue_null_dedup_idx on public.whatsapp_incoming_queue(phone_number, text, created_at) where message_id is null or message_id like 'tmp-%';
+
 
 insert into public.ai_settings(business_id, system_prompt, welcome_message, after_hours_message, human_handoff_message, closing_message)
 values(

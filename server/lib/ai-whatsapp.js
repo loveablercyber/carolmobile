@@ -288,7 +288,7 @@ create index if not exists human_handoff_status_idx on public.human_handoff_tick
 create table if not exists public.whatsapp_incoming_queue (
   id uuid primary key default uuid_generate_v4(),
   phone_number text not null,
-  message_id text not null unique,
+  message_id text unique,
   text text not null,
   processed boolean not null default false,
   created_at timestamptz not null default now(),
@@ -848,6 +848,13 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
     ALTER TABLE public.services ADD COLUMN IF NOT EXISTS show_online_booking boolean not null default true;
     ALTER TABLE public.services ADD COLUMN IF NOT EXISTS is_free boolean not null default false;
   `).catch(err => console.error("Failed to alter public.ai_settings table", err));
+
+  // Fase 2: Atualização de constraints e índices de performance
+  await query(`
+    ALTER TABLE public.whatsapp_incoming_queue ALTER COLUMN message_id DROP NOT NULL;
+    CREATE INDEX IF NOT EXISTS whatsapp_conversations_phone_ai_idx ON public.whatsapp_conversations(phone_number, ai_enabled, status);
+    CREATE INDEX IF NOT EXISTS whatsapp_incoming_queue_null_dedup_idx ON public.whatsapp_incoming_queue(phone_number, text, created_at) WHERE message_id IS NULL OR message_id LIKE 'tmp-%';
+  `).catch(err => console.error("Failed schema updates in Fase 2", err));
 
   await query(`
     update public.ai_settings
