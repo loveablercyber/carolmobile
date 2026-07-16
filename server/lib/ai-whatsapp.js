@@ -98,7 +98,7 @@ create table if not exists public.ai_settings (
   business_id text not null default 'default',
   enabled boolean not null default false,
   provider text not null default 'openai',
-  model text not null default 'gpt-5.4-mini',
+  model text not null default 'gpt-4o-mini',
   assistant_name text not null default 'Carol',
   salon_name text not null default 'Carol Sol Mega Hair',
   personality_mode text not null default 'simpatica_acolhedora',
@@ -401,7 +401,7 @@ function defaultSettingsInput() {
   return {
     enabled: false,
     provider: "openai",
-    model: "gpt-5.4-mini",
+    model: "gpt-4o-mini",
     assistantName: "Carol",
     salonName: "Carol Sol Mega Hair",
     personalityMode: "simpatica_acolhedora",
@@ -425,9 +425,9 @@ function defaultSettingsInput() {
     stopKeyword: "parar",
     timezone: "America/Sao_Paulo",
     primaryProvider: "openai",
-    primaryModel: "gpt-5.4-mini",
+    primaryModel: "gpt-4o-mini",
     fallbackProvider: "openai",
-    fallbackModel: "gpt-5.4-mini",
+    fallbackModel: "gpt-4o-mini",
     timeoutMs: 7000,
     maxRetries: 2,
     groupingWindowMs: 1500,
@@ -461,8 +461,8 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
     inputModel ||
     clean(fallback.primaryModel || fallback.model);
   const model = /^(gemini|llama)/i.test(requestedModel)
-    ? "gpt-5.4-mini"
-    : requestedModel || "gpt-5.4-mini";
+    ? "gpt-4o-mini"
+    : requestedModel || "gpt-4o-mini";
   const assistantName = clean(input.assistantName || fallback.assistantName);
   const salonName = clean(input.salonName || fallback.salonName);
   const systemPrompt = clean(input.systemPrompt || fallback.systemPrompt);
@@ -829,9 +829,9 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
   // Add new columns to existing tables
   await query(`
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_provider text not null default 'openai';
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_model text not null default 'gpt-5.4-mini';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_model text not null default 'gpt-4o-mini';
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_provider text not null default 'openai';
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_model text not null default 'gpt-5.4-mini';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_model text not null default 'gpt-4o-mini';
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS timeout_ms integer not null default 7000;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS max_retries integer not null default 2;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS grouping_window_ms integer not null default 1500;
@@ -852,11 +852,11 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
   await query(`
     update public.ai_settings
        set provider='openai',
-           model=case when model ~* '^(gemini|llama)' or model is null then 'gpt-5.4-mini' else model end,
+           model=case when model ~* '^(gemini|llama)' or model is null then 'gpt-4o-mini' else model end,
            primary_provider='openai',
-           primary_model=case when primary_model ~* '^(gemini|llama)' or primary_model is null then 'gpt-5.4-mini' else primary_model end,
+           primary_model=case when primary_model ~* '^(gemini|llama)' or primary_model is null then 'gpt-4o-mini' else primary_model end,
            fallback_provider='openai',
-           fallback_model='gpt-5.4-mini',
+           fallback_model='gpt-4o-mini',
            fallback_enabled=false
      where provider is distinct from 'openai'
         or primary_provider is distinct from 'openai'

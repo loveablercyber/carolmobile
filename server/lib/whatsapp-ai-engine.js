@@ -120,9 +120,12 @@ export function normalizeIncomingWhatsappPayload(payload = {}) {
   const isFromMe = dataIsArray
     ? true
     : truthy(payload.isFromMe ?? payload.fromMe ?? raw.fromMe ?? key.fromMe);
-  const messageId = clean(
+  const parsedMessageId = clean(
     payload.messageId || payload.id || payload.provider_message_id || raw.id || key.id,
   );
+  // Se a Evolution API não enviar ID, geramos um ID temporário seguro que satisfaz
+  // a restrição NOT NULL UNIQUE no banco de dados.
+  const fallbackMessageId = parsedMessageId || `tmp-${phoneNumber || "unknown"}-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`;
   const sessionName =
     clean(payload.session_name || payload.instance || raw.instance || payload.session) ||
     String(process.env.BAILEYS_DEFAULT_INSTANCE || "carol-sol");
@@ -137,7 +140,7 @@ export function normalizeIncomingWhatsappPayload(payload = {}) {
     isFromMe,
     isGroup,
     isStatus,
-    messageId: messageId || null,
+    messageId: fallbackMessageId,
     timestamp: payload.timestamp || raw?.messageTimestamp || null,
     raw: payload,
   };
@@ -2765,26 +2768,6 @@ export async function handleStructuredBookingFlow({
       totalLatencyMs: Date.now() - receivedAt.getTime(),
     });
     return { ok: true, replied: true, reason: "booking_contact_request", conversationId };
-    const responseText = [
-      "Perfeito, encontrei o horário. Antes de mostrar o resumo final, preciso dos dados do pré-agendamento:",
-      `Serviço: ${state.serviceName}`,
-      `Valor: ${formatServiceValue({ is_free: state.serviceIsFree }, state.serviceValue)}`,
-      `Telefone de contato: ${state.clientPhone} (vou usar este WhatsApp; se quiser outro, envie junto).`,
-      `Me envie ${missingContact.join(" e ")}. Exemplo: Nome: Maria Silva, e-mail: maria@email.com, CPF: 000.000.000-00, nascimento: 10/05/1990`,
-    ].join("\n\n");
-    await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_contact_request" });
-    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
-    await logAiRequest({
-      conversationId,
-      messageId: inboundMessageId,
-      provider: "local_booking",
-      model: "booking_state_machine",
-      status: "contact_request",
-      queueLatencyMs,
-      providerLatencyMs: 0,
-      totalLatencyMs: Date.now() - receivedAt.getTime(),
-    });
-    return { ok: true, replied: true, reason: "booking_contact_request", conversationId };
   }
 
   if (isFinalBookingAlteration(text) && state.status === "awaiting_confirmation") {
@@ -2814,24 +2797,6 @@ export async function handleStructuredBookingFlow({
       "2) Alterar",
     ].join("\n\n");
     await sendTextAndRecord({ normalized, conversationId, text: finalSummaryText, reason: "booking_confirmation_request" });
-    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
-    await logAiRequest({
-      conversationId,
-      messageId: inboundMessageId,
-      provider: "local_booking",
-      model: "booking_state_machine",
-      status: "confirmation_request",
-      queueLatencyMs,
-      providerLatencyMs: 0,
-      totalLatencyMs: Date.now() - receivedAt.getTime(),
-    });
-    return { ok: true, replied: true, reason: "booking_confirmation_request", conversationId };
-    const responseText = [
-      "Resumo do pré-agendamento:",
-      buildBookingSummary(state),
-      "Posso registrar essa solicitação? Responda “sim” para registrar ou escolha outro número de horário.",
-    ].join("\n\n");
-    await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_confirmation_request" });
     await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
     await logAiRequest({
       conversationId,
@@ -3142,11 +3107,6 @@ export function buildBookingGuidance({
       active: true,
       shouldRegister: false,
       text: `Existe um fluxo de pre-agendamento em andamento. Servico selecionado: ${serviceName} ${dateText}. Campos ja salvos: ${savedFields || "nenhum"}. Proximo campo faltante: ${nextStep}. Responda a pergunta da cliente primeiro, mantenha todos os campos salvos, nunca pergunte novamente campo preenchido e retome exatamente do proximo campo faltante.`,
-    };
-    return {
-      active: true,
-      shouldRegister: false,
-      text: `Existe um fluxo de pré-agendamento de serviço em andamento (Pausado temporariamente). Serviço selecionado: ${serviceName} ${dateText}. A cliente fez uma pergunta ou tirou uma dúvida. Instrução: Responda à dúvida/pergunta da cliente de forma completa e imediata primeiro. No final da resposta, de forma natural, amigável e sem forçar menus numéricos, ofereça a continuação do agendamento anterior (ex: "Podemos continuar o agendamento do seu ${serviceName} quando quiser. Deseja prosseguir?").`
     };
   }
 
@@ -3834,11 +3794,11 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   await ensureAiWhatsappSchema();
 
   // 1. Idempotency Check
-  // Quando messageId existe: checar pela coluna indexada de forma eficiente.
-  // Quando messageId é null (Evolution não enviou ID): usar fingerprint de
-  // phone + text + janela de 30s para evitar processamento duplo.
+  // Quando messageId existe (e não é temporário): checar de forma eficiente.
+  // Quando messageId é temporário (sem ID da Evolution): usar fingerprint de
+  // phone + text + janela de 30s.
   let isDuplicate;
-  if (normalized.messageId) {
+  if (normalized.messageId && !normalized.messageId.startsWith("tmp-")) {
     isDuplicate = await query(
       `select 1 from public.whatsapp_incoming_queue where message_id = $1
        union
@@ -3847,13 +3807,13 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       [normalized.messageId],
     );
   } else {
-    // Sem messageId: checar se já existe mensagem idêntica do mesmo número
+    // Sem messageId real: checar se já existe mensagem idêntica do mesmo número
     // nos últimos 30 segundos na fila (evita loop por retry do webhook).
     isDuplicate = await query(
       `select 1 from public.whatsapp_incoming_queue
         where phone_number = $1
           and text = $2
-          and message_id is null
+          and message_id like 'tmp-%'
           and created_at >= now() - interval '30 seconds'
         limit 1`,
       [normalized.phoneNumber, normalized.text],
