@@ -435,28 +435,32 @@ function buildServiceOptions(base = {}) {
 }
 
 function bookingServiceDetails(service = {}) {
+  const isFree = isFreeService(service);
   return {
     serviceDescription: clean(service.short_description || service.description),
     serviceDetailedDescription: clean(service.detailed_description),
     serviceDurationMinutes: Number(service.estimated_duration_minutes || service.duration_minutes || 0),
-    serviceDepositAmount: Number(service.deposit_value ?? service.deposit_amount ?? 0),
-    serviceDepositType: clean(service.deposit_type || "amount"),
+    serviceDepositAmount: isFree ? 0 : Number(service.deposit_value ?? service.deposit_amount ?? 0),
+    serviceDepositType: isFree ? "amount" : clean(service.deposit_type || "amount"),
     serviceRequiresAssessment: service.requires_assessment === true,
-    serviceRequiresDeposit: service.requires_deposit === true,
+    serviceRequiresDeposit: isFree ? false : (service.requires_deposit === true),
     serviceRecommendedMessage: clean(service.recommended_message),
+    serviceIsFree: isFree,
   };
 }
 
 function serviceDetailsState(choice = {}) {
+  const isFree = choice.serviceIsFree === true;
   return {
     serviceDescription: choice.serviceDescription || "",
     serviceDetailedDescription: choice.serviceDetailedDescription || "",
     serviceDurationMinutes: Number(choice.serviceDurationMinutes || 0),
-    serviceDepositAmount: Number(choice.serviceDepositAmount || 0),
+    serviceDepositAmount: isFree ? 0 : Number(choice.serviceDepositAmount || 0),
     serviceDepositType: choice.serviceDepositType || "amount",
     serviceRequiresAssessment: choice.serviceRequiresAssessment === true,
-    serviceRequiresDeposit: choice.serviceRequiresDeposit === true,
+    serviceRequiresDeposit: isFree ? false : (choice.serviceRequiresDeposit === true),
     serviceRecommendedMessage: choice.serviceRecommendedMessage || "",
+    serviceIsFree: isFree,
   };
 }
 
@@ -625,7 +629,15 @@ function formatBookingCurrency(value) {
 }
 
 function isFreeService(service = {}) {
-  return service.is_free === true || service.isFree === true;
+  if (!service) return false;
+  const isFreeField = service.is_free === true || service.isFree === true || truthy(service.is_free) || truthy(service.isFree);
+  if (isFreeField) return true;
+  
+  const basePrice = service.base_price !== undefined && service.base_price !== null ? Number(service.base_price) : null;
+  const initialPrice = service.initial_price !== undefined && service.initial_price !== null ? Number(service.initial_price) : null;
+  if (basePrice === 0) return true;
+  if (initialPrice === 0) return true;
+  return false;
 }
 
 function servicePriceText(service = {}, value = serviceValue(service), { serviceName = "" } = {}) {
