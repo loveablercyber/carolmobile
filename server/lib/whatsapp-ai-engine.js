@@ -18,181 +18,97 @@ import { generateOpenAiText, openAiPublicStatus } from "./openai-client.js";
 import { sendBaileysTextMessage, sendBaileysPresence } from "./baileys-client.js";
 import { sendEmail } from "./integrations.js";
 
+// Módulos refatorados na Fase 3
+import {
+  clean,
+  normalizeText,
+  truthy,
+  extractRawText,
+  jidToPhone,
+  firstValidPhone,
+  localDateParts,
+  addLocalDays,
+  formatDateLabel,
+  normalizeBookingState,
+  parseJsonObject,
+  hasBookingStateProgress,
+  isActiveBookingState,
+  includesAny,
+  delay,
+} from "./whatsapp/utils.js";
+
+import {
+  normalizeIncomingWhatsappPayload,
+  isMessageWebhookPayload,
+} from "./whatsapp/normalizer.js";
+
+import {
+  aiDomainTerms,
+  salonOperationalTerms,
+  clearlyOutOfScopeTerms,
+  keywordInText,
+  isWithinAiHours,
+  numericChoice,
+  dateOptionsFrom,
+  parseBookingDateFromText,
+  parseBookingTimeFromText,
+  parseFlexibleBookingTimeFromText,
+  periodMatches,
+  periodLabel,
+  lastAiText,
+  wantsMoreSlotOptions,
+  hasTemporalBookingSignal,
+  promptSuggestsBookingAnswer,
+  isAffirmativeBookingConfirmation,
+  isFinalBookingConfirmation,
+  isFinalBookingAlteration,
+  shouldPrioritizeBookingState,
+  shouldResetBookingStateOnGreeting,
+  isSimpleGreeting,
+  isClientAskingQuestion,
+  isClientChangingSubjectOrNegating,
+  isClientExitingFlow,
+  isReplyingToExplanationOffer,
+  isAgendaAvailabilityIntent,
+  isInAiServiceScope,
+} from "./whatsapp/intent-detector.js";
+
+import {
+  explicitGreetingFromText,
+  localGreetingForDate,
+  buildLocalGreetingResponse,
+  naturalConversationPrefix,
+  buildOutOfScopeResponse,
+} from "./whatsapp/local-handlers.js";
+
+// Re-exportar funções para compatibilidade total com os testes existentes
+export {
+  normalizeIncomingWhatsappPayload,
+  isMessageWebhookPayload,
+} from "./whatsapp/normalizer.js";
+
+export {
+  keywordInText,
+  isWithinAiHours,
+  shouldPrioritizeBookingState,
+  shouldResetBookingStateOnGreeting,
+  isSimpleGreeting,
+  isClientAskingQuestion,
+  isClientChangingSubjectOrNegating,
+  isClientExitingFlow,
+  isReplyingToExplanationOffer,
+  isAgendaAvailabilityIntent,
+  isInAiServiceScope,
+} from "./whatsapp/intent-detector.js";
+
+export {
+  localGreetingForDate,
+  buildLocalGreetingResponse,
+  buildOutOfScopeResponse,
+} from "./whatsapp/local-handlers.js";
+
 const MAX_AI_MESSAGE_CHARS = 6000;
 const SLOT_PAGE_SIZE = 5;
-
-const clean = (value) => String(value ?? "").trim();
-
-function normalizeText(value) {
-  return clean(value)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
-function truthy(value) {
-  return value === true || value === "true" || value === 1 || value === "1";
-}
-
-function extractRawText(raw) {
-  const message = raw?.message || raw?.messages?.[0]?.message || {};
-  return clean(
-    message.conversation ||
-      message.extendedTextMessage?.text ||
-      message.imageMessage?.caption ||
-      message.videoMessage?.caption ||
-      message.documentMessage?.caption ||
-      message.buttonsResponseMessage?.selectedDisplayText ||
-      message.listResponseMessage?.title ||
-      "",
-  );
-}
-
-function jidToPhone(value) {
-  const jid = clean(value);
-  if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") return "";
-  const number = jid.replace(/@(?:s\.whatsapp\.net|c\.us|lid|broadcast)$/i, "");
-  return number.replace(/\D/g, "");
-}
-
-function firstValidPhone(...values) {
-  for (const value of values) {
-    const number = jidToPhone(value);
-    if (/^55\d{10,11}$/.test(number)) return number;
-  }
-  return "";
-}
-
-// Eventos da Evolution API que contêm mensagens novas do cliente.
-// Todos os outros tipos (messages.update, connection.update, qrcode.updated,
-// application.startup) devem ser ignorados pelo motor do bot.
-const EVOLUTION_MESSAGE_EVENTS = new Set([
-  "messages.upsert",
-  "MESSAGES_UPSERT",
-]);
-
-export function normalizeIncomingWhatsappPayload(payload = {}) {
-  // Formato messages.update da Evolution: payload.data pode ser um array
-  // de updates de status (ex.: leitura/entrega). Nesse caso, nenhum deles
-  // representa uma mensagem nova do cliente — sinalizamos isFromMe=true
-  // para que o motor ignore o evento sem processá-lo.
-  const dataIsArray = Array.isArray(payload.data);
-  const raw = dataIsArray
-    ? (payload.data[0] || {})
-    : (payload.raw || payload.data || payload.message || {});
-
-  const key = raw?.key || payload.key || {};
-  const from =
-    clean(
-      payload.from ||
-        payload.remoteJid ||
-        payload.jid ||
-        raw.remoteJid ||
-        key.remoteJid,
-    ) ||
-    "";
-  const phoneNumber = firstValidPhone(
-    payload.phone,
-    payload.number,
-    payload.senderPn,
-    raw.phone,
-    raw.number,
-    raw.senderPn,
-    key.remoteJidAlt,
-    key.participantAlt,
-    from,
-    payload.remoteJid,
-    payload.participant,
-    key.participant,
-    key.remoteJid,
-  );
-  const text = clean(
-    payload.text ||
-      payload.body ||
-      raw.text ||
-      raw.body ||
-      raw.message?.conversation ||
-      raw.message?.extendedTextMessage?.text ||
-      extractRawText(raw),
-  );
-  // Se payload.data é um array (formato messages.update de status/entrega/leitura),
-  // tratamos como isFromMe=true para ignorar silenciosamente sem processar.
-  const isFromMe = dataIsArray
-    ? true
-    : truthy(payload.isFromMe ?? payload.fromMe ?? raw.fromMe ?? key.fromMe);
-  const parsedMessageId = clean(
-    payload.messageId || payload.id || payload.provider_message_id || raw.id || key.id,
-  );
-  // Se a Evolution API não enviar ID, geramos um ID temporário seguro que satisfaz
-  // a restrição NOT NULL UNIQUE no banco de dados.
-  const fallbackMessageId = parsedMessageId || `tmp-${phoneNumber || "unknown"}-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`;
-  const sessionName =
-    clean(payload.session_name || payload.instance || raw.instance || payload.session) ||
-    String(process.env.BAILEYS_DEFAULT_INSTANCE || "carol-sol");
-  const isGroup = from.endsWith("@g.us");
-  const isStatus = from === "status@broadcast";
-
-  return {
-    sessionName,
-    from,
-    phoneNumber,
-    text,
-    isFromMe,
-    isGroup,
-    isStatus,
-    messageId: fallbackMessageId,
-    timestamp: payload.timestamp || raw?.messageTimestamp || null,
-    raw: payload,
-  };
-}
-
-export function isMessageWebhookPayload(payload = {}) {
-  // Se o campo `event` estiver presente (Evolution API), só processar
-  // eventos do tipo messages.upsert. Outros eventos como messages.update,
-  // connection.update, qrcode.updated e application.startup não devem
-  // ser tratados como mensagens novas do cliente.
-  const eventField = clean(payload.event);
-  if (eventField && !EVOLUTION_MESSAGE_EVENTS.has(eventField)) {
-    return false;
-  }
-
-  // Formato messages.update: payload.data é um array de status de entrega.
-  // Não representa mensagem nova.
-  if (Array.isArray(payload.data)) {
-    return false;
-  }
-
-  const normalized = normalizeIncomingWhatsappPayload(payload);
-  return Boolean(
-    normalized.from ||
-      normalized.phoneNumber ||
-      normalized.text ||
-      normalized.messageId ||
-      payload.raw?.key,
-  );
-}
-
-export function keywordInText(text, keyword) {
-  const needle = normalizeText(keyword);
-  if (!needle) return false;
-  return normalizeText(text).includes(needle);
-}
-
-export function isWithinAiHours(settings, now = new Date()) {
-  if (settings.allow24h) return true;
-  if (!settings.aiStartTime || !settings.aiEndTime) return false;
-  const formatter = new Intl.DateTimeFormat("pt-BR", {
-    timeZone: settings.timezone || "America/Sao_Paulo",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  const current = formatter.format(now);
-  const start = settings.aiStartTime;
-  const end = settings.aiEndTime;
-  if (start <= end) return current >= start && current <= end;
-  return current >= start || current <= end;
-}
 
 function prunePayload(value, depth = 0) {
   if (depth > 4) return "[truncated]";
@@ -225,426 +141,6 @@ async function findClientByPhone(client, phoneNumber) {
     [[withCountry, local]],
   );
   return rows[0] || null;
-}
-
-function localDateParts(value = new Date()) {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Sao_Paulo",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    })
-      .formatToParts(value)
-      .filter((part) => part.type !== "literal")
-      .map((part) => [part.type, part.value]),
-  );
-  return `${parts.year}-${parts.month}-${parts.day}`;
-}
-
-function addLocalDays(date, days) {
-  const base = new Date(`${date}T12:00:00.000Z`);
-  base.setUTCDate(base.getUTCDate() + days);
-  return base.toISOString().slice(0, 10);
-}
-
-function formatDateLabel(date) {
-  return new Date(`${date}T12:00:00.000Z`).toLocaleDateString("pt-BR", {
-    weekday: "short",
-    day: "2-digit",
-    month: "2-digit",
-    timeZone: "UTC",
-  });
-}
-
-function normalizeBookingState(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return { ...value };
-}
-
-function parseJsonObject(value) {
-  if (!value) return {};
-  if (typeof value === "object") return normalizeBookingState(value);
-  try {
-    return normalizeBookingState(JSON.parse(value));
-  } catch {
-    return {};
-  }
-}
-
-function hasBookingStateProgress(state = {}) {
-  if (!state || typeof state !== "object" || Array.isArray(state)) return false;
-  return Boolean(
-    state.status ||
-      state.appointmentId ||
-      state.previousAppointmentId ||
-      state.serviceId ||
-      state.date ||
-      state.time ||
-      state.professionalId ||
-      state.clientName ||
-      state.clientEmail ||
-      state.serviceOptions?.length ||
-      state.dateOptions?.length ||
-      state.slotOptions?.length,
-  );
-}
-
-function isActiveBookingState(state = {}) {
-  if (!hasBookingStateProgress(state)) return false;
-  return state.status !== "booked";
-}
-
-export function shouldResetBookingStateOnGreeting(text, state = {}) {
-  return isSimpleGreeting(text) && hasBookingStateProgress(state);
-}
-
-const aiDomainTerms = [
-  "mega hair",
-  "megahair",
-  "alongamento",
-  "aplique",
-  "aplicacao",
-  "aplicar",
-  "manutencao",
-  "retirada",
-  "remocao",
-  "fibra russa",
-  "fita",
-  "queratina",
-  "microlink",
-  "nanopele",
-  "lace",
-  "peruca",
-  "protese capilar",
-  "cabelo",
-  "cabelos",
-  "fio",
-  "fios",
-  "couro cabeludo",
-  "raiz",
-  "mecha",
-  "mechas",
-  "ponta",
-  "pontas",
-  "preenchimento",
-  "preencher",
-  "alongamento parcial",
-  "parcial",
-  "volume",
-  "comprimento",
-  "correcao",
-  "corrigir",
-  "reposicao",
-  "repor",
-  "queda",
-  "quebra",
-  "coceira",
-  "irritacao",
-  "oleosidade",
-  "progressiva",
-  "quimica",
-  "loiro",
-  "descolorido",
-  "lavar",
-  "pentear",
-  "cuidados",
-  "avaliacao",
-  "diagnostico",
-];
-
-const salonOperationalTerms = [
-  "agendar",
-  "agendamento",
-  "agenda",
-  "horario",
-  "disponivel",
-  "disponibilidade",
-  "encaixe",
-  "servico",
-  "servicos",
-  "valor",
-  "preco",
-  "orcamento",
-  "custa",
-  "quanto fica",
-  "quanto esta",
-  "promocao",
-  "promocoes",
-  "promocional",
-  "desconto",
-  "descontos",
-  "oferta",
-  "ofertas",
-  "campanha",
-  "liquidacao",
-  "promo",
-  "sinal",
-  "pagamento",
-  "pix",
-  "cartao",
-  "cupom",
-  "endereco",
-  "localizacao",
-  "funcionamento",
-  "atendente",
-  "equipe",
-  "salao",
-  "carol sol",
-  "registrar",
-  "confirmar",
-  "confirmo",
-  "pode registrar",
-  "pode confirmar",
-];
-
-const clearlyOutOfScopeTerms = [
-  "receita",
-  "bolo",
-  "comida",
-  "cozinha",
-  "futebol",
-  "jogo",
-  "politica",
-  "programacao",
-  "codigo",
-  "filme",
-  "serie",
-  "musica",
-  "noticia",
-  "matematica",
-  "viagem",
-  "hotel",
-];
-
-export function isInAiServiceScope(text) {
-  const normalized = normalizeText(text);
-  if (!normalized) return true;
-  if (isSimpleGreeting(text)) return true;
-  if (isAffirmativeBookingConfirmation(text)) return true;
-  const hasDomainTerm = includesAny(normalized, aiDomainTerms);
-  if (hasDomainTerm) return true;
-  if (includesAny(normalized, clearlyOutOfScopeTerms)) return false;
-  return includesAny(normalized, salonOperationalTerms);
-}
-
-export function buildOutOfScopeResponse(text) {
-  if (isInAiServiceScope(text)) return "";
-  return [
-    "Consigo te ajudar apenas com assuntos do salão: Mega Hair, cabelos, perucas, apliques, cuidados, valores, horários e agendamentos.",
-    "Me manda uma dúvida dentro desses temas que eu sigo daqui.",
-  ].join("\n\n");
-}
-
-function numericChoice(text) {
-  const normalized = normalizeText(text);
-  if (/^\s*\d{1,2}\s*h\b/.test(normalized)) return null;
-  const match = normalized.match(/^\s*(?:opcao\s*)?(\d{1,2})(?:\s*[\).:-]?\s*$|\s+[\p{L}])/u);
-  return match ? Number(match[1]) : null;
-}
-
-function dateOptionsFrom(date = localDateParts()) {
-  return [
-    { id: 1, date, label: `Hoje (${formatDateLabel(date)})` },
-    { id: 2, date: addLocalDays(date, 1), label: `Amanhã (${formatDateLabel(addLocalDays(date, 1))})` },
-    { id: 3, date: addLocalDays(date, 2), label: `Depois de amanhã (${formatDateLabel(addLocalDays(date, 2))})` },
-  ];
-}
-
-function parseBookingDateFromText(text, state = {}) {
-  const choice = numericChoice(text);
-  if (choice && Array.isArray(state.dateOptions)) {
-    const selected = state.dateOptions.find((item) => Number(item.id) === choice);
-    if (selected?.date) return selected.date;
-  }
-
-  const normalized = normalizeText(text);
-  const today = localDateParts();
-  if (/\b(hoje|hj)\b/.test(normalized)) return today;
-  if (/\b(amanha|amanhã)\b/.test(normalized)) return addLocalDays(today, 1);
-  if (/depois de amanha|depois de amanhã/.test(normalized)) return addLocalDays(today, 2);
-
-  const iso = normalized.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-
-  const slash = normalized.match(/\b(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?\b/);
-  if (slash) {
-    const day = Number(slash[1]);
-    const month = Number(slash[2]);
-    const currentYear = Number(today.slice(0, 4));
-    let year = slash[3] ? Number(slash[3]) : currentYear;
-    if (year < 100) year += 2000;
-    const candidate = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    if (new Date(`${candidate}T12:00:00.000Z`).toString() !== "Invalid Date") {
-      if (!slash[3] && candidate < today) {
-        return `${String(year + 1).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      }
-      return candidate;
-    }
-  }
-
-  const weekdayTerms = [
-    ["domingo", 0],
-    ["segunda", 1],
-    ["terca", 2],
-    ["terça", 2],
-    ["quarta", 3],
-    ["quinta", 4],
-    ["sexta", 5],
-    ["sabado", 6],
-    ["sábado", 6],
-  ];
-  const found = weekdayTerms.find(([label]) => normalized.includes(label));
-  if (found) {
-    const currentWeekday = weekdayForDate(today);
-    const target = found[1];
-    const diff = (target - currentWeekday + 7) % 7 || 7;
-    return addLocalDays(today, diff);
-  }
-  return "";
-}
-
-function parseBookingTimeFromText(text) {
-  const normalized = normalizeText(text);
-  if (/\b(manha|manhã)\b/.test(normalized)) return { period: "morning", time: "" };
-  if (/\b(tarde)\b/.test(normalized)) return { period: "afternoon", time: "" };
-  if (/\b(noite)\b/.test(normalized)) return { period: "evening", time: "" };
-
-  const explicit = normalized.match(/(?:\b(?:as|às|horario|horário|hora)\s*)?(\d{1,2})(?:[:h](\d{2}))\b/);
-  if (explicit) {
-    const hour = Number(explicit[1]);
-    const minute = Number(explicit[2] || 0);
-    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
-      return { period: "", time: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}` };
-    }
-  }
-  return { period: "", time: "" };
-}
-
-function parseFlexibleBookingTimeFromText(text) {
-  const normalized = normalizeText(text);
-  if (/\b(cedo|cedinho)\b/.test(normalized)) return { period: "morning", time: "" };
-  if (/\b(depois do almoco|apos o almoco|apos almoco|depois de almoco|depois do meio dia|depois de meio dia|mais tarde)\b/.test(normalized)) {
-    return { period: "afternoon", time: "" };
-  }
-  if (/\b(meio dia|meiodia|perto das 12|por volta das 12)\b/.test(normalized)) {
-    return { period: "afternoon", time: "12:00" };
-  }
-  const colloquial = normalized.match(/\b(\d{1,2})\s*(?:da|de)\s*(manha|tarde|noite)\b/);
-  if (colloquial) {
-    let hour = Number(colloquial[1]);
-    const period = colloquial[2];
-    if (period === "tarde" && hour >= 1 && hour <= 11) hour += 12;
-    if (period === "noite" && hour >= 1 && hour <= 11) hour += 12;
-    if (hour >= 0 && hour <= 23) {
-      return {
-        period: period === "manha" ? "morning" : period === "tarde" ? "afternoon" : "evening",
-        time: `${String(hour).padStart(2, "0")}:00`,
-      };
-    }
-  }
-  const explicit = normalized.match(
-    /(?:\b(?:as|a?s|horario|hora|perto das|por volta das|depois das|apos as)\s*)(\d{1,2})(?:[:h](\d{0,2}))?\b|\b(\d{1,2})h(?:(\d{2}))?\b/,
-  );
-  if (explicit) {
-    const hour = Number(explicit[1] || explicit[3]);
-    const minute = Number(explicit[2] || explicit[4] || 0);
-    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
-      return { period: "", time: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}` };
-    }
-  }
-  return parseBookingTimeFromText(text);
-}
-
-function periodMatches(time, period) {
-  if (!period) return true;
-  const hour = Number(String(time).slice(0, 2));
-  if (period === "morning") return hour < 12;
-  if (period === "afternoon") return hour >= 12 && hour < 18;
-  if (period === "evening") return hour >= 18;
-  return true;
-}
-
-function periodLabel(period) {
-  if (period === "morning") return "manhã";
-  if (period === "afternoon") return "tarde";
-  if (period === "evening") return "noite";
-  return "";
-}
-
-function lastAiText(history = []) {
-  return (history || []).filter((item) => item.sender_type === "ai").pop()?.body || "";
-}
-
-function hasTemporalBookingSignal(text, state = {}) {
-  const normalized = normalizeText(text);
-  const parsedDate = parseBookingDateFromText(text, state);
-  const parsedTime = parseFlexibleBookingTimeFromText(text);
-  return Boolean(
-    parsedDate ||
-      parsedTime.time ||
-      parsedTime.period ||
-      wantsMoreSlotOptions(text) ||
-      includesAny(normalized, [
-        "depois do almoco",
-        "depois do meio dia",
-        "perto das",
-        "por volta das",
-        "mais tarde",
-        "cedo",
-        "cedinho",
-        "qualquer horario",
-        "esse horario nao da",
-        "esse horario nao serve",
-      ]),
-  );
-}
-
-function promptSuggestsBookingAnswer(prompt = "") {
-  const normalized = normalizeText(prompt);
-  return includesAny(normalized, [
-    "qual dia",
-    "escolha a data",
-    "data preferida",
-    "escolha o horario",
-    "escolha o horÃ¡rio",
-    "horarios disponiveis",
-    "horÃ¡rios disponÃ­veis",
-    "proximos horarios",
-    "prÃ³ximos horÃ¡rios",
-    "qual servico",
-    "qual serviÃ§o",
-    "escolha o servico",
-    "escolha o serviÃ§o",
-  ]);
-}
-
-export function shouldPrioritizeBookingState(text, state = {}, history = []) {
-  if (!isActiveBookingState(state)) return false;
-  const normalized = normalizeText(text);
-  const choice = numericChoice(text);
-  if (state.status === "awaiting_contact") return true;
-  if (state.status === "awaiting_confirmation") {
-    return Boolean(isAffirmativeBookingConfirmation(text) || choice || hasTemporalBookingSignal(text, state));
-  }
-  if (state.status === "awaiting_service_details") {
-    return Boolean(
-      isAffirmativeBookingConfirmation(text) ||
-        choice ||
-        includesAny(normalized, ["verificar", "horario", "horarios", "outro servico", "outro serviço", "alterar"]),
-    );
-  }
-  if (state.status === "awaiting_slot") {
-    return Boolean(choice || hasTemporalBookingSignal(text, state));
-  }
-  if (state.status === "awaiting_date") {
-    return hasTemporalBookingSignal(text, state);
-  }
-  if (state.status === "awaiting_service") {
-    return Boolean(choice || includesAny(normalized, aiDomainTerms));
-  }
-  if (state.serviceId && hasTemporalBookingSignal(text, state)) return true;
-  return promptSuggestsBookingAnswer(lastAiText(history)) && hasTemporalBookingSignal(text, state);
 }
 
 function textMatchesCatalogEntry(text, entryText) {
@@ -976,19 +472,6 @@ function slotPageLines(options = [], start = 0) {
     lines.push(`Digite ${nextCommand} para ver mais horários.`);
   }
   return lines.filter(Boolean).join("\n");
-}
-
-function wantsMoreSlotOptions(text) {
-  const normalized = normalizeText(text);
-  return includesAny(normalized, [
-    "ver mais",
-    "mais horarios",
-    "mais horários",
-    "proximos horarios",
-    "próximos horários",
-    "proximo horario",
-    "próximo horário",
-  ]);
 }
 
 function extractClientName(text) {
@@ -2006,42 +1489,6 @@ async function nextAvailableSlotOptions({ serviceId, fromDate, period = "" }) {
   return options;
 }
 
-export function isAgendaAvailabilityIntent(text) {
-  const normalized = normalizeText(text);
-  if (!normalized) return false;
-  const wantsAgenda = includesAny(normalized, [
-    "horario",
-    "agenda",
-    "disponivel",
-    "disponibilidade",
-    "vaga",
-    "encaixe",
-    "atende",
-    "atendimento",
-    "tem hora",
-    "tem horario",
-    "consegue",
-    "tem como",
-  ]);
-  if (!wantsAgenda) return false;
-  return includesAny(normalized, [
-    "hoje",
-    "hj",
-    "amanha",
-    "depois de amanha",
-    "domingo",
-    "segunda",
-    "terca",
-    "quarta",
-    "quinta",
-    "sexta",
-    "sabado",
-    "manha",
-    "tarde",
-    "noite",
-  ]) || /\b(?:dia\s*)?\d{1,2}[\/.-]\d{1,2}(?:[\/.-]\d{2,4})?\b/.test(normalized);
-}
-
 export async function handleLocalAgendaAvailabilityIntent({
   normalized,
   conversationId,
@@ -3035,42 +2482,6 @@ export function summarizeAiCommercialContext(base, settings = {}) {
   ].join("\n\n");
 }
 
-function isAffirmativeBookingConfirmation(text) {
-  const normalized = normalizeText(text).replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
-  return [
-    "sim",
-    "sim pode",
-    "pode sim",
-    "confirmo",
-    "confirmado",
-    "isso",
-    "isso mesmo",
-    "correto",
-    "certo",
-    "ok",
-    "pode confirmar",
-    "pode registrar",
-    "sim pode registrar",
-    "sim pode confirmar",
-  ].includes(normalized);
-}
-
-function isFinalBookingConfirmation(text) {
-  return isAffirmativeBookingConfirmation(text) || numericChoice(text) === 1;
-}
-
-function isFinalBookingAlteration(text) {
-  const normalized = normalizeText(text);
-  return numericChoice(text) === 2 || includesAny(normalized, [
-    "alterar",
-    "mudar",
-    "trocar",
-    "outro horario",
-    "outra data",
-    "corrigir",
-  ]);
-}
-
 export function buildBookingGuidance({
   incomingText,
   history = [],
@@ -3376,153 +2787,6 @@ async function requestHumanAttention({ conversationId, messageId, reason, respon
       details: { reason, responseText, action: "keep_ai_enabled" },
     });
   });
-}
-
-async function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export function isSimpleGreeting(text) {
-  const compact = normalizeText(text)
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, "")
-    .trim();
-  const greetings = [
-    "oi",
-    "olam",
-    "ola",
-    "oie",
-    "opa",
-    "bomdia",
-    "boatarde",
-    "boanoite",
-    "hello",
-    "hi",
-  ];
-  const allowedSuffixes = [
-    "",
-    "tudobem",
-    "tudobom",
-    "tdbem",
-    "tdbom",
-    "comovai",
-    "bomdia",
-    "boatarde",
-    "boanoite",
-    "carol",
-  ];
-  return greetings.some((greeting) => {
-    if (!compact.startsWith(greeting)) return false;
-    return allowedSuffixes.includes(compact.slice(greeting.length));
-  });
-}
-
-function explicitGreetingFromText(text) {
-  const normalized = normalizeText(text).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-  if (/\bboa noite\b/.test(normalized)) return "Boa noite";
-  if (/\bboa tarde\b/.test(normalized)) return "Boa tarde";
-  if (/\bbom dia\b/.test(normalized)) return "Bom dia";
-  return "";
-}
-
-export function localGreetingForDate(date = new Date(), timezone = "America/Sao_Paulo") {
-  let hour = new Date(date).getHours();
-  try {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: timezone || "America/Sao_Paulo",
-      hour: "2-digit",
-      hour12: false,
-    }).formatToParts(new Date(date));
-    const parsed = Number(parts.find((part) => part.type === "hour")?.value);
-    if (Number.isFinite(parsed)) hour = parsed;
-  } catch {
-    // Keep the runtime local hour if the configured timezone is invalid.
-  }
-  if (hour >= 5 && hour < 12) return "Bom dia";
-  if (hour >= 12 && hour < 18) return "Boa tarde";
-  return "Boa noite";
-}
-
-export function buildLocalGreetingResponse(text, {
-  date = new Date(),
-  timezone = "America/Sao_Paulo",
-  salonName = "Carol Sol",
-} = {}) {
-  if (!isSimpleGreeting(text)) return "";
-  const greeting = explicitGreetingFromText(text) || localGreetingForDate(date, timezone);
-  const brand = clean(salonName) || "Carol Sol";
-  return `${greeting}! Sou a assistente virtual da ${brand}. Posso te ajudar com servi\u00e7os, valores, hor\u00e1rios ou agendamento.`;
-}
-
-function includesAny(normalizedText, terms) {
-  return terms.some((term) => normalizedText.includes(term));
-}
-
-function naturalConversationPrefix(text) {
-  const normalized = normalizeText(text);
-  if (includesAny(normalized, ["amiga", "amg"])) return "Claro, amiga.";
-  return "";
-}
-
-export function isClientAskingQuestion(text) {
-  const normalized = normalizeText(text);
-  if (text.includes("?")) return true;
-  const questionWords = [
-    "como", "qual", "quais", "oque", "o que", "por que", "porque", "quanto", "quando", "onde", "quem", "cuja", "cujo",
-    "dura", "durabilidade", "estraga", "doi", "vende", "valor", "preco", "cust", "orcamento",
-    "funciona", "diferenca", "queria saber", "gostaria de saber", "me explica", "pode explicar", "saber se"
-  ];
-  return questionWords.some(word => normalized.includes(word));
-}
-
-export function isClientChangingSubjectOrNegating(text) {
-  const normalized = normalizeText(text);
-  const terms = [
-    "nao quero agendar", "depois vejo", "depois marco", "so tirar duvida", "tirar duvida", "tirar uma duvida",
-    "mudei de ideia", "mudei de opiniao", "quero cancelar", "cancelar", "so queria saber"
-  ];
-  return terms.some(term => normalized.includes(term));
-}
-
-export function isClientExitingFlow(text) {
-  const normalized = normalizeText(text);
-  const exitTerms = [
-    "depois eu agendo",
-    "depois agendo",
-    "vou ver e retorno",
-    "obrigado",
-    "obrigada",
-    "valeu",
-    "depois volto",
-    "vou pensar",
-    "nao agora",
-    "não agora",
-    "mais tarde",
-    "so queria saber",
-    "só queria saber",
-    "era so uma duvida",
-    "era só uma dúvida"
-  ];
-  return exitTerms.some(term => normalized.includes(term));
-}
-
-export function isReplyingToExplanationOffer(text, history = []) {
-  const lastAiMessage = history.filter(item => item.sender_type === "ai").pop();
-  if (!lastAiMessage) return false;
-  const lastAiBody = normalizeText(lastAiMessage.body);
-  const offersExplanation = lastAiBody.includes("posso explicar") ||
-                             lastAiBody.includes("posso te mostrar") ||
-                             lastAiBody.includes("posso te informar") ||
-                             lastAiBody.includes("posso detalhar") ||
-                             lastAiBody.includes("quer que eu explique") ||
-                             lastAiBody.includes("posso tirar essa duvida") ||
-                             lastAiBody.includes("posso tirar essa dúvida");
-  if (!offersExplanation) return false;
-  const normalizedText = normalizeText(text).replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
-  const confirmationWords = [
-    "sim", "pode", "claro", "quero", "quero saber", "pode sim", "sim pode", "com certeza", "manda", "envia", "explique"
-  ];
-  return confirmationWords.some(word => normalizedText === word || normalizedText.startsWith(word));
 }
 
 export async function getAgendaAvailabilityContext(client, text, base, state) {
