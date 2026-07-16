@@ -673,27 +673,28 @@ function serviceValue(service = {}) {
 function buildServiceDetailsResponse(state = {}) {
   const description = state.serviceDetailedDescription || state.serviceDescription || "";
   const duration = Number(state.serviceDurationMinutes || 0);
+  const valueLabel = formatServiceValue({ is_free: state.serviceIsFree }, state.serviceValue);
+  const assessmentLabel = state.serviceRequiresAssessment ? "\n⚠️ Observação: Requer avaliação prévia." : "";
+  const recomLabel = state.serviceRecommendedMessage ? `\n💡 Dica: ${state.serviceRecommendedMessage}` : "";
+  const depositText = state.serviceRequiresDeposit ? `\n💳 Sinal: R$ ${Number(state.serviceDepositAmount || 0).toFixed(2)}` : "";
+
   return [
-    state.serviceNote || "",
-    "Perfeito, voce escolheu:",
-    state.serviceName,
-    description ? `Descricao: ${description}` : "",
-    duration > 0 ? `Duracao: ${duration} minutos` : "",
-    `Valor: ${formatServiceValue({ is_free: state.serviceIsFree }, state.serviceValue)}`,
-    formatServiceDeposit(state),
-    state.serviceRequiresAssessment ? "Requer avaliacao previa." : "",
-    state.serviceRecommendedMessage ? `Observacao: ${state.serviceRecommendedMessage}` : "",
-    "Posso verificar os horarios disponiveis para esse servico?",
-    "1) Sim",
-    "2) Escolher outro servico",
-  ].filter(Boolean).join("\n\n");
+    state.serviceNote ? `${state.serviceNote}\n` : "",
+    `✨ *Excelente escolha!* Você selecionou *${state.serviceName}*.`,
+    description ? `📝 ${description}` : "",
+    duration > 0 ? `⏱️ *Duracao: ${duration} minutos*` : "",
+    `*💰 Valor: ${valueLabel}*${depositText}${assessmentLabel}${recomLabel}`,
+    `🗓️ Posso verificar os horários disponíveis para você?\n\n1) Sim\n2) Escolher outro servico`
+  ].filter(Boolean).join("\n");
 }
 
 function isServiceDetailsAccepted(text) {
   const normalized = normalizeText(text);
+  const hasDateOrTime = parseBookingDateFromText(text) || parseFlexibleBookingTimeFromText(text).time || parseFlexibleBookingTimeFromText(text).period;
   return (
     isAffirmativeBookingConfirmation(text) ||
     numericChoice(text) === 1 ||
+    Boolean(hasDateOrTime) ||
     includesAny(normalized, ["verificar horario", "verificar horarios", "pode verificar", "seguir", "continuar"])
   );
 }
@@ -754,33 +755,33 @@ function missingBookingContactFields(state) {
 
 function bookingContactPrompt(state, missingContact = []) {
   const next = missingContact[0];
-  const saved = [
-    state.clientName ? `Nome: ${state.clientName}` : "",
-    isValidClientEmail(state.clientEmail) ? `E-mail: ${state.clientEmail}` : "",
-    normalizeClientCpf(state.clientCpf) ? `CPF: ${normalizeClientCpf(state.clientCpf)}` : "",
-    normalizeBirthDate(state.clientBirthDate) ? `Nascimento: ${normalizeBirthDate(state.clientBirthDate)}` : "",
-    normalizeBookingPhone(state.clientPhone) ? `Telefone: ${formatBookingPhone(state.clientPhone)}` : "",
-  ].filter(Boolean);
   const nextQuestion =
     next === "nome completo"
-      ? "Qual seu nome completo?"
+      ? "Qual seu nome completo? 😊"
       : next === "e-mail real"
-        ? "Qual seu e-mail real?"
+        ? "Qual seu e-mail real? 📧"
         : next === "CPF"
-          ? "Qual seu CPF?"
+          ? "Qual seu CPF? 📄"
           : next === "data de nascimento"
-            ? "Qual sua data de nascimento? Pode enviar no formato 10/02/1990."
-            : "Qual telefone deseja usar para contato?";
-  return [
-    "Perfeito, encontrei o horario.",
-    `Servico: ${state.serviceName}`,
-    `Valor: ${formatServiceValue({ is_free: state.serviceIsFree }, state.serviceValue)}`,
-    saved.length ? `Ja tenho:\n${saved.join("\n")}` : "",
-    normalizeBookingPhone(state.clientPhone)
+            ? "Qual sua data de nascimento? Pode enviar no formato 10/02/1990 📅"
+            : "Qual telefone deseja usar para contato? 📱";
+
+  const isFirstField = missingContact.length === 5 || (missingContact.length === 4 && state.clientPhone);
+  if (isFirstField) {
+    const valText = formatServiceValue({ is_free: state.serviceIsFree }, state.serviceValue);
+    const depositText = state.serviceRequiresDeposit ? ` com sinal de R$ ${Number(state.serviceDepositAmount || 0).toFixed(2)}` : "";
+    const phoneText = normalizeBookingPhone(state.clientPhone)
       ? `Vou usar este WhatsApp como telefone de contato: ${formatBookingPhone(state.clientPhone)}.`
-      : "",
-    nextQuestion,
-  ].filter(Boolean).join("\n\n");
+      : "";
+    return [
+      `✨ *Excelente! Horário reservado.*`,
+      `Para finalizar seu pré-agendamento de *${state.serviceName}* (${valText}${depositText}), preciso apenas confirmar alguns dados rápidos.`,
+      phoneText,
+      nextQuestion
+    ].filter(Boolean).join("\n\n");
+  }
+
+  return `✨ *Obrigado!* Agora, por favor, ${nextQuestion.toLowerCase()}`;
 }
 
 async function saveBookingState(conversationId, state) {
@@ -1476,7 +1477,7 @@ function flowEnabled(base, flowKey) {
 }
 
 function formatSlot(slot) {
-  return `${formatDateLabel(slot.date)} às ${slot.time} com ${slot.professionalName}`;
+  return `${slot.time} com ${slot.professionalName}`;
 }
 
 async function slotOptionsForBooking({ serviceId, date, preferredTime = "", period = "" }) {
@@ -1742,19 +1743,18 @@ export async function handleLocalAgendaAvailabilityIntent({
 }
 
 function buildBookingSummary(state) {
+  const valText = state.serviceIsFree ? "Gratuito" : `R$ ${Number(state.serviceValue || 0).toFixed(2)}`;
+  const depositText = state.serviceRequiresDeposit ? `\n💳 Sinal: R$ ${Number(state.serviceDepositAmount || 0).toFixed(2)}` : "";
   return [
-    state.clientName ? `Nome: ${state.clientName}` : "",
-    state.clientEmail ? `E-mail: ${state.clientEmail}` : "",
-    state.clientCpf ? `CPF: ${state.clientCpf}` : "",
-    state.clientBirthDate ? `Nascimento: ${state.clientBirthDate}` : "",
-    state.clientPhone ? `Telefone: ${state.clientPhone}` : "",
-    `Serviço: ${state.serviceName}`,
-    state.requestedServiceName && state.requestedServiceName !== state.serviceName
-      ? `Pedido informado: ${state.requestedServiceName}`
-      : "",
-    `Valor: ${formatServiceValue({ is_free: state.serviceIsFree }, state.serviceValue)}`,
-    `Data e horário: ${formatDateLabel(state.date)} às ${state.time}`,
-    state.professionalName ? `Profissional: ${state.professionalName}` : "",
+    `*📅 Serviço: ${state.serviceName}*`,
+    `*💰 Valor: ${valText}*${depositText ? `*${depositText}*` : ""}`,
+    `*👤 Nome: ${state.clientName}*`,
+    state.clientEmail ? `*📧 E-mail: ${state.clientEmail}*` : "",
+    state.clientCpf ? `*📄 CPF: ${state.clientCpf}*` : "",
+    state.clientBirthDate ? `*📅 Nascimento: ${state.clientBirthDate}*` : "",
+    `*📱 Telefone: ${state.clientPhone}*`,
+    `*🗓️ Data/Hora: ${formatDateLabel(state.date)} às ${state.time}*`,
+    state.professionalName ? `*👩‍💼 Profissional: ${state.professionalName}*` : "",
   ].filter(Boolean).join("\n");
 }
 
@@ -1977,6 +1977,11 @@ export async function handleStructuredBookingFlow({
     }
     state.serviceDetailsAccepted = true;
     state.status = "collecting";
+  }
+
+  const hasDateOrTimeInText = parseBookingDateFromText(text, state) || parseFlexibleBookingTimeFromText(text).time || parseFlexibleBookingTimeFromText(text).period;
+  if (hasDateOrTimeInText && state.serviceId) {
+    state.serviceDetailsAccepted = true;
   }
 
   if (
@@ -2251,12 +2256,14 @@ export async function handleStructuredBookingFlow({
     state.status = "awaiting_confirmation";
     await saveBookingState(conversationId, state);
     const finalSummaryText = [
-      "RESUMO DO AGENDAMENTO",
+      `📝 *Resumo do seu Agendamento:*`,
+      "",
       buildBookingSummary(state),
-      "Confirmar agendamento?",
-      "1) Confirmar",
-      "2) Alterar",
-    ].join("\n\n");
+      "",
+      `👍 *Confirmar agendamento?*`,
+      `1️⃣ Confirmar`,
+      `2️⃣ Alterar`
+    ].filter(Boolean).join("\n");
     await sendTextAndRecord({ normalized, conversationId, text: finalSummaryText, reason: "booking_confirmation_request" });
     await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
     await logAiRequest({
@@ -2292,15 +2299,19 @@ export async function handleStructuredBookingFlow({
         ].join("\n")
       : "";
     const confirmationText = [
-      `Pronto, registrei sua solicitação de pré-agendamento ✨`,
-      appointment.bookingCode ? `Código: ${appointment.bookingCode}` : "",
-      `${appointment.service || state.serviceName} — ${formatDateLabel(state.date)} às ${state.time}`,
-      appointment.professional ? `Com ${appointment.professional}` : "",
+      `🎉 *Agendamento solicitado com sucesso!*`,
+      "",
+      `📅 Serviço: *${appointment.service || state.serviceName}*`,
+      `🗓️ Data: *${formatDateLabel(state.date)}*`,
+      `🕒 Horário: *${state.time}*`,
+      appointment.professional ? `👩‍💼 Profissional: *${appointment.professional}*` : "",
+      appointment.bookingCode ? `🔑 Protocolo: *${appointment.bookingCode}*` : "",
       appointment.paymentId
-        ? `Fatura: ${formatBookingCurrency(appointment.paymentAmount)} para pagamento no portal.`
+        ? `💳 Fatura: ${formatBookingCurrency(appointment.paymentAmount)} para pagamento no portal.`
         : "",
-      "A equipe vai confirmar os detalhes antes do atendimento.",
-      accessText,
+      "",
+      "✨ Em breve nossa equipe confirmará todos os detalhes com você por aqui! 💖",
+      accessText ? `\n${accessText}` : "",
     ].filter(Boolean).join("\n");
     const responseText = [confirmationText, bookingFollowupOptionsText()].join("\n\n");
     await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_created" });
