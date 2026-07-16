@@ -182,7 +182,13 @@ function evolutionRequestOptions(path, { method = "GET", body } = {}, config) {
           url: body?.url,
           byEvents: false,
           base64: false,
-          events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
+          events: [
+            "APPLICATION_STARTUP",
+            "MESSAGES_UPSERT",
+            "MESSAGES_UPDATE",
+            "CONNECTION_UPDATE",
+            "QRCODE_UPDATED",
+          ],
         },
       },
     };

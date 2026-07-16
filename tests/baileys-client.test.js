@@ -187,6 +187,7 @@ test("ready Evolution keepalive configures the webhook target", async () => {
   assert.equal(body.webhook.byEvents, false);
   assert.equal(body.webhook.base64, false);
   assert.deepEqual(body.webhook.events, [
+    "APPLICATION_STARTUP",
     "MESSAGES_UPSERT",
     "MESSAGES_UPDATE",
     "CONNECTION_UPDATE",
