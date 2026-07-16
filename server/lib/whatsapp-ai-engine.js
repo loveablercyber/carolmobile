@@ -15,6 +15,8 @@ import {
   weekdayForDate,
 } from "./availability-rules.js";
 import { generateOpenAiText, openAiPublicStatus } from "./openai-client.js";
+import { generateGeminiText, geminiPublicStatus } from "./gemini-client.js";
+import { generateGroqText, groqPublicStatus } from "./groq-client.js";
 import { sendBaileysTextMessage, sendBaileysPresence } from "./baileys-client.js";
 import { sendEmail } from "./integrations.js";
 
@@ -3620,7 +3622,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   });
 
   let finalResponse = null;
-  const finalProvider = "openai";
+  let finalProvider = settings.provider || "openai";
   let finalModel = null;
   let finalUsage = null;
   let retryCountTotal = 0;
@@ -3630,20 +3632,43 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   let providerStartedAt = null;
   let providerFinishedAt = null;
 
-  const runtimeStatus = openAiPublicStatus();
-  if (!runtimeStatus.enabled || !runtimeStatus.configured) {
-    const missingReason = !runtimeStatus.enabled ? "disabled" : "not_configured";
-    console.warn(`AI provider openai skipped: ${missingReason}.`, {
-      enabled: runtimeStatus.enabled,
-      configured: runtimeStatus.configured,
-      model: runtimeStatus.model,
+  const provider = String(settings.provider || "openai").toLowerCase().trim();
+  let isConfigured = false;
+  let isEnabled = false;
+  let defaultModel = "gpt-4o-mini";
+
+  if (provider === "gemini") {
+    const status = geminiPublicStatus();
+    isConfigured = status.configured || Boolean(settings.geminiApiKey);
+    isEnabled = status.enabled || settings.geminiEnabled;
+    defaultModel = status.model || "gemini-2.5-flash-lite";
+  } else if (provider === "groq" || provider === "grok") {
+    const status = groqPublicStatus();
+    isConfigured = status.configured || Boolean(settings.groqApiKey);
+    isEnabled = status.enabled || settings.groqEnabled;
+    defaultModel = status.model || "llama-3.1-8b-instant";
+  } else {
+    const status = openAiPublicStatus();
+    isConfigured = status.configured || Boolean(settings.openaiApiKey);
+    isEnabled = status.enabled || settings.openaiEnabled;
+    defaultModel = status.model || "gpt-4o-mini";
+  }
+
+  if (!isEnabled || !isConfigured) {
+    const missingReason = !isEnabled ? "disabled" : "not_configured";
+    console.warn(`AI provider ${provider} skipped: ${missingReason}.`, {
+      enabled: isEnabled,
+      configured: isConfigured,
+      model: settings.model || defaultModel,
     });
-    errorMsg = "OpenAI não está habilitada/configurada no ambiente.";
-    errorCode = `OPENAI_${missingReason.toUpperCase()}`;
+    errorMsg = `Provedor ${provider} não está habilitado/configurado no ambiente ou painel.`;
+    errorCode = `${provider.toUpperCase()}_${missingReason.toUpperCase()}`;
   } else {
     const retries = settings.maxRetries ?? 2;
     let currentAttempt = 0;
     providerStartedAt = new Date();
+
+    const activeModel = settings.model || defaultModel;
 
     while (currentAttempt <= retries && !finalResponse) {
       try {
@@ -3651,19 +3676,43 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
           retryCountTotal++;
           await delay(getRetryDelay(currentAttempt));
         }
-        const result = await generateOpenAiText({
-          systemPrompt,
-          message: promptMessage,
-          model: settings.primaryModel || settings.model || runtimeStatus.model,
-          timeoutMs: settings.timeoutMs || 12000,
-          maxTokens: settings.maxResponseTokens || 300,
-        });
+
+        let result;
+        if (provider === "gemini") {
+          result = await generateGeminiText({
+            systemPrompt,
+            message: promptMessage,
+            model: activeModel,
+            timeoutMs: settings.timeoutMs || 12000,
+            maxTokens: settings.maxResponseTokens || 300,
+            apiKey: settings.geminiApiKey || null,
+          });
+        } else if (provider === "groq" || provider === "grok") {
+          result = await generateGroqText({
+            systemPrompt,
+            message: promptMessage,
+            model: activeModel,
+            timeoutMs: settings.timeoutMs || 12000,
+            maxTokens: settings.maxResponseTokens || 300,
+            apiKey: settings.groqApiKey || null,
+          });
+        } else {
+          result = await generateOpenAiText({
+            systemPrompt,
+            message: promptMessage,
+            model: activeModel,
+            timeoutMs: settings.timeoutMs || 12000,
+            maxTokens: settings.maxResponseTokens || 300,
+            apiKey: settings.openaiApiKey || null,
+          });
+        }
+
         finalResponse = result.text;
         finalModel = result.model;
         finalUsage = result.usage;
       } catch (err) {
         console.error(
-          `AI provider openai failed (attempt ${currentAttempt + 1}/${retries + 1}): ${err.message}`,
+          `AI provider ${provider} failed (attempt ${currentAttempt + 1}/${retries + 1}): ${err.message}`,
         );
         errorMsg = err.message;
         errorCode = err.code || null;
@@ -3679,13 +3728,35 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     if (finalResponse && lastAiText && finalResponse.trim() === lastAiText.trim()) {
       try {
         const loopPrompt = `${systemPrompt}\n\nATENÇÃO: Sua resposta gerada foi exatamente idêntica à última resposta enviada: "${finalResponse}". Para evitar repetição e loops, gere uma resposta diferente, mais natural e contextualizada.`;
-        const result = await generateOpenAiText({
-          systemPrompt: loopPrompt,
-          message: promptMessage,
-          model: settings.primaryModel || settings.model || runtimeStatus.model,
-          timeoutMs: settings.timeoutMs || 12000,
-          maxTokens: settings.maxResponseTokens || 300,
-        });
+        let result;
+        if (provider === "gemini") {
+          result = await generateGeminiText({
+            systemPrompt: loopPrompt,
+            message: promptMessage,
+            model: activeModel,
+            timeoutMs: settings.timeoutMs || 12000,
+            maxTokens: settings.maxResponseTokens || 300,
+            apiKey: settings.geminiApiKey || null,
+          });
+        } else if (provider === "groq" || provider === "grok") {
+          result = await generateGroqText({
+            systemPrompt: loopPrompt,
+            message: promptMessage,
+            model: activeModel,
+            timeoutMs: settings.timeoutMs || 12000,
+            maxTokens: settings.maxResponseTokens || 300,
+            apiKey: settings.groqApiKey || null,
+          });
+        } else {
+          result = await generateOpenAiText({
+            systemPrompt: loopPrompt,
+            message: promptMessage,
+            model: activeModel,
+            timeoutMs: settings.timeoutMs || 12000,
+            maxTokens: settings.maxResponseTokens || 300,
+            apiKey: settings.openaiApiKey || null,
+          });
+        }
         finalResponse = result.text;
       } catch (err) {
         console.error("Regenerating response to prevent loop failed:", err.message);

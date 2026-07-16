@@ -134,6 +134,12 @@ create table if not exists public.ai_settings (
   resume_keyword text not null default 'voltar ao bot',
   stop_keyword text not null default 'parar',
   timezone text not null default 'America/Sao_Paulo',
+  openai_api_key text,
+  gemini_api_key text,
+  groq_api_key text,
+  openai_enabled boolean not null default false,
+  gemini_enabled boolean not null default false,
+  groq_enabled boolean not null default false,
   updated_by uuid references public.profiles(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -407,6 +413,12 @@ const timeOrNull = (value) => {
   return /^\d{2}:\d{2}$/.test(v) ? v : null;
 };
 
+export function maskApiKey(key) {
+  if (!key) return "";
+  if (key.length <= 8) return "********";
+  return key.slice(0, 4) + "..." + key.slice(-4);
+}
+
 function defaultSettingsInput() {
   return {
     enabled: false,
@@ -450,6 +462,12 @@ function defaultSettingsInput() {
     circuitBreakerCooldownSeconds: 60,
     geminiCircuitBreakerUntil: null,
     groqCircuitBreakerUntil: null,
+    openaiApiKey: null,
+    geminiApiKey: null,
+    groqApiKey: null,
+    openaiEnabled: false,
+    geminiEnabled: false,
+    groqEnabled: false,
   };
 }
 
@@ -462,6 +480,7 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
   const personalityMode = clean(input.personalityMode || fallback.personalityMode);
   if (!personalityModes.some((mode) => mode.value === personalityMode))
     throw appError("Modo de humor inválido.");
+  
   const inputModel = clean(input.model);
   const inputPrimaryModel = clean(input.primaryModel);
   const requestedModel =
@@ -470,20 +489,37 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
     inputPrimaryModel ||
     inputModel ||
     clean(fallback.primaryModel || fallback.model);
-  const model = /^(gemini|llama)/i.test(requestedModel)
-    ? "gpt-4o-mini"
-    : requestedModel || "gpt-4o-mini";
+  const model = requestedModel || "gpt-4o-mini";
+
   const assistantName = clean(input.assistantName || fallback.assistantName);
   const salonName = clean(input.salonName || fallback.salonName);
   const systemPrompt = clean(input.systemPrompt || fallback.systemPrompt);
   if (assistantName.length < 2) throw appError("Informe o nome da assistente.");
   if (salonName.length < 2) throw appError("Informe o nome do salão.");
-  if (!model) throw appError("Informe o modelo OpenAI.");
+  if (!model) throw appError("Informe o modelo de IA.");
   if (systemPrompt.length < 80)
     throw appError("O prompt base precisa ter pelo menos 80 caracteres.");
+
+  const provider = clean(input.provider || fallback.provider) || "openai";
+
+  const handleKeyUpdate = (newKey, oldKey) => {
+    const cleaned = clean(newKey);
+    if (!cleaned) return null;
+    if (cleaned.includes("...")) return oldKey; // mascarado, manter antigo
+    return cleaned;
+  };
+
+  const openaiApiKey = handleKeyUpdate(input.openaiApiKey ?? input.openai_api_key, fallback.openaiApiKey);
+  const geminiApiKey = handleKeyUpdate(input.geminiApiKey ?? input.gemini_api_key, fallback.geminiApiKey);
+  const groqApiKey = handleKeyUpdate(input.groqApiKey ?? input.groq_api_key, fallback.groqApiKey);
+
+  const openaiEnabled = bool(input.openaiEnabled ?? input.openai_enabled, fallback.openaiEnabled);
+  const geminiEnabled = bool(input.geminiEnabled ?? input.gemini_enabled, fallback.geminiEnabled);
+  const groqEnabled = bool(input.groqEnabled ?? input.groq_enabled, fallback.groqEnabled);
+
   return {
     enabled: bool(input.enabled, fallback.enabled),
-    provider: "openai",
+    provider,
     model,
     assistantName,
     salonName,
@@ -522,22 +558,28 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
       clean(input.resumeKeyword || fallback.resumeKeyword) || "voltar ao bot",
     stopKeyword: clean(input.stopKeyword || fallback.stopKeyword) || "parar",
     timezone: clean(input.timezone || fallback.timezone) || "America/Sao_Paulo",
-    primaryProvider: "openai",
+    primaryProvider: clean(input.primaryProvider || provider),
     primaryModel: model,
-    fallbackProvider: "openai",
+    fallbackProvider: clean(input.fallbackProvider || provider),
     fallbackModel: model,
     timeoutMs: intRange(input.timeoutMs ?? input.timeout_ms, fallback.timeoutMs, 1000, 30000),
     maxRetries: intRange(input.maxRetries ?? input.max_retries, fallback.maxRetries, 0, 5),
     groupingWindowMs: intRange(input.groupingWindowMs ?? input.grouping_window_ms, fallback.groupingWindowMs, 100, 10000),
     contextLimit: intRange(input.contextLimit ?? input.context_limit, fallback.contextLimit, 1, 30),
     maxResponseTokens: intRange(input.maxResponseTokens ?? input.max_response_tokens, fallback.maxResponseTokens, 10, 2000),
-    fallbackEnabled: false,
+    fallbackEnabled: bool(input.fallbackEnabled, fallback.fallbackEnabled),
     contingencyEnabled: bool(input.contingencyEnabled ?? input.contingency_enabled, fallback.contingencyEnabled),
     cacheEnabled: bool(input.cacheEnabled ?? input.cache_enabled, fallback.cacheEnabled),
     humanTransferEnabled: bool(input.humanTransferEnabled ?? input.human_transfer_enabled, fallback.humanTransferEnabled),
     circuitBreakerCooldownSeconds: intRange(input.circuitBreakerCooldownSeconds ?? input.circuit_breaker_cooldown_seconds, fallback.circuitBreakerCooldownSeconds, 5, 3600),
     geminiCircuitBreakerUntil: input.geminiCircuitBreakerUntil ?? fallback.geminiCircuitBreakerUntil ?? null,
     groqCircuitBreakerUntil: input.groqCircuitBreakerUntil ?? fallback.groqCircuitBreakerUntil ?? null,
+    openaiApiKey,
+    geminiApiKey,
+    groqApiKey,
+    openaiEnabled,
+    geminiEnabled,
+    groqEnabled,
   };
 }
 
@@ -693,6 +735,12 @@ function dbToSettings(row) {
     circuitBreakerCooldownSeconds: row.circuit_breaker_cooldown_seconds,
     geminiCircuitBreakerUntil: row.gemini_circuit_breaker_until,
     groqCircuitBreakerUntil: row.groq_circuit_breaker_until,
+    openaiApiKey: row.openai_api_key,
+    geminiApiKey: row.gemini_api_key,
+    groqApiKey: row.groq_api_key,
+    openaiEnabled: row.openai_enabled || false,
+    geminiEnabled: row.gemini_enabled || false,
+    groqEnabled: row.groq_enabled || false,
     updatedAt: row.updated_at,
   };
 }
@@ -854,6 +902,12 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS circuit_breaker_cooldown_seconds integer not null default 60;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS gemini_circuit_breaker_until timestamptz;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS groq_circuit_breaker_until timestamptz;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS openai_api_key text;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS gemini_api_key text;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS groq_api_key text;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS openai_enabled boolean not null default false;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS gemini_enabled boolean not null default false;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS groq_enabled boolean not null default false;
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS booking_state jsonb not null default '{}';
     ALTER TABLE public.services ADD COLUMN IF NOT EXISTS show_online_booking boolean not null default true;
     ALTER TABLE public.services ADD COLUMN IF NOT EXISTS is_free boolean not null default false;
@@ -866,22 +920,6 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
     CREATE INDEX IF NOT EXISTS whatsapp_incoming_queue_null_dedup_idx ON public.whatsapp_incoming_queue(phone_number, text, created_at) WHERE message_id IS NULL OR message_id LIKE 'tmp-%';
   `).catch(err => console.error("Failed schema updates in Fase 2", err));
 
-  await query(`
-    update public.ai_settings
-       set provider='openai',
-           model=case when model ~* '^(gemini|llama)' or model is null then 'gpt-4o-mini' else model end,
-           primary_provider='openai',
-           primary_model=case when primary_model ~* '^(gemini|llama)' or primary_model is null then 'gpt-4o-mini' else primary_model end,
-           fallback_provider='openai',
-           fallback_model='gpt-4o-mini',
-           fallback_enabled=false
-     where provider is distinct from 'openai'
-        or primary_provider is distinct from 'openai'
-        or fallback_provider is distinct from 'openai'
-        or fallback_enabled is distinct from false
-        or model ~* '^(gemini|llama)'
-        or primary_model ~* '^(gemini|llama)'
-  `).catch(err => console.error("Failed to migrate AI provider to OpenAI", err));
 
   await query(
     `insert into public.ai_settings(
@@ -1005,10 +1043,11 @@ export async function saveAiSettings(user, input) {
         pause_keyword,resume_keyword,stop_keyword,timezone,
         primary_provider,primary_model,fallback_provider,fallback_model,timeout_ms,max_retries,grouping_window_ms,
         context_limit,max_response_tokens,fallback_enabled,contingency_enabled,cache_enabled,human_transfer_enabled,
-        circuit_breaker_cooldown_seconds,gemini_circuit_breaker_until,groq_circuit_breaker_until,updated_by,updated_at
+        circuit_breaker_cooldown_seconds,gemini_circuit_breaker_until,groq_circuit_breaker_until,
+        openai_api_key,gemini_api_key,groq_api_key,openai_enabled,gemini_enabled,groq_enabled,updated_by,updated_at
       ) values(
         'default',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,
-        $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,now()
+        $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,now()
       ) on conflict(business_id) do update set
         enabled=excluded.enabled,provider=excluded.provider,model=excluded.model,assistant_name=excluded.assistant_name,
         salon_name=excluded.salon_name,personality_mode=excluded.personality_mode,system_prompt=excluded.system_prompt,
@@ -1030,6 +1069,12 @@ export async function saveAiSettings(user, input) {
         circuit_breaker_cooldown_seconds=excluded.circuit_breaker_cooldown_seconds,
         gemini_circuit_breaker_until=excluded.gemini_circuit_breaker_until,
         groq_circuit_breaker_until=excluded.groq_circuit_breaker_until,
+        openai_api_key=excluded.openai_api_key,
+        gemini_api_key=excluded.gemini_api_key,
+        groq_api_key=excluded.groq_api_key,
+        openai_enabled=excluded.openai_enabled,
+        gemini_enabled=excluded.gemini_enabled,
+        groq_enabled=excluded.groq_enabled,
         updated_by=excluded.updated_by,updated_at=now()
       returning *`,
       [
@@ -1077,6 +1122,12 @@ export async function saveAiSettings(user, input) {
         value.circuitBreakerCooldownSeconds,
         value.geminiCircuitBreakerUntil,
         value.groqCircuitBreakerUntil,
+        value.openaiApiKey,
+        value.geminiApiKey,
+        value.groqApiKey,
+        value.openaiEnabled,
+        value.geminiEnabled,
+        value.groqEnabled,
         user.id,
       ],
     );
@@ -1489,17 +1540,25 @@ export async function deleteKnowledgeArticle(user, id) {
 export async function getAiPanel() {
   const [settings, base] = await Promise.all([getAiSettings(), getAiBase()]);
   const openai = openAiPublicStatus();
+  
+  const maskedSettings = {
+    ...settings,
+    openaiApiKey: settings.openaiApiKey ? maskApiKey(settings.openaiApiKey) : "",
+    geminiApiKey: settings.geminiApiKey ? maskApiKey(settings.geminiApiKey) : "",
+    groqApiKey: settings.groqApiKey ? maskApiKey(settings.groqApiKey) : "",
+  };
+
   return {
     status: {
       openai,
       database: { configured: true },
       ai: {
         enabled: settings.enabled,
-        active: settings.enabled && openai.enabled && openai.configured,
+        active: settings.enabled && (openai.enabled || settings.geminiEnabled || settings.groqEnabled),
       },
     },
     personalityModes,
-    settings,
+    settings: maskedSettings,
     base,
   };
 }

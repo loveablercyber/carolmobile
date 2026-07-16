@@ -86,6 +86,12 @@ type AiSettings = {
   circuitBreakerCooldownSeconds: number;
   geminiCircuitBreakerUntil: string | null;
   groqCircuitBreakerUntil: string | null;
+  openaiApiKey?: string;
+  geminiApiKey?: string;
+  groqApiKey?: string;
+  openaiEnabled?: boolean;
+  geminiEnabled?: boolean;
+  groqEnabled?: boolean;
   updatedAt?: string;
 };
 
@@ -1521,43 +1527,120 @@ function PerformanceSettingsTab({
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <Field label="Provedor Principal">
-            <select
-              className="field"
-              value={form.primaryProvider}
-              onChange={(e) => updateField("primaryProvider", e.target.value)}
-            >
-              <option value="openai">OpenAI (GPT)</option>
-            </select>
-          </Field>
-          <Field label="Modelo Principal">
-            <input
-              className="field"
-              value={form.primaryModel}
-              onChange={(e) => updateField("primaryModel", e.target.value)}
-              placeholder="gpt-5.4-mini"
-            />
-          </Field>
-          <Field label="Fallback externo">
-            <select
-              className="field"
-              value={form.fallbackProvider}
-              onChange={(e) => updateField("fallbackProvider", e.target.value)}
-              disabled
-            >
-              <option value="openai">Desativado — somente OpenAI</option>
-            </select>
-          </Field>
-          <Field label="Modelo Fallback">
-            <input
-              className="field"
-              value={form.fallbackModel}
-              onChange={(e) => updateField("fallbackModel", e.target.value)}
-              placeholder="Sem fallback externo"
-              disabled
-            />
-          </Field>
+        <div className="grid gap-6">
+          <div className="border border-black/5 rounded-2xl p-4 bg-warm/30 space-y-4">
+            <h4 className="text-sm font-semibold text-stone-700">Provedor Ativo no Atendimento</h4>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Provedor Principal">
+                <select
+                  className="field"
+                  value={form.provider}
+                  onChange={(e) => {
+                    const prov = e.target.value;
+                    updateField("provider", prov);
+                    updateField("primaryProvider", prov);
+                    if (prov === "gemini") {
+                      updateField("model", "gemini-2.5-flash-lite");
+                      updateField("primaryModel", "gemini-2.5-flash-lite");
+                    } else if (prov === "groq") {
+                      updateField("model", "llama-3.1-8b-instant");
+                      updateField("primaryModel", "llama-3.1-8b-instant");
+                    } else {
+                      updateField("model", "gpt-4o-mini");
+                      updateField("primaryModel", "gpt-4o-mini");
+                    }
+                  }}
+                >
+                  <option value="openai">OpenAI (GPT)</option>
+                  <option value="gemini">Google Gemini</option>
+                  <option value="groq">Groq (Llama / Grok)</option>
+                </select>
+              </Field>
+              <Field label="Modelo Principal">
+                <input
+                  className="field"
+                  value={form.model}
+                  onChange={(e) => {
+                    updateField("model", e.target.value);
+                    updateField("primaryModel", e.target.value);
+                  }}
+                  placeholder="ex: gpt-4o-mini"
+                />
+              </Field>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <span className="text-[10px] bg-black/5 text-stone-500 rounded px-2 py-0.5 cursor-pointer hover:bg-black/10" onClick={() => { updateField("model", "gpt-4o-mini"); updateField("primaryModel", "gpt-4o-mini"); }}>gpt-4o-mini</span>
+              <span className="text-[10px] bg-black/5 text-stone-500 rounded px-2 py-0.5 cursor-pointer hover:bg-black/10" onClick={() => { updateField("model", "gemini-2.5-flash-lite"); updateField("primaryModel", "gemini-2.5-flash-lite"); }}>gemini-2.5-flash-lite</span>
+              <span className="text-[10px] bg-black/5 text-stone-500 rounded px-2 py-0.5 cursor-pointer hover:bg-black/10" onClick={() => { updateField("model", "llama-3.1-8b-instant"); updateField("primaryModel", "llama-3.1-8b-instant"); }}>llama-3.1-8b-instant</span>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h4 className="text-sm font-semibold text-stone-700 font-bold uppercase tracking-wide text-stone-400">Provedores e Chaves de API</h4>
+            
+            {/* OpenAI Card */}
+            <div className="border border-black/5 rounded-2xl p-4 bg-white space-y-3 shadow-sm">
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-stone-700 text-xs">OpenAI</span>
+                <CheckField
+                  label="Habilitar OpenAI"
+                  checked={!!form.openaiEnabled}
+                  onChange={(checked) => updateField("openaiEnabled", checked)}
+                />
+              </div>
+              <Field label="Chave de API OpenAI">
+                <input
+                  type="password"
+                  className="field"
+                  value={form.openaiApiKey || ""}
+                  onChange={(e) => updateField("openaiApiKey", e.target.value)}
+                  placeholder={form.openaiApiKey ? "••••••••••••" : "Cole sua API key da OpenAI (ex: sk-...)"}
+                />
+              </Field>
+            </div>
+
+            {/* Gemini Card */}
+            <div className="border border-black/5 rounded-2xl p-4 bg-white space-y-3 shadow-sm">
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-stone-700 text-xs">Google Gemini</span>
+                <CheckField
+                  label="Habilitar Gemini"
+                  checked={!!form.geminiEnabled}
+                  onChange={(checked) => updateField("geminiEnabled", checked)}
+                />
+              </div>
+              <Field label="Chave de API Gemini">
+                <input
+                  type="password"
+                  className="field"
+                  value={form.geminiApiKey || ""}
+                  onChange={(e) => updateField("geminiApiKey", e.target.value)}
+                  placeholder={form.geminiApiKey ? "••••••••••••" : "Cole sua API key do Gemini"}
+                />
+              </Field>
+            </div>
+
+            {/* Groq Card */}
+            <div className="border border-black/5 rounded-2xl p-4 bg-white space-y-3 shadow-sm">
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-stone-700 text-xs">Groq (Llama / Grok)</span>
+                <CheckField
+                  label="Habilitar Groq"
+                  checked={!!form.groqEnabled}
+                  onChange={(checked) => updateField("groqEnabled", checked)}
+                />
+              </div>
+              <Field label="Chave de API Groq">
+                <input
+                  type="password"
+                  className="field"
+                  value={form.groqApiKey || ""}
+                  onChange={(e) => updateField("groqApiKey", e.target.value)}
+                  placeholder={form.groqApiKey ? "••••••••••••" : "Cole sua API key do Groq (ex: gsk-...)"}
+                />
+              </Field>
+            </div>
+          </div>
         </div>
 
         <div className="mt-6 border-t border-black/5 pt-4">

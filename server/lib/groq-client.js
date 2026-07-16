@@ -62,20 +62,21 @@ export async function generateGroqText({
   maxTokens = 220,
   temperature = 0.4,
   apiKeyIndex = null,
+  apiKey = null,
 }) {
   const config = groqConfig();
-  if (!config.enabled)
+  const keys = apiKey ? [apiKey] : config.keys;
+  if (!apiKey && !config.enabled)
     throw new GroqClientError("Groq está desativado no ambiente.", {
       status: 503,
       code: "GROQ_DISABLED",
     });
-  if (!config.configured)
+  if (!apiKey && !config.configured)
     throw new GroqClientError("Groq ainda não está configurado.", {
       status: 503,
       code: "GROQ_NOT_CONFIGURED",
     });
 
-  const keys = config.keys;
   const idx =
     apiKeyIndex !== null
       ? ((apiKeyIndex % keys.length) + keys.length) % keys.length
@@ -83,7 +84,7 @@ export async function generateGroqText({
   if (apiKeyIndex === null) {
     nextGroqKeyIndex = (idx + 1) % keys.length;
   }
-  const apiKey = keys[idx];
+  const activeKey = keys[idx];
   const selectedModel = String(model || config.model).trim();
   const endpoint = "https://api.groq.com/openai/v1/chat/completions";
 
@@ -93,7 +94,7 @@ export async function generateGroqText({
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
+        "Authorization": `Bearer ${activeKey}`,
       },
       body: JSON.stringify({
         model: selectedModel,

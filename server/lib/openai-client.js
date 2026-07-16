@@ -57,15 +57,17 @@ export async function generateOpenAiText({
   model,
   timeoutMs = 12000,
   maxTokens = 300,
+  apiKey = null,
 }) {
   const config = openAiConfig();
-  if (!config.enabled) {
+  const activeKey = apiKey || config.apiKey;
+  if (!apiKey && !config.enabled) {
     throw new OpenAiClientError("OpenAI está desativada no ambiente.", {
       status: 503,
       code: "OPENAI_DISABLED",
     });
   }
-  if (!config.configured) {
+  if (!activeKey) {
     throw new OpenAiClientError("OpenAI ainda não está configurada.", {
       status: 503,
       code: "OPENAI_NOT_CONFIGURED",
@@ -79,7 +81,7 @@ export async function generateOpenAiText({
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
+        Authorization: `Bearer ${activeKey}`,
       },
       body: JSON.stringify({
         model: selectedModel,

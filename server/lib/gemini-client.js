@@ -62,26 +62,27 @@ export async function generateGeminiText({
   maxTokens = 220,
   temperature = 0.4,
   apiKeyIndex = null,
+  apiKey = null,
 }) {
   const config = geminiConfig();
-  if (!config.enabled)
+  const keys = apiKey ? [apiKey] : config.keys;
+  if (!apiKey && !config.enabled)
     throw new GeminiClientError("Gemini está desativado no ambiente.", {
       status: 503,
       code: "GEMINI_DISABLED",
     });
-  if (!config.configured)
+  if (!apiKey && !config.configured)
     throw new GeminiClientError("Gemini ainda não está configurado.", {
       status: 503,
       code: "GEMINI_NOT_CONFIGURED",
     });
 
-  const keys = config.keys;
   const idx = apiKeyIndex !== null ? apiKeyIndex % keys.length : Math.floor(Math.random() * keys.length);
-  const apiKey = keys[idx];
+  const activeKey = keys[idx];
   const selectedModel = String(model || config.model).trim();
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     selectedModel,
-  )}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  )}:generateContent?key=${encodeURIComponent(activeKey)}`;
 
   let response;
   try {
