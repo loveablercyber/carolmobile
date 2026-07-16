@@ -177,11 +177,13 @@ function evolutionRequestOptions(path, { method = "GET", body } = {}, config) {
       path: `/webhook/set/${instance}`,
       method: "POST",
       body: {
-        enabled: true,
-        url: body?.url,
-        webhook_by_events: false,
-        webhook_base64: false,
-        events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
+        webhook: {
+          enabled: true,
+          url: body?.url,
+          byEvents: false,
+          base64: false,
+          events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
+        },
       },
     };
   }

@@ -179,12 +179,19 @@ test("ready Evolution keepalive configures the webhook target", async () => {
   assert.equal(calls[1].url, "https://whatsapp.example.test/webhook/set/carolsol");
   assert.equal(calls[1].options.method, "POST");
   const body = JSON.parse(calls[1].options.body);
-  assert.equal(body.enabled, true);
+  assert.equal(body.webhook.enabled, true);
   assert.equal(
-    body.url,
+    body.webhook.url,
     "https://agenda.carolsol.com.br/api/whatsapp?resource=webhook&secret=webhook-secret",
   );
-  assert.deepEqual(body.events, ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"]);
+  assert.equal(body.webhook.byEvents, false);
+  assert.equal(body.webhook.base64, false);
+  assert.deepEqual(body.webhook.events, [
+    "MESSAGES_UPSERT",
+    "MESSAGES_UPDATE",
+    "CONNECTION_UPDATE",
+    "QRCODE_UPDATED",
+  ]);
 });
 
 test("keepalive does not restart a QR pairing state without force", async () => {
