@@ -63,8 +63,24 @@ function firstValidPhone(...values) {
   return "";
 }
 
+// Eventos da Evolution API que contêm mensagens novas do cliente.
+// Todos os outros tipos (messages.update, connection.update, qrcode.updated,
+// application.startup) devem ser ignorados pelo motor do bot.
+const EVOLUTION_MESSAGE_EVENTS = new Set([
+  "messages.upsert",
+  "MESSAGES_UPSERT",
+]);
+
 export function normalizeIncomingWhatsappPayload(payload = {}) {
-  const raw = payload.raw || payload.data || payload.message || {};
+  // Formato messages.update da Evolution: payload.data pode ser um array
+  // de updates de status (ex.: leitura/entrega). Nesse caso, nenhum deles
+  // representa uma mensagem nova do cliente — sinalizamos isFromMe=true
+  // para que o motor ignore o evento sem processá-lo.
+  const dataIsArray = Array.isArray(payload.data);
+  const raw = dataIsArray
+    ? (payload.data[0] || {})
+    : (payload.raw || payload.data || payload.message || {});
+
   const key = raw?.key || payload.key || {};
   const from =
     clean(
@@ -99,7 +115,11 @@ export function normalizeIncomingWhatsappPayload(payload = {}) {
       raw.message?.extendedTextMessage?.text ||
       extractRawText(raw),
   );
-  const isFromMe = truthy(payload.isFromMe ?? payload.fromMe ?? raw.fromMe ?? key.fromMe);
+  // Se payload.data é um array (formato messages.update de status/entrega/leitura),
+  // tratamos como isFromMe=true para ignorar silenciosamente sem processar.
+  const isFromMe = dataIsArray
+    ? true
+    : truthy(payload.isFromMe ?? payload.fromMe ?? raw.fromMe ?? key.fromMe);
   const messageId = clean(
     payload.messageId || payload.id || payload.provider_message_id || raw.id || key.id,
   );
@@ -124,6 +144,21 @@ export function normalizeIncomingWhatsappPayload(payload = {}) {
 }
 
 export function isMessageWebhookPayload(payload = {}) {
+  // Se o campo `event` estiver presente (Evolution API), só processar
+  // eventos do tipo messages.upsert. Outros eventos como messages.update,
+  // connection.update, qrcode.updated e application.startup não devem
+  // ser tratados como mensagens novas do cliente.
+  const eventField = clean(payload.event);
+  if (eventField && !EVOLUTION_MESSAGE_EVENTS.has(eventField)) {
+    return false;
+  }
+
+  // Formato messages.update: payload.data é um array de status de entrega.
+  // Não representa mensagem nova.
+  if (Array.isArray(payload.data)) {
+    return false;
+  }
+
   const normalized = normalizeIncomingWhatsappPayload(payload);
   return Boolean(
     normalized.from ||
@@ -3799,13 +3834,31 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   await ensureAiWhatsappSchema();
 
   // 1. Idempotency Check
-  const isDuplicate = await query(
-    `select 1 from public.whatsapp_incoming_queue where message_id = $1
-     union
-     select 1 from public.whatsapp_messages where provider_message_id = $1
-     limit 1`,
-    [normalized.messageId],
-  );
+  // Quando messageId existe: checar pela coluna indexada de forma eficiente.
+  // Quando messageId é null (Evolution não enviou ID): usar fingerprint de
+  // phone + text + janela de 30s para evitar processamento duplo.
+  let isDuplicate;
+  if (normalized.messageId) {
+    isDuplicate = await query(
+      `select 1 from public.whatsapp_incoming_queue where message_id = $1
+       union
+       select 1 from public.whatsapp_messages where provider_message_id = $1
+       limit 1`,
+      [normalized.messageId],
+    );
+  } else {
+    // Sem messageId: checar se já existe mensagem idêntica do mesmo número
+    // nos últimos 30 segundos na fila (evita loop por retry do webhook).
+    isDuplicate = await query(
+      `select 1 from public.whatsapp_incoming_queue
+        where phone_number = $1
+          and text = $2
+          and message_id is null
+          and created_at >= now() - interval '30 seconds'
+        limit 1`,
+      [normalized.phoneNumber, normalized.text],
+    );
+  }
   if (isDuplicate.rowCount > 0) {
     await recordIgnoredWebhook(normalized, "duplicate_message");
     return { ignored: true, reason: "duplicate_message" };

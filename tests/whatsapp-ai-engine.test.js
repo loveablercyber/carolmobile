@@ -779,3 +779,106 @@ test("handleStructuredBookingFlow returns null to abort on loop/duplicate text",
   });
   assert.equal(response, null);
 });
+
+test("rejects Evolution messages.update event as non-message webhook", () => {
+  // messages.update é enviado pela Evolution para confirmar entrega/leitura.
+  // O bot NÃO deve processar esses eventos como mensagens novas.
+  const updatePayload = {
+    event: "messages.update",
+    instance: "carolsol",
+    data: [
+      {
+        key: {
+          id: "EVO_MSG1",
+          remoteJid: "5514996405496@s.whatsapp.net",
+          fromMe: true,
+        },
+        update: { status: 4 }, // DELIVERED
+      },
+    ],
+  };
+
+  assert.equal(isMessageWebhookPayload(updatePayload), false);
+});
+
+test("rejects Evolution connection.update event as non-message webhook", () => {
+  const connectionPayload = {
+    event: "connection.update",
+    instance: "carolsol",
+    data: { state: "open", statusReason: 200 },
+  };
+
+  assert.equal(isMessageWebhookPayload(connectionPayload), false);
+});
+
+test("rejects Evolution qrcode.updated event as non-message webhook", () => {
+  const qrPayload = {
+    event: "qrcode.updated",
+    instance: "carolsol",
+    data: { qrcode: { base64: "data:image/png;base64,..." } },
+  };
+
+  assert.equal(isMessageWebhookPayload(qrPayload), false);
+});
+
+test("rejects Evolution application.startup event as non-message webhook", () => {
+  const startupPayload = {
+    event: "application.startup",
+    instance: "carolsol",
+    data: {},
+  };
+
+  assert.equal(isMessageWebhookPayload(startupPayload), false);
+});
+
+test("accepts Evolution messages.upsert event as valid message webhook", () => {
+  const upsertPayload = {
+    event: "messages.upsert",
+    instance: "carolsol",
+    data: {
+      key: {
+        id: "EVO_UPSERT1",
+        remoteJid: "5514996405496@s.whatsapp.net",
+        fromMe: false,
+      },
+      message: { conversation: "Oi, quero agendar" },
+      messageTimestamp: 1710000000,
+    },
+  };
+
+  assert.equal(isMessageWebhookPayload(upsertPayload), true);
+});
+
+test("detects isFromMe=true when Evolution sends data as array (messages.update format)", () => {
+  // Quando payload.data é um array, é formato de status de entrega.
+  // Mesmo que fromMe não esteja explícito, deve ser tratado como isFromMe=true.
+  const arrayPayload = {
+    event: "messages.update",
+    instance: "carolsol",
+    data: [
+      {
+        key: {
+          id: "EVO_STATUS1",
+          remoteJid: "5514996405496@s.whatsapp.net",
+          fromMe: true,
+        },
+        update: { status: 4 },
+      },
+    ],
+  };
+
+  const normalized = normalizeIncomingWhatsappPayload(arrayPayload);
+  assert.equal(normalized.isFromMe, true);
+});
+
+test("payloads without event field still work (Baileys direct format)", () => {
+  // Compatibilidade com payloads do Baileys sem campo event
+  const baileysPayload = {
+    from: "5514996405496@s.whatsapp.net",
+    text: "Bom dia",
+    isFromMe: false,
+    raw: { key: { id: "BAILEYS1" } },
+  };
+
+  assert.equal(isMessageWebhookPayload(baileysPayload), true);
+});
