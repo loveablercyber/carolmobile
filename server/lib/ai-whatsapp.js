@@ -1047,7 +1047,7 @@ export async function saveAiSettings(user, input) {
         openai_api_key,gemini_api_key,groq_api_key,openai_enabled,gemini_enabled,groq_enabled,updated_by,updated_at
       ) values(
         'default',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,
-        $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,now()
+        $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,now()
       ) on conflict(business_id) do update set
         enabled=excluded.enabled,provider=excluded.provider,model=excluded.model,assistant_name=excluded.assistant_name,
         salon_name=excluded.salon_name,personality_mode=excluded.personality_mode,system_prompt=excluded.system_prompt,
