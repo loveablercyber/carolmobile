@@ -96,7 +96,7 @@ export async function generateGeminiText({
         contents: [
           {
             role: "user",
-            parts: [{ text: String(message || "").slice(0, 1500) }],
+            parts: [{ text: String(message || "") }],
           },
         ],
         generationConfig: {

@@ -2616,9 +2616,14 @@ export function buildAiConversationMessage({
     })
     .join("\n");
 
+  const historyBlock = historyText
+    ? `Histórico recente:\n${historyText}`
+    : "Histórico recente: primeira mensagem desta conversa.";
+
   const requiredContext = [
     `Mensagem atual da cliente:\n${clean(incomingText)}`,
     bookingGuidance,
+    historyBlock,
     history && history.length > 0
       ? "ATENÇÃO MÁXIMA: Esta NÃO é a primeira mensagem da conversa. Já existe histórico recente. NUNCA repita saudações, boas-vindas ou apresentações. Vá direto à dúvida/assunto da cliente de forma curta e objetiva."
       : "",
@@ -2629,11 +2634,11 @@ export function buildAiConversationMessage({
   ]
     .filter(Boolean)
     .join("\n\n");
+
   const optionalContext = [
     clean(commercialContext).slice(0, 1600),
     clean(knowledgeContext).slice(0, 1300),
     `Cliente já cadastrada: ${knownClient ? "sim" : "não"}.`,
-    historyText ? `Histórico recente:\n${historyText}` : "Histórico recente: primeira mensagem desta conversa.",
   ]
     .filter(Boolean)
     .join("\n\n");

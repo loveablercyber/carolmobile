@@ -100,7 +100,7 @@ export async function generateGroqText({
         model: selectedModel,
         messages: [
           { role: "system", content: String(systemPrompt || "") },
-          { role: "user", content: String(message || "").slice(0, 1500) },
+          { role: "user", content: String(message || "") },
         ],
         temperature: Number(temperature || 0.4),
         max_tokens: Number(maxTokens || 220),
