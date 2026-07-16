@@ -2619,6 +2619,9 @@ export function buildAiConversationMessage({
   const requiredContext = [
     `Mensagem atual da cliente:\n${clean(incomingText)}`,
     bookingGuidance,
+    history && history.length > 0
+      ? "ATENÇÃO MÁXIMA: Esta NÃO é a primeira mensagem da conversa. Já existe histórico recente. NUNCA repita saudações, boas-vindas ou apresentações. Vá direto à dúvida/assunto da cliente de forma curta e objetiva."
+      : "",
     "REGRA DE CONVERSA NATURAL: durante agendamento, aceite respostas livres como hoje a tarde, depois do almoco, perto das 12, amiga consegue mais tarde, esse horario nao da e pode ser amanha cedo. Converta isso em data/periodo/horario e nao peca novamente dados ja salvos na sessao.",
     "REGRA DE VALORES: preenchimento de pontas, alongamento parcial, volume, correcao de comprimento e reposicao de mechas sao assuntos do salao. Se nao houver preco exato cadastrado, diga que depende da quantidade de cabelo e da tecnica, e ofereca explicacao ou avaliacao.",
     "A mensagem atual é a prioridade. Use o histórico apenas para continuidade; se a cliente mudar de assunto, responda ao novo assunto sem repetir o serviço anterior. Não presuma que a dúvida é sobre Fibra Russa quando a mensagem atual não mencionar essa técnica nem for uma continuação inequívoca dela.",
@@ -3434,6 +3437,15 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
 
   const history = await loadRecentHistory(conversationId, inboundMessageId);
   const currentStateForRouting = parseJsonObject(recorded.conversation.booking_state);
+  console.log("whatsapp-ai-engine execution log:", {
+    phone: normalized.phoneNumber,
+    lastIntent: recorded.conversation.last_intent || null,
+    currentFlow: currentStateForRouting ? currentStateForRouting.status : null,
+    currentStep: currentStateForRouting ? currentStateForRouting.step : null,
+    message: concatenatedText,
+    historyLength: history.length,
+    history: history.map(h => ({ sender: h.sender_type, body: h.body ? h.body.slice(0, 50) : "" })),
+  });
   const prioritizeBookingState = shouldPrioritizeBookingState(
     concatenatedText,
     currentStateForRouting,
