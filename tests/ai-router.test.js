@@ -279,12 +279,12 @@ test("processIncomingWhatsAppWebhook uses OpenAI as the only generative provider
       return new Response(JSON.stringify({ success: false }), { status: 500 });
     }
 
-    if (url.includes("api.openai.com/v1/responses")) {
+    if (url.includes("api.openai.com/v1/chat/completions")) {
       openAiCalled = true;
       return new Response(JSON.stringify({
         id: "resp_test",
-        output: [{ type: "message", content: [{ type: "output_text", text: "Resposta inteligente da OpenAI." }] }],
-        usage: { input_tokens: 10, output_tokens: 5 }
+        choices: [{ message: { role: "assistant", content: "Resposta inteligente da OpenAI." } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 }
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
@@ -382,9 +382,9 @@ test("processIncomingWhatsAppWebhook blocks out-of-scope questions before OpenAI
       return new Response(JSON.stringify({ success: true, messageId: "baileys-scope" }));
     }
     if (url.includes("/api/presence")) return new Response(JSON.stringify({ success: true }));
-    if (url.includes("api.openai.com/v1/responses")) {
+    if (url.includes("api.openai.com/v1/chat/completions")) {
       openAiCalled = true;
-      return new Response(JSON.stringify({ output: [] }), { status: 200 });
+      return new Response(JSON.stringify({ choices: [] }), { status: 200 });
     }
     return new Response(JSON.stringify({ success: true, status: "ready" }));
   };
@@ -518,10 +518,10 @@ test("processIncomingWhatsAppWebhook persists a booking request before replying 
       return new Response(JSON.stringify({ success: false }), { status: 500 });
     }
 
-    if (url.includes("api.openai.com/v1/responses")) {
+    if (url.includes("api.openai.com/v1/chat/completions")) {
       openAiCalled = true;
       return new Response(JSON.stringify({
-        output: [{ type: "message", content: [{ type: "output_text", text: "Solicitação registrada. A equipe confirmará a disponibilidade." }] }]
+        choices: [{ message: { role: "assistant", content: "Solicitação registrada. A equipe confirmará a disponibilidade." } }]
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
@@ -1340,12 +1340,12 @@ test("processIncomingWhatsAppWebhook lets questions continue after a booked pre-
     if (url.includes("/api/presence")) {
       return new Response(JSON.stringify({ success: true }));
     }
-    if (url.includes("api.openai.com/v1/responses")) {
+    if (url.includes("api.openai.com/v1/chat/completions")) {
       openAiCalled = true;
       return new Response(JSON.stringify({
         id: "resp_followup",
-        output: [{ type: "message", content: [{ type: "output_text", text: "Pode sim. O cuidado principal é manter a manutenção em dia e pentear com delicadeza." }] }],
-        usage: { input_tokens: 12, output_tokens: 8 },
+        choices: [{ message: { role: "assistant", content: "Pode sim. O cuidado principal é manter a manutenção em dia e pentear com delicadeza." } }],
+        usage: { prompt_tokens: 12, completion_tokens: 8 },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
     return new Response(JSON.stringify({ success: true, status: "ready" }));

@@ -48,14 +48,13 @@ test("generateOpenAiText uses Responses API and extracts output text", async () 
     request = { url, options, body: JSON.parse(options.body) };
     return new Response(
       JSON.stringify({
-        id: "resp_123",
-        output: [
+        id: "chatcmpl_123",
+        choices: [
           {
-            type: "message",
-            content: [{ type: "output_text", text: "Olá! Como posso ajudar?" }],
+            message: { role: "assistant", content: "Olá! Como posso ajudar?" },
           },
         ],
-        usage: { input_tokens: 12, output_tokens: 7 },
+        usage: { prompt_tokens: 12, completion_tokens: 7 },
       }),
       { status: 200, headers: { "content-type": "application/json" } },
     );
@@ -66,10 +65,11 @@ test("generateOpenAiText uses Responses API and extracts output text", async () 
     message: "Qual técnica combina comigo?",
   });
 
-  assert.equal(request.url, "https://api.openai.com/v1/responses");
-  assert.equal(request.body.store, false);
+  assert.equal(request.url, "https://api.openai.com/v1/chat/completions");
   assert.equal(request.body.model, "gpt-5.4-mini");
+  assert.equal(request.body.messages[0].role, "system");
+  assert.equal(request.body.messages[1].role, "user");
   assert.equal(request.options.headers.Authorization, "Bearer secret-openai-key");
   assert.equal(result.text, "Olá! Como posso ajudar?");
-  assert.equal(result.responseId, "resp_123");
+  assert.equal(result.responseId, "chatcmpl_123");
 });

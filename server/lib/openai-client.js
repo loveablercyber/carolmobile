@@ -37,6 +37,10 @@ export function openAiPublicStatus() {
 function extractOutputText(data) {
   const direct = String(data?.output_text || "").trim();
   if (direct) return direct;
+  
+  const choiceText = String(data?.choices?.[0]?.message?.content || "").trim();
+  if (choiceText) return choiceText;
+
   return (data?.output || [])
     .filter((item) => item?.type === "message")
     .flatMap((item) => item?.content || [])
@@ -71,7 +75,7 @@ export async function generateOpenAiText({
   const selectedModel = String(model || config.model).trim();
   let response;
   try {
-    response = await fetch("https://api.openai.com/v1/responses", {
+    response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -79,10 +83,11 @@ export async function generateOpenAiText({
       },
       body: JSON.stringify({
         model: selectedModel,
-        instructions: String(systemPrompt || "").slice(0, 12000),
-        input: String(message || "").slice(0, 6000),
-        max_output_tokens: Number(maxTokens || 300),
-        store: false,
+        messages: [
+          { role: "system", content: String(systemPrompt || "") },
+          { role: "user", content: String(message || "") },
+        ],
+        max_tokens: Number(maxTokens || 300),
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
