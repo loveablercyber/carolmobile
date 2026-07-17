@@ -3455,16 +3455,38 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
 
   const history = await loadRecentHistory(conversationId, inboundMessageId);
   const currentStateForRouting = parseJsonObject(recorded.conversation.booking_state);
+  const hasActiveBookingState = isActiveBookingState(currentStateForRouting);
   console.log("whatsapp-ai-engine execution log:", {
     phone: normalized.phoneNumber,
     lastIntent: recorded.conversation.last_intent || null,
     currentFlow: currentStateForRouting ? currentStateForRouting.status : null,
     currentStep: currentStateForRouting ? currentStateForRouting.step : null,
+    hasActiveState: hasActiveBookingState,
     message: concatenatedText,
     historyLength: history.length,
     history: history.map(h => ({ sender: h.sender_type, body: h.body ? h.body.slice(0, 50) : "" })),
   });
-  const prioritizeBookingState = shouldPrioritizeBookingState(
+
+  // PRIORIDADE 1: Estado ativo de agendamento é verificado ANTES de qualquer análise
+  // de palavras-chave. Se há contexto ativo, a resposta do usuário é sempre tratada
+  // como continuação do fluxo — nunca como mensagem fora do escopo.
+  if (hasActiveBookingState) {
+    const structuredBooking = await handleStructuredBookingFlow({
+      normalized,
+      conversationId,
+      inboundMessageId,
+      text: concatenatedText,
+      settings,
+      base,
+      recorded,
+      queueLatencyMs,
+      receivedAt,
+      history,
+    });
+    if (structuredBooking) return structuredBooking;
+  }
+
+  const prioritizeBookingState = !hasActiveBookingState && shouldPrioritizeBookingState(
     concatenatedText,
     currentStateForRouting,
     history,
@@ -3548,15 +3570,16 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   }
 
   const outOfScopeResponse = buildOutOfScopeResponse(concatenatedText);
+  // Quando há estado ativo de agendamento, o guard de fora do escopo é completamente
+  // ignorado: o usuário está respondendo a uma pergunta do bot e sua mensagem deve
+  // sempre seguir para o fluxo de agendamento ou para a IA — nunca retornar a
+  // mensagem genérica de restrição de escopo.
   if (
     outOfScopeResponse &&
+    !hasActiveBookingState &&
     !(
       matchedArticle ||
-      hasCommercialCatalogReference(concatenatedText, base) ||
-      (
-        isActiveBookingState(currentStateForRouting) &&
-        !includesAny(normalizeText(concatenatedText), clearlyOutOfScopeTerms)
-      )
+      hasCommercialCatalogReference(concatenatedText, base)
     )
   ) {
     await sendTextAndRecord({

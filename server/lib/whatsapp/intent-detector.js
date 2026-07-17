@@ -390,6 +390,10 @@ export function shouldPrioritizeBookingState(text, state = {}, history = []) {
   if (!isActiveBookingState(state)) return false;
   const normalized = normalizeText(text);
   const choice = numericChoice(text);
+
+  // Nunca priorizar booking se o usuário está falando de algo claramente fora do escopo
+  if (includesAny(normalized, clearlyOutOfScopeTerms)) return false;
+
   if (state.status === "awaiting_contact") return true;
   if (state.status === "awaiting_confirmation") {
     return Boolean(isAffirmativeBookingConfirmation(text) || choice || hasTemporalBookingSignal(text, state));
@@ -405,13 +409,22 @@ export function shouldPrioritizeBookingState(text, state = {}, history = []) {
     return Boolean(choice || hasTemporalBookingSignal(text, state));
   }
   if (state.status === "awaiting_date") {
-    return hasTemporalBookingSignal(text, state);
+    // Priorizar se há sinal temporal (data/hora detectável)
+    if (hasTemporalBookingSignal(text, state)) return true;
+    // Também priorizar se o bot acabou de perguntar sobre data — mesmo que o parser
+    // não consiga extrair a data ainda, o booking flow vai dar feedback correto ao
+    // usuário em vez de cair na mensagem genérica de fora do escopo.
+    if (promptSuggestsBookingAnswer(lastAiText(history))) return true;
+    return false;
   }
   if (state.status === "awaiting_service") {
     return Boolean(choice || includesAny(normalized, aiDomainTerms));
   }
   if (state.serviceId && hasTemporalBookingSignal(text, state)) return true;
-  return promptSuggestsBookingAnswer(lastAiText(history)) && hasTemporalBookingSignal(text, state);
+
+  // Catch-all: qualquer estado ativo não coberto acima tem prioridade sobre
+  // a análise de palavras-chave — o booking flow tratará a entrada.
+  return true;
 }
 
 export function shouldResetBookingStateOnGreeting(text, state = {}) {
