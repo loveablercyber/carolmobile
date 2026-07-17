@@ -534,9 +534,9 @@ test("summarizeAiCommercialContext includes active inventory stock", () => {
     ]
   };
   const summary = summarizeAiCommercialContext(base, {});
-  assert.match(summary, /Cabelos e mechas em estoque real:/);
-  assert.match(summary, /Cabelo Loiro Premium/);
-  assert.match(summary, /disponibilidade: 5 unidades/);
+  assert.match(summary, /Variações de Cabelos e mechas/);
+  assert.match(summary, /Loiro Claro/);
+  assert.match(summary, /Disponível: 5 un/);
   assert.match(summary, /Nunca invente produto, preço, disponibilidade/);
 });
 

@@ -65,8 +65,21 @@ import {
 
 const money = (n: number) =>
   n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-const servicePriceLabel = (service: Record<string, any>) =>
-  service?.is_free ? "Sem custo" : money(Number(service?.base_price || 0));
+const servicePriceLabel = (service: Record<string, any>, inventoryItems: Array<Record<string, any>> = []) => {
+  if (service?.offer_inventory_items) {
+    const matching = (inventoryItems || []).filter(
+      (item) => item.category_id === service.category_id && 
+                (!service.hair_method_id || item.hair_method_id === service.hair_method_id)
+    );
+    if (matching.length > 0) {
+      const prices = matching.map((item) => Number(item.suggested_price || 0));
+      const minPrice = Math.min(...prices);
+      return `A partir de ${money(minPrice)}`;
+    }
+    return "Sob consulta";
+  }
+  return service?.is_free ? "Sem custo" : money(Number(service?.base_price || 0));
+};
 
 const whatsappUrl = (phone: unknown) => {
   const digits = String(phone || "").replace(/\D/g, "");
@@ -131,12 +144,16 @@ function ServicesPage() {
   const [items, setItems] = useState<Array<Record<string, any>>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [inventoryItems, setInventoryItems] = useState<Array<Record<string, any>>>([]);
   useEffect(() => {
     setLoading(true);
-    apiFetch<{ services: Array<Record<string, any>> }>(
+    apiFetch<{ services: Array<Record<string, any>>, inventoryItems?: Array<Record<string, any>> }>(
       "/api/data?resource=bootstrap",
     )
-      .then((data) => setItems(data.services || []))
+      .then((data) => {
+        setItems(data.services || []);
+        setInventoryItems(data.inventoryItems || []);
+      })
       .catch((err) => {
         console.error("Services load error", err);
         setError(
@@ -205,7 +222,7 @@ function ServicesPage() {
                   {s.duration_minutes}min
                 </span>
                 <span className="chip">
-                  {s.is_free ? "Sem custo" : `A partir de ${servicePriceLabel(s)}`}
+                  {servicePriceLabel(s, inventoryItems)}
                 </span>
                 {Number(s.deposit_amount || 0) > 0 && (
                   <span className="chip">
@@ -806,6 +823,7 @@ function ClientAgenda() {
     payment: "Pix",
     notes: discoveryNotes,
     couponCode: "",
+    inventoryItemId: "",
   });
   const [validatingCoupon, setValidatingCoupon] = useState(false);
   const [couponInfo, setCouponInfo] = useState<{ code: string; discount: number; total: number; error?: string } | null>(null);
@@ -853,7 +871,8 @@ function ClientAgenda() {
   const [catalog, setCatalog] = useState<{
     services: Array<Record<string, any>>;
     professionals: Array<Record<string, any>>;
-  }>({ services: [], professionals: [] });
+    inventoryItems?: Array<Record<string, any>>;
+  }>({ services: [], professionals: [], inventoryItems: [] });
   const [reschedule, setReschedule] = useState<Record<string, any> | null>(
     null,
   );
@@ -896,17 +915,20 @@ function ClientAgenda() {
     apiFetch<{
       services: Array<Record<string, any>>;
       professionals: Array<Record<string, any>>;
+      inventoryItems?: Array<Record<string, any>>;
     }>("/api/data?resource=bootstrap")
       .then((data) => {
         setCatalog({
           services: data.services || [],
           professionals: data.professionals || [],
+          inventoryItems: data.inventoryItems || [],
         });
         const defaultService = (discoveryDraft && data.services?.find((s: any) => s.name === "Avaliação personalizada")?.name) || data.services?.[0]?.name || "";
         setSelected((current) => ({
           ...current,
           service: current.service || defaultService,
           professional: current.professional || "Primeira disponível",
+          inventoryItemId: "",
         }));
       })
       .catch((error) => {
@@ -1024,6 +1046,18 @@ function ClientAgenda() {
       const service = catalog.services.find(
         (item) => item.name === selected.service,
       );
+      const selectedInventoryItem = service?.offer_inventory_items
+        ? catalog.inventoryItems?.find((x) => x.id === selected.inventoryItemId)
+        : null;
+      if (service?.offer_inventory_items && !selected.inventoryItemId) {
+        throw new Error("Selecione uma opção de variação do cabelo/mecha.");
+      }
+      
+      let finalNotes = selected.notes;
+      if (selectedInventoryItem) {
+        const itemText = `[Item do Estoque Selecionado: Código ${selectedInventoryItem.code || "Sem código"} - Cor ${selectedInventoryItem.color || "N/A"} - Comprimento ${selectedInventoryItem.length_cm ? (String(selectedInventoryItem.length_cm).toLowerCase().includes('cm') ? selectedInventoryItem.length_cm : `${selectedInventoryItem.length_cm}cm`) : "N/A"} - Peso ${selectedInventoryItem.weight_grams || 0}g - Preço R$ ${Number(selectedInventoryItem.suggested_price || 0).toFixed(2)}]`;
+        finalNotes = finalNotes ? `${itemText}\n${finalNotes}` : itemText;
+      }
       const professional = catalog.professionals.find(
         (item) => item.name === selected.professional,
       );
@@ -1051,10 +1085,11 @@ function ClientAgenda() {
             serviceId: service.id,
             professionalId,
             startsAt: `${year}-${month}-${day}T${selected.time}:00-03:00`,
-            notes: selected.notes,
+            notes: finalNotes,
             paymentMethod,
             intakeData: discoveryDraft || {},
             couponCode: selected.couponCode || null,
+            inventoryItemId: selected.inventoryItemId || null,
           }),
         },
       );
@@ -1482,6 +1517,7 @@ function ClientAgenda() {
             onClick={next}
             disabled={
               saving ||
+              (step === 1 && catalog.services.find((s) => s.name === selected.service)?.offer_inventory_items && !selected.inventoryItemId) ||
               (step === 4 && checkingAvailability) ||
               (step === 4 && availability[selected.time] === false) ||
               !selected.service ||
@@ -1557,10 +1593,15 @@ function ClientAgenda() {
       </Modal>
       {(() => {
         const service = catalog.services.find((s) => s.name === selected.service);
-        const servicePrice = service ? Number(service.base_price || 0) : 0;
+        const selectedInventoryItem = service?.offer_inventory_items
+          ? catalog.inventoryItems?.find((x) => x.id === selected.inventoryItemId)
+          : null;
+        const servicePrice = selectedInventoryItem
+          ? Number(selectedInventoryItem.suggested_price || 0)
+          : (service ? Number(service.base_price || 0) : 0);
         const discount = couponInfo?.code === selected.couponCode ? couponInfo.discount : 0;
         const finalPrice = Math.max(0, servicePrice - discount);
-        const depositAmount = service ? Number(service.deposit_amount || 0) : 0;
+        const depositAmount = service?.offer_inventory_items ? 0 : (service ? Number(service.deposit_amount || 0) : 0);
         const finalDeposit = Math.min(depositAmount, finalPrice);
 
         return (
@@ -1675,6 +1716,7 @@ function BookingStep({
   catalog: {
     services: Array<Record<string, any>>;
     professionals: Array<Record<string, any>>;
+    inventoryItems?: Array<Record<string, any>>;
   };
   dateOptions: string[];
   couponInfo: { code: string; discount: number; total: number; error?: string } | null;
@@ -1685,6 +1727,10 @@ function BookingStep({
   const choose = (k: string, v: string) => setSelected({ ...selected, [k]: v });
   const service = catalog.services.find((s) => s.name === selected.service);
   const slots = Object.keys(availability);
+  const matchingItems = (catalog.inventoryItems || []).filter(
+    (item) => item.category_id === service?.category_id && 
+              (!service?.hair_method_id || item.hair_method_id === service?.hair_method_id)
+  );
   const configs: { title: string; key: string; options: string[] }[] = [
     {
       title: "Qual serviço você procura?",
@@ -1692,9 +1738,11 @@ function BookingStep({
       options: catalog.services.map((s) => String(s.name)),
     },
     {
-      title: "Qual método deseja avaliar?",
-      key: "method",
-      options: ["Quero recomendação", "Fita Adesiva", "Microlink", "Queratina"],
+      title: service?.offer_inventory_items ? "Selecione o tipo de cabelo" : "Qual método deseja avaliar?",
+      key: service?.offer_inventory_items ? "inventoryItemId" : "method",
+      options: service?.offer_inventory_items 
+        ? matchingItems.map((item) => item.id) 
+        : ["Quero recomendação", "Fita Adesiva", "Microlink", "Queratina"],
     },
     {
       title: "Escolha sua especialista",
@@ -1719,11 +1767,50 @@ function BookingStep({
         )}
         {!c.options.length ? (
           <p className="mt-4 rounded-2xl bg-rose-50 p-4 text-xs font-semibold text-rose-700">
-            Nenhuma opção disponível no momento.
+            {service?.offer_inventory_items && step === 1 
+              ? "Nenhuma opção de cabelo/mecha disponível no estoque para este serviço." 
+              : "Nenhuma opção disponível no momento."}
           </p>
         ) : (
           <div className="mt-4 grid grid-cols-2 gap-2">
             {c.options.map((o) => {
+              const item = service?.offer_inventory_items && step === 1 
+                ? catalog.inventoryItems?.find((x) => x.id === o) 
+                : null;
+              if (item) {
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setSelected({
+                        ...selected,
+                        inventoryItemId: item.id,
+                        method: service?.method || selected.method
+                      });
+                    }}
+                    className={`col-span-2 flex flex-col justify-between rounded-2xl border p-4 text-left transition ${selected.inventoryItemId === item.id ? "border-champagne bg-champagne/10 text-[#8d6929]" : "border-black/[.07] bg-white"}`}
+                  >
+                    <div className="flex justify-between items-start w-full">
+                      <div>
+                        <span className="font-bold text-xs block">
+                          {item.color} {item.shade ? `/ ${item.shade}` : ""}
+                        </span>
+                        <span className="text-[10px] text-stone-500 mt-1 block">
+                          {item.length_cm ? (String(item.length_cm).toLowerCase().includes('cm') ? item.length_cm : `${item.length_cm}cm`) : "—"} • {item.weight_grams ? `${item.weight_grams}g` : "—"}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-bold text-xs text-ink block">
+                          {Number(item.suggested_price || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </span>
+                        <span className="text-[10px] text-stone-400 block mt-0.5">
+                          Disponível: {item.quantity} un
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              }
               const unavailable = step === 4 && availability[o] === false;
               return (
                 <button
@@ -1761,10 +1848,15 @@ function BookingStep({
       </div>
     );
   if (step === 6) {
-    const servicePrice = service ? Number(service.base_price || 0) : 0;
+    const selectedInventoryItem = service?.offer_inventory_items
+      ? catalog.inventoryItems?.find((x) => x.id === selected.inventoryItemId)
+      : null;
+    const servicePrice = selectedInventoryItem
+      ? Number(selectedInventoryItem.suggested_price || 0)
+      : (service ? Number(service.base_price || 0) : 0);
     const discount = couponInfo?.code === selected.couponCode ? couponInfo.discount : 0;
     const finalPrice = Math.max(0, servicePrice - discount);
-    const depositAmount = service ? Number(service.deposit_amount || 0) : 0;
+    const depositAmount = service?.offer_inventory_items ? 0 : (service ? Number(service.deposit_amount || 0) : 0);
     const finalDeposit = Math.min(depositAmount, finalPrice);
 
     return (
@@ -1775,6 +1867,10 @@ function BookingStep({
         <div className="mt-4 space-y-3 rounded-2xl bg-warm p-5 text-xs">
           {[
             ["Serviço", selected.service],
+            service?.offer_inventory_items && selectedInventoryItem ? [
+              "Cabelo/Mecha",
+              `${selectedInventoryItem.color} ${selectedInventoryItem.shade ? `/ ${selectedInventoryItem.shade}` : ""} - ${selectedInventoryItem.length_cm ? (String(selectedInventoryItem.length_cm).toLowerCase().includes('cm') ? selectedInventoryItem.length_cm : `${selectedInventoryItem.length_cm}cm`) : "—"} - ${selectedInventoryItem.weight_grams ? `${selectedInventoryItem.weight_grams}g` : "—"}`
+            ] : null,
             ["Método", selected.method],
             ["Profissional", selected.professional],
             ["Data e hora", `${selected.date} às ${selected.time}`],
@@ -1861,10 +1957,15 @@ function BookingStep({
       </div>
     );
   }
-  const servicePrice = service ? Number(service.base_price || 0) : 0;
+  const selectedInventoryItem = service?.offer_inventory_items
+    ? catalog.inventoryItems?.find((x) => x.id === selected.inventoryItemId)
+    : null;
+  const servicePrice = selectedInventoryItem
+    ? Number(selectedInventoryItem.suggested_price || 0)
+    : (service ? Number(service.base_price || 0) : 0);
   const discount = couponInfo?.code === selected.couponCode ? couponInfo.discount : 0;
   const finalPrice = Math.max(0, servicePrice - discount);
-  const depositAmount = service ? Number(service.deposit_amount || 0) : 0;
+  const depositAmount = service?.offer_inventory_items ? 0 : (service ? Number(service.deposit_amount || 0) : 0);
   const finalDeposit = Math.min(depositAmount, finalPrice);
 
   const paymentOptions: Array<{

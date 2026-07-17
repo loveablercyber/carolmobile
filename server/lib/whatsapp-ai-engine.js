@@ -2471,15 +2471,22 @@ export function summarizeAiCommercialContext(base, settings = {}) {
     .map((flow) => flow.name || flow.flow_key)
     .slice(0, 12);
   const servicesWithOffer = (base.services || []).filter((s) => s.offer_inventory_items);
-  const categoriesWithOffer = new Set(servicesWithOffer.map((s) => s.category_id).filter(Boolean));
-  const inventory = (base.inventory || [])
-    .filter((item) => item.quantity > 0 && item.category_id && categoriesWithOffer.has(item.category_id))
-    .slice(0, 15)
-    .map((item) => {
-      const price = Number(item.suggested_price || 0);
-      const priceText = price > 0 ? `valor R$ ${price.toFixed(2)}` : "valor não cadastrado";
-      return `- ${item.name} (${item.category}): Cor ${item.color || "N/A"}, Tom ${item.shade || "N/A"}, ${item.length_cm ? (String(item.length_cm).toLowerCase().includes('cm') ? item.length_cm : `${item.length_cm}cm`) : "N/A"}, ${item.texture || "textura N/A"}, ${item.weight_grams || "N/A"}g — ${priceText}; disponibilidade: ${item.quantity} unidades.`;
-    });
+  const servicesWithOfferDescriptions = servicesWithOffer.map((service) => {
+    const matching = (base.inventory || []).filter((item) => 
+      item.quantity > 0 && 
+      item.category_id === service.category_id && 
+      (!service.hair_method_id || item.hair_method_id === service.hair_method_id)
+    );
+    const optionsText = matching.length > 0 
+      ? matching.map((item) => {
+          const price = Number(item.suggested_price || 0);
+          const priceText = price > 0 ? `R$ ${price.toFixed(2)}` : "valor sob consulta";
+          const lengthText = item.length_cm ? (String(item.length_cm).toLowerCase().includes('cm') ? item.length_cm : `${item.length_cm}cm`) : "N/A";
+          return `  * Opção de Cabelo (Cód: ${item.code || "N/A"}): Cor ${item.color || "N/A"}, Tom ${item.shade || "N/A"}, ${lengthText}, ${item.weight_grams || "N/A"}g — ${priceText} (Disponível: ${item.quantity} un)`;
+        }).join("\n")
+      : "  (Nenhuma variação disponível em estoque no momento)";
+    return `- Serviço: ${service.name} (Variações do Estoque)\n${optionsText}`;
+  });
   const products = (base.products || [])
     .filter((item) => item.active !== false && Number(item.stock_quantity || 0) > 0)
     .slice(0, 15)
@@ -2495,7 +2502,7 @@ export function summarizeAiCommercialContext(base, settings = {}) {
     plans.length ? `Planos ativos:\n${plans.join("\n")}` : "Planos ativos: nenhum plano ativo encontrado.",
     coupons.length ? `Cupons ativos:\n${coupons.join("\n")}` : "Cupons ativos: nenhum cupom ativo encontrado.",
     promotions.length ? `Promocoes ativas para WhatsApp:\n${promotions.join("\n")}` : "Promocoes ativas para WhatsApp: nenhuma promocao ativa cadastrada.",
-    inventory.length ? `Cabelos e mechas em estoque real:\n${inventory.join("\n")}` : "Cabelos e mechas: nenhum item em estoque no momento.",
+    servicesWithOfferDescriptions.length ? `Variações de Cabelos e mechas em estoque por serviço:\n${servicesWithOfferDescriptions.join("\n")}` : "Cabelos e mechas: nenhum item em estoque no momento para serviços cadastrados.",
     products.length ? `Produtos e acessórios ativos:\n${products.join("\n")}` : "Produtos e acessórios: nenhum item ativo em estoque no momento.",
     enabledFlows.length
       ? `Fluxos automáticos habilitados: ${enabledFlows.join(", ")}.`

@@ -91,8 +91,21 @@ const brl = (value: unknown) =>
     style: "currency",
     currency: "BRL",
   });
-const servicePriceLabel = (service: Record<string, any>) =>
-  service?.is_free ? "Sem custo" : brl(service?.base_price);
+const servicePriceLabel = (service: Record<string, any>, inventoryItems: Array<Record<string, any>> = []) => {
+  if (service?.offer_inventory_items) {
+    const matching = (inventoryItems || []).filter(
+      (item) => item.category_id === service.category_id && 
+                (!service.hair_method_id || item.hair_method_id === service.hair_method_id)
+    );
+    if (matching.length > 0) {
+      const prices = matching.map((item) => Number(item.suggested_price || 0));
+      const minPrice = Math.min(...prices);
+      return `A partir de ${brl(minPrice)}`;
+    }
+    return "Sob consulta";
+  }
+  return service?.is_free ? "Sem custo" : brl(service?.base_price);
+};
 const date = (value: unknown) =>
   value ? new Date(String(value)).toLocaleDateString("pt-BR") : "—";
 const dateTime = (value: unknown) =>
@@ -385,7 +398,7 @@ export function ClientHomePage() {
                     <Clock3 className="mr-1 inline" size={13} />
                     {s.duration_minutes}min
                   </span>
-                  <b>{servicePriceLabel(s)}</b>
+                  <b>{servicePriceLabel(s, bootstrap.data?.inventoryItems || [])}</b>
                 </div>
                 <button
                   onClick={() => nav("/cliente/agendamentos")}

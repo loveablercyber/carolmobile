@@ -48,8 +48,10 @@ const brl = (v: unknown) =>
     style: "currency",
     currency: "BRL",
   });
-const servicePriceLabel = (service: Record<string, any>) =>
-  service?.is_free ? "Sem custo" : brl(service?.base_price);
+const servicePriceLabel = (service: Record<string, any>) => {
+  if (service?.offer_inventory_items) return "Sob variação de item";
+  return service?.is_free ? "Sem custo" : brl(service?.base_price);
+};
 const dt = (v: unknown) =>
   v
     ? new Date(String(v)).toLocaleString("pt-BR", {
@@ -4144,6 +4146,7 @@ export function AdminServicesPage() {
   const categories = payload.categories || [];
   const methods = payload.methods || [];
   const professionals = payload.professionals || [];
+  const inventory = payload.inventory || [];
   const linksFor = (service?: any) =>
     professionals.map((professional: any) => {
       const existing = service?.professionals?.find(
@@ -4204,8 +4207,8 @@ export function AdminServicesPage() {
           name: form.name,
           description: form.description,
           durationMinutes: Number(form.durationMinutes),
-          basePrice: form.isFree ? 0 : Number(form.basePrice),
-          depositAmount: form.isFree ? 0 : Number(form.depositAmount || 0),
+          basePrice: (form.isFree || form.offerInventoryItems) ? 0 : Number(form.basePrice),
+          depositAmount: (form.isFree || form.offerInventoryItems) ? 0 : Number(form.depositAmount || 0),
           categoryId: form.categoryId || null,
           hairMethodId: form.hairMethodId || null,
           active: form.active,
@@ -4216,7 +4219,7 @@ export function AdminServicesPage() {
             .filter((item: any) => item.enabled)
             .map((item: any) => ({
               professionalId: item.professionalId,
-              customPrice: form.isFree || item.customPrice === "" ? null : Number(item.customPrice),
+              customPrice: (form.isFree || form.offerInventoryItems) || item.customPrice === "" ? null : Number(item.customPrice),
               commissionRate:
                 item.commissionRate === "" ? null : Number(item.commissionRate),
             })),
@@ -4372,6 +4375,7 @@ export function AdminServicesPage() {
                       {x.show_online_booking !== false ? "ONLINE" : "INTERNO"}
                     </Badge>
                     {x.is_free && <Badge tone="green">SEM CUSTO</Badge>}
+                    {x.offer_inventory_items && <Badge tone="gold">VARIAÇÕES</Badge>}
                   </div>
                   <div className="flex gap-2">
                     <button
@@ -4456,6 +4460,7 @@ export function AdminServicesPage() {
                           {x.show_online_booking !== false ? "ONLINE" : "INTERNO"}
                         </Badge>
                         {x.is_free && <Badge tone="green">SEM CUSTO</Badge>}
+                        {x.offer_inventory_items && <Badge tone="gold">VARIAÇÕES</Badge>}
                       </div>
                     </td>
                     <td className="p-4 text-stone-500">
@@ -4532,47 +4537,53 @@ export function AdminServicesPage() {
               }
             />
           </label>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className={`grid gap-3 ${form.offerInventoryItems ? "sm:grid-cols-1" : "sm:grid-cols-3"}`}>
             <Input
               label="Duração (min)"
               type="number"
               value={form.durationMinutes}
               set={(v) => setForm({ ...form, durationMinutes: v })}
             />
-            <Input
-              label="Preço"
-              type="number"
-              value={form.basePrice}
-              disabled={form.isFree}
-              set={(v) => setForm({ ...form, basePrice: v })}
-            />
-            <Input
-              label="Sinal"
-              type="number"
-              value={form.depositAmount}
-              disabled={form.isFree}
-              set={(v) => setForm({ ...form, depositAmount: v })}
-            />
+            {!form.offerInventoryItems && (
+              <>
+                <Input
+                  label="Preço"
+                  type="number"
+                  value={form.basePrice}
+                  disabled={form.isFree}
+                  set={(v) => setForm({ ...form, basePrice: v })}
+                />
+                <Input
+                  label="Sinal"
+                  type="number"
+                  value={form.depositAmount}
+                  disabled={form.isFree}
+                  set={(v) => setForm({ ...form, depositAmount: v })}
+                />
+              </>
+            )}
           </div>
-          <label className="flex items-center gap-3 rounded-2xl bg-warm p-4 text-xs font-bold">
-            <input
-              type="checkbox"
-              checked={form.isFree}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  isFree: event.target.checked,
-                  basePrice: event.target.checked
-                    ? "0"
-                    : form.basePrice === "0"
-                      ? ""
-                      : form.basePrice,
-                  depositAmount: event.target.checked ? "0" : form.depositAmount,
-                })
-              }
-            />
-            Servico gratis / sem custo
-          </label>
+          {!form.offerInventoryItems && (
+            <label className="flex items-center gap-3 rounded-2xl bg-warm p-4 text-xs font-bold">
+              <input
+                type="checkbox"
+                checked={form.isFree}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    isFree: event.target.checked,
+                    basePrice: event.target.checked
+                      ? "0"
+                      : form.basePrice === "0"
+                        ? ""
+                        : form.basePrice,
+                    depositAmount: event.target.checked ? "0" : form.depositAmount,
+                  })
+                }
+              />
+              Servico gratis / sem custo
+            </label>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="block">
               <div className="flex justify-between items-center mb-2">
@@ -4673,6 +4684,54 @@ export function AdminServicesPage() {
             />
             Oferecer itens de estoque desta categoria para o cliente
           </label>
+          {form.offerInventoryItems && (
+            <div className="col-span-2 rounded-2xl border border-black/10 p-4 space-y-3 bg-warm/20">
+              <span className="text-xs font-bold text-stone-500 uppercase tracking-wider block">
+                Itens do Estoque Vinculados
+              </span>
+              {form.categoryId ? (
+                (() => {
+                  const matchingItems = inventory.filter((item: any) => 
+                    item.category_id === form.categoryId && 
+                    (!form.hairMethodId || item.hair_method_id === form.hairMethodId)
+                  );
+                  return matchingItems.length ? (
+                    <div className="divide-y divide-black/5 max-h-60 overflow-y-auto pr-1">
+                      {matchingItems.map((item: any) => (
+                        <div key={item.id} className="py-2 flex justify-between items-center text-xs">
+                          <div>
+                            <span className="font-bold">{item.code || "Sem código"}</span>
+                            <span className="text-stone-400 mx-1.5">•</span>
+                            <span>{item.color} {item.shade ? `/ ${item.shade}` : ""}</span>
+                            <span className="text-stone-400 mx-1.5">•</span>
+                            <span>{item.length_cm ? (String(item.length_cm).toLowerCase().includes('cm') ? item.length_cm : `${item.length_cm}cm`) : "—"}</span>
+                            <span className="text-stone-400 mx-1.5">•</span>
+                            <span>{item.weight_grams ? `${item.weight_grams}g` : "—"}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="font-bold block">
+                              {Number(item.suggested_price || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                            </span>
+                            <span className="text-[10px] text-stone-400">
+                              Qtd: {item.quantity}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-stone-400 italic">
+                      Nenhum item ativo no estoque com a categoria e método selecionados.
+                    </p>
+                  );
+                })()
+              ) : (
+                <p className="text-xs text-stone-400 italic">
+                  Selecione uma categoria para listar os itens do estoque.
+                </p>
+              )}
+            </div>
+          )}
           <section>
             <SectionHeading title="Profissionais vinculadas" />
             <div className="space-y-3">
@@ -4735,7 +4794,7 @@ export function AdminServicesPage() {
               saving ||
               !form.name.trim() ||
               !form.durationMinutes ||
-              (!form.isFree && !form.basePrice)
+              (!form.isFree && !form.offerInventoryItems && !form.basePrice)
             }
             className="btn-primary w-full disabled:opacity-50"
           >
@@ -4940,7 +4999,6 @@ export function AdminServicesPage() {
 
 export function AdminInventoryPage() {
   const p = useLoad<{ inventory: any[], categories?: any[], methods?: any[], colors?: any[] }>("/api/data?resource=inventory");
-  const servicesData = useLoad<{ services: any[]; categories: any[]; methods: any[]; professionals: any[] }>("/api/portal?resource=admin-services");
   const [open, setOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
 
@@ -5018,12 +5076,11 @@ export function AdminInventoryPage() {
     }
   };
 
-  if (p.loading || servicesData.loading) return <LoadingState />;
+  if (p.loading) return <LoadingState />;
   const list = p.data?.inventory || [];
   const categories = p.data?.categories || [];
   const methods = p.data?.methods || [];
   const colors = p.data?.colors || [];
-  const services = servicesData.data?.services || [];
   const total = list.reduce(
     (s, x) => s + Number(x.unit_cost || 0) * Number(x.qty || 0),
     0,
@@ -5049,7 +5106,6 @@ export function AdminInventoryPage() {
       minimumStock: "",
       weightGrams: "",
       active: true,
-      selectedServiceId: "",
     });
     setOpen(true);
   };
@@ -5073,7 +5129,6 @@ export function AdminInventoryPage() {
       minimumStock: String(item.min || 0),
       weightGrams: item.weight_grams ? String(item.weight_grams) : "",
       active: item.active !== false,
-      selectedServiceId: "",
     });
     setOpen(true);
   };
@@ -5297,58 +5352,6 @@ export function AdminInventoryPage() {
             set={(v) => setForm({ ...form, supplier: v })}
           />
           <div className="col-span-2 block">
-            <span className="mb-2 block text-xs font-bold text-stone-500">Vincular a Serviço (opcional)</span>
-            <select
-              className="field text-xs"
-              value={form.selectedServiceId || ""}
-              onChange={(e) => {
-                const selectedServiceId = e.target.value;
-                if (selectedServiceId) {
-                  const service = services.find((s: any) => s.id === selectedServiceId);
-                  if (service) {
-                    let nextCode = form.code;
-                    let categoryName = "Cabelo humano";
-                    if (service.category_id) {
-                      const cat = categories.find((c: any) => c.id === service.category_id);
-                      if (cat) {
-                        categoryName = cat.name;
-                        nextCode = generateNextCode(cat.name, list);
-                      }
-                    }
-                    setForm({
-                      ...form,
-                      selectedServiceId: service.id,
-                      categoryId: service.category_id || "",
-                      category: categoryName,
-                      hairMethodId: service.hair_method_id || "",
-                      code: nextCode
-                    });
-                  }
-                } else {
-                  setForm({
-                    ...form,
-                    selectedServiceId: "",
-                    categoryId: "",
-                    category: "Cabelo humano",
-                    hairMethodId: ""
-                  });
-                }
-              }}
-            >
-              <option value="">Selecione um serviço...</option>
-              {services.map((s: any) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-            {form.selectedServiceId && (
-              <p className="mt-1 text-[10px] text-stone-400 italic">
-                Categoria e método preenchidos automaticamente.
-              </p>
-            )}
-          </div>
-          <div className="col-span-2 block">
             <span className="mb-2 block text-xs font-bold text-stone-500">Categoria</span>
             <select
               className="field text-xs"
@@ -5369,7 +5372,6 @@ export function AdminInventoryPage() {
                   category: cat ? cat.name : "Cabelo humano",
                   hairMethodId: matchingMethod ? matchingMethod.id : "",
                   code: nextCode,
-                  selectedServiceId: ""
                 });
               }}
             >

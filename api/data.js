@@ -102,11 +102,14 @@ async function appointmentScope(user, alias = "a") {
 async function getResource(req, res, user, resource) {
   if (resource === "bootstrap") {
     await ensureServicesVisibilityColumn();
-    const [services, professionals, locations, points] = await Promise.all([
+    const [services, professionals, locations, points, inventory] = await Promise.all([
       query(
         `select id, name, description, duration_minutes, base_price, deposit_amount,
           coalesce(is_free,false) as is_free,
-          coalesce(show_online_booking,true) as show_online_booking
+          coalesce(show_online_booking,true) as show_online_booking,
+          coalesce(offer_inventory_items,false) as offer_inventory_items,
+          category_id,
+          hair_method_id
          from public.services
          where active and ($1::text <> 'client' or coalesce(show_online_booking,true))
          order by base_price`,
@@ -124,12 +127,18 @@ async function getResource(req, res, user, resource) {
             [user.id],
           )
         : Promise.resolve({ rows: [{ points: 0 }] }),
+      query(
+        `select id, category as name, category, color, shade, length_cm, texture, weight_grams, quantity, suggested_price, category_id, hair_method_id, active
+         from public.hair_inventory
+         where archived = false and active = true and quantity > 0`
+      ),
     ]);
     return send(res, 200, {
       services: services.rows,
       professionals: professionals.rows,
       locations: locations.rows,
       points: points.rows[0].points,
+      inventoryItems: inventory.rows,
     });
   }
 
@@ -685,10 +694,21 @@ async function createAppointment(req, res, user, body) {
         "Este horário acabou de ficar indisponível. Escolha outro.",
         409,
       );
+    let basePrice = Number(service.base_price || 0);
+    if (service.offer_inventory_items && body.inventoryItemId) {
+      const inventoryRes = await client.query(
+        "select suggested_price from public.hair_inventory where id = $1",
+        [body.inventoryItemId]
+      );
+      if (inventoryRes.rows[0]) {
+        basePrice = Number(inventoryRes.rows[0].suggested_price || 0);
+      }
+    }
+
     const couponResult = await validateCoupon(client, {
       code: body.couponCode,
       clientId,
-      amount: Number(service.base_price || 0),
+      amount: basePrice,
       serviceId: service.id,
     });
     const location = await client.query(
@@ -698,7 +718,7 @@ async function createAppointment(req, res, user, body) {
       await client.query("select uuid_generate_v4() as id")
     ).rows[0].id;
     const bookingCode = `CS-${String(appointmentId).replace(/-/g, "").slice(-12).toUpperCase()}`;
-    const requiresDeposit = Number(service.deposit_amount || 0) > 0;
+    const requiresDeposit = !service.offer_inventory_items && Number(service.deposit_amount || 0) > 0;
     const requestedStatus =
       (user.role === "admin" || user.role === "professional") && appointmentStatuses.includes(body.status)
         ? body.status
@@ -719,7 +739,7 @@ async function createAppointment(req, res, user, body) {
         initialStatus,
         body.notes || null,
         couponResult.total,
-        service.base_price,
+        basePrice,
         couponResult.discount,
         couponResult.coupon?.id || null,
         JSON.stringify(body.intakeData || {}),

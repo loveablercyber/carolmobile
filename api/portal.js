@@ -811,7 +811,7 @@ async function adminServices(user) {
   requireRole(user, ["admin"]);
   await ensureMarketingSchema();
   await query("alter table public.services add column if not exists offer_inventory_items boolean default false");
-  const [services, links, categories, methods, professionals] = await Promise.all([
+  const [services, links, categories, methods, professionals, inventory] = await Promise.all([
     query(`select s.id,s.category_id,s.hair_method_id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
       coalesce(s.show_online_booking,true) as show_online_booking,
       coalesce(s.is_free,false) as is_free,
@@ -832,6 +832,9 @@ async function adminServices(user) {
     query(`select pr.id,p.full_name as name,pr.commission_rate,pr.active
       from public.professionals pr join public.profiles p on p.id=pr.profile_id
       order by p.full_name`),
+    query(`select id, category as name, category, color, shade, length_cm, texture, weight_grams, quantity, suggested_price, category_id, hair_method_id, active
+      from public.hair_inventory
+      where archived = false and active = true and quantity > 0`),
   ]);
   const linksByService = new Map();
   for (const link of links.rows) {
@@ -847,6 +850,7 @@ async function adminServices(user) {
     categories: categories.rows,
     methods: methods.rows,
     professionals: professionals.rows,
+    inventory: inventory.rows,
   };
 }
 
