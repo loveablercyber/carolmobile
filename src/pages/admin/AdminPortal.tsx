@@ -4940,7 +4940,7 @@ export function AdminServicesPage() {
 
 export function AdminInventoryPage() {
   const p = useLoad<{ inventory: any[], categories?: any[], methods?: any[], colors?: any[] }>("/api/data?resource=inventory");
-  const servicesData = useLoad<any[]>("/api/portal?resource=admin-services");
+  const servicesData = useLoad<{ services: any[]; categories: any[]; methods: any[]; professionals: any[] }>("/api/portal?resource=admin-services");
   const [open, setOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
 
@@ -5023,7 +5023,7 @@ export function AdminInventoryPage() {
   const categories = p.data?.categories || [];
   const methods = p.data?.methods || [];
   const colors = p.data?.colors || [];
-  const services = servicesData.data || [];
+  const services = servicesData.data?.services || [];
   const total = list.reduce(
     (s, x) => s + Number(x.unit_cost || 0) * Number(x.qty || 0),
     0,
