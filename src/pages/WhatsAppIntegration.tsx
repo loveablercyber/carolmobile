@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useState } from "react";
+import { FormEvent, Fragment, ReactNode, useEffect, useState } from "react";
 import {
   Bot,
   BookOpen,
@@ -960,6 +960,9 @@ function BaseKnowledgeTab({
   notify: (message: string) => void;
 }) {
   const [savingServiceId, setSavingServiceId] = useState("");
+  const [showOnlyActive, setShowOnlyActive] = useState(false);
+  const [viewMode, setViewMode] = useState<"cards" | "list">("cards");
+  const [expandedServiceId, setExpandedServiceId] = useState<string | null>(null);
 
   const saveService = async (form: ServiceForm) => {
     setSavingServiceId(form.serviceId);
@@ -984,6 +987,14 @@ function BaseKnowledgeTab({
     }
   };
 
+  const formatMoney = (val: any) => {
+    return Number(val || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  };
+
+  const filteredServices = (panel.base.services || []).filter(
+    (service) => !showOnlyActive || service.ai_active
+  );
+
   return (
     <div className="grid gap-5 xl:grid-cols-3">
       <section className="surface p-6 xl:col-span-2">
@@ -992,23 +1003,140 @@ function BaseKnowledgeTab({
           Libere apenas serviços reais do catálogo. A IA só pode citar valores e
           descrições salvos aqui.
         </p>
-        {panel.base.services.length ? (
-          <div className="grid gap-4">
-            {panel.base.services.map((service) => (
-              <ServiceSettingsCard
-                key={service.id}
-                service={service}
-                inventory={panel.base.inventory || []}
-                saving={savingServiceId === service.id}
-                disabled={!!savingServiceId}
-                onSave={saveService}
-              />
-            ))}
+
+        <div className="mb-5 flex flex-wrap items-center gap-4 bg-stone-50 p-4 rounded-[20px]">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-stone-500">Filtrar:</span>
+            <select
+              className="field py-1 px-3 bg-white text-xs min-h-8"
+              value={showOnlyActive ? "active" : "all"}
+              onChange={(e) => setShowOnlyActive(e.target.value === "active")}
+            >
+              <option value="all">Todos os serviços</option>
+              <option value="active">Apenas Ativos no WhatsApp</option>
+            </select>
           </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-stone-500">Visualização:</span>
+            <div className="flex rounded-xl bg-stone-200/60 p-0.5">
+              <button
+                type="button"
+                className={`rounded-lg px-3 py-1 text-xs font-bold transition-all ${
+                  viewMode === "cards" ? "bg-white text-stone-800 shadow-sm" : "text-stone-500"
+                }`}
+                onClick={() => setViewMode("cards")}
+              >
+                Cards
+              </button>
+              <button
+                type="button"
+                className={`rounded-lg px-3 py-1 text-xs font-bold transition-all ${
+                  viewMode === "list" ? "bg-white text-stone-800 shadow-sm" : "text-stone-500"
+                }`}
+                onClick={() => setViewMode("list")}
+              >
+                Lista
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {filteredServices.length ? (
+          viewMode === "cards" ? (
+            <div className="grid gap-4">
+              {filteredServices.map((service) => (
+                <ServiceSettingsCard
+                  key={service.id}
+                  service={service}
+                  inventory={panel.base.inventory || []}
+                  saving={savingServiceId === service.id}
+                  disabled={!!savingServiceId}
+                  onSave={saveService}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-[20px] border border-black/5 bg-white">
+              <table className="w-full text-left text-sm text-stone-600 border-collapse">
+                <thead>
+                  <tr className="border-b border-black/5 text-[11px] font-bold text-stone-400 uppercase tracking-wider bg-stone-50/50">
+                    <th className="py-3 px-4">Serviço</th>
+                    <th className="py-3 px-4">Preço Base</th>
+                    <th className="py-3 px-4">Duração</th>
+                    <th className="py-3 px-4">Status WhatsApp</th>
+                    <th className="py-3 px-4 text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black/5">
+                  {filteredServices.map((service) => {
+                    const isExpanded = expandedServiceId === service.id;
+                    const catalogInactive = service.active === false;
+                    return (
+                      <Fragment key={service.id}>
+                        <tr className="hover:bg-black/[0.01] transition-colors">
+                          <td className="py-3 px-4">
+                            <div className="font-bold text-stone-800">{service.name}</div>
+                            {catalogInactive && <span className="text-[10px] text-rose-500 font-semibold">Catálogo inativo</span>}
+                          </td>
+                          <td className="py-3 px-4 font-mono">
+                            {service.offer_inventory_items ? "Estoque" : formatMoney(service.base_price)}
+                          </td>
+                          <td className="py-3 px-4 font-mono">
+                            {service.duration_minutes || "—"} min
+                          </td>
+                          <td className="py-3 px-4">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(service.ai_active)}
+                                disabled={!!savingServiceId || (catalogInactive && !service.ai_active)}
+                                onChange={async (event) => {
+                                  const form = serviceToForm(service);
+                                  form.active = event.target.checked;
+                                  await saveService(form);
+                                }}
+                              />
+                              <Badge tone={service.ai_active ? "green" : "neutral"}>
+                                {service.ai_active ? "Ativo" : "Inativo"}
+                              </Badge>
+                            </label>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <button
+                              type="button"
+                              className="btn-secondary py-1 px-3 text-xs"
+                              onClick={() => setExpandedServiceId(isExpanded ? null : service.id)}
+                            >
+                              {isExpanded ? "Fechar" : "Editar"}
+                            </button>
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan={5} className="py-4 px-4 bg-stone-50/50">
+                              <div className="max-w-4xl mx-auto">
+                                <ServiceSettingsCard
+                                  service={service}
+                                  inventory={panel.base.inventory || []}
+                                  saving={savingServiceId === service.id}
+                                  disabled={!!savingServiceId}
+                                  onSave={saveService}
+                                />
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )
         ) : (
           <EmptyState
-            title="Nenhum serviço cadastrado"
-            text="Cadastre serviços reais antes de liberar respostas comerciais pela IA."
+            title="Nenhum serviço correspondente"
+            text={showOnlyActive ? "Não há serviços ativos no WhatsApp atualmente." : "Cadastre serviços reais antes de liberar respostas comerciais pela IA."}
           />
         )}
       </section>
