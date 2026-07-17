@@ -4594,12 +4594,22 @@ export function AdminServicesPage() {
                 }
               >
                 <option value="">Sem método</option>
-                {methods.map((method: any) => (
-                  <option key={method.id} value={method.id}>
-                    {method.name}
+                {buildMethodTreeOptions(
+                  form.categoryId
+                    ? methods.filter((m: any) => m.category_id === form.categoryId)
+                    : []
+                ).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {"\u00A0\u00A0".repeat(m.level) + (m.level > 0 ? "↳ " : "") + m.name}
                   </option>
                 ))}
               </select>
+              {!form.categoryId && (
+                <p className="mt-1 text-[10px] text-stone-400 italic">Selecione uma categoria para ver os métodos disponíveis.</p>
+              )}
+              {form.categoryId && buildMethodTreeOptions(methods.filter((m: any) => m.category_id === form.categoryId)).length === 0 && (
+                <p className="mt-1 text-[10px] text-stone-400 italic">Nenhum método cadastrado para esta categoria.</p>
+              )}
             </div>
           </div>
           <label className="flex items-center gap-3 rounded-2xl bg-warm p-4 text-xs font-bold">
