@@ -483,6 +483,19 @@ export function selectBookingService(text, base = {}, state = {}) {
   return null;
 }
 
+export function isServiceCatalogMenuIntent(text) {
+  const normalized = normalizeText(text).replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  return [
+    "servico",
+    "servicos",
+    "ver servicos",
+    "quero ver servicos",
+    "quais servicos",
+    "lista de servicos",
+    "catalogo de servicos",
+  ].includes(normalized);
+}
+
 function buildCategoryOptions(base = {}) {
   const services = bookableAiServices(base);
   const categoriesMap = new Map();
@@ -553,7 +566,15 @@ export function buildInventoryOptions(base = {}, serviceChoice) {
   return items.slice(0, 15).map((item, index) => ({
     id: index + 1,
     inventoryId: item.id,
-    inventoryName: [item.color, item.shade, item.length_cm ? `${item.length_cm} cm` : "", item.texture].filter(Boolean).join(" - ") || item.name,
+    inventoryName: [
+      item.color,
+      item.shade,
+      item.length_cm
+        ? (String(item.length_cm).toLowerCase().includes("cm") ? item.length_cm : `${item.length_cm} cm`)
+        : "",
+      item.texture,
+      Number(item.weight_grams || 0) > 0 ? `${item.weight_grams} g` : "",
+    ].filter(Boolean).join(" - ") || item.name,
     inventoryValue: Number(item.suggested_price || 0),
   }));
 }
@@ -579,6 +600,8 @@ async function processServiceHierarchySelection(text, base, state, conversationI
         serviceValue: selected.serviceValue || 0,
         serviceIsFree: selected.serviceIsFree === true,
         offerInventoryItems: selected.offerInventoryItems === true,
+        categoryId: selected.categoryId || state.categoryId || "",
+        methodId: selected.methodId || state.methodId || "",
         ...serviceDetailsState(selected),
         serviceDetailsAccepted: false,
         serviceNote: selected.note || "",
@@ -605,6 +628,8 @@ async function processServiceHierarchySelection(text, base, state, conversationI
         serviceValue: serviceChoice.serviceValue || 0,
         serviceIsFree: serviceChoice.serviceIsFree === true,
         offerInventoryItems: serviceChoice.offerInventoryItems === true,
+        categoryId: serviceChoice.categoryId || state.categoryId || "",
+        methodId: serviceChoice.methodId || state.methodId || "",
         ...serviceDetailsState(serviceChoice),
         serviceDetailsAccepted: false,
         serviceNote: serviceChoice.note || "",
@@ -662,6 +687,8 @@ async function processServiceHierarchySelection(text, base, state, conversationI
         serviceValue: selected.serviceValue || 0,
         serviceIsFree: selected.serviceIsFree === true,
         offerInventoryItems: selected.offerInventoryItems === true,
+        categoryId: selected.categoryId || state.categoryId || "",
+        methodId: selected.methodId || state.methodId || "",
         ...serviceDetailsState(selected),
         serviceDetailsAccepted: false,
       });
@@ -1849,9 +1876,9 @@ export async function handleLocalAgendaAvailabilityIntent({
   if (!isAgendaAvailabilityIntent(text)) return null;
 
   const lastAiMessage = (history || []).filter((item) => item.sender_type === "ai").pop();
-  const lastAiText = lastAiMessage ? lastAiMessage.body : "";
+  const lastAiResponseText = lastAiMessage ? lastAiMessage.body : "";
   const sendTextAndRecord = async ({ text: responseText, reason }) => {
-    if (lastAiText && responseText.trim() === lastAiText.trim()) {
+    if (lastAiResponseText && responseText.trim() === lastAiResponseText.trim()) {
       throw new Error("LOOP_DETECTED");
     }
     return performSendTextAndRecord({ normalized, conversationId, text: responseText, reason });
@@ -2053,10 +2080,10 @@ export async function handleStructuredBookingFlow({
   if (!flowEnabled(base, "pre_agendamento") && !flowEnabled(base, "verificacao_agenda")) return null;
 
   const lastAiMessage = (history || []).filter(item => item.sender_type === "ai").pop();
-  const lastAiText = lastAiMessage ? lastAiMessage.body : "";
+  const lastAiResponseText = lastAiMessage ? lastAiMessage.body : "";
 
   const sendTextAndRecord = async ({ normalized, conversationId, text: responseText, reason }) => {
-    if (lastAiText && responseText.trim() === lastAiText.trim()) {
+    if (lastAiResponseText && responseText.trim() === lastAiResponseText.trim()) {
       throw new Error("LOOP_DETECTED");
     }
     return performSendTextAndRecord({ normalized, conversationId, text: responseText, reason });
@@ -2152,7 +2179,8 @@ export async function handleStructuredBookingFlow({
     }
   }
 
-  const previousPrompt = normalizeText(recorded.conversation.last_message_preview || "");
+  const previousAiPrompt = lastAiText(history) || recorded.conversation.last_message_preview || "";
+  const previousPrompt = normalizeText(previousAiPrompt);
   const previousPromptSuggestsBooking =
     isBookingIntent(previousPrompt) ||
     includesAny(previousPrompt, [
@@ -2163,9 +2191,15 @@ export async function handleStructuredBookingFlow({
       "responda so com o numero",
       "responda só com o número",
     ]);
+  const directServiceChoice = selectBookingService(text, base, currentState);
+  const previousServiceChoice = !currentState.serviceId && previousPromptSuggestsBooking
+    ? selectBookingService(previousAiPrompt, base, currentState)
+    : null;
   const active =
     (currentState.status && currentState.status !== "booked") ||
-    previousPromptSuggestsBooking;
+    previousPromptSuggestsBooking ||
+    isServiceCatalogMenuIntent(text) ||
+    Boolean(directServiceChoice?.serviceId);
   if (!active && !isBookingIntent(text)) return null;
 
   const state = {
@@ -2173,6 +2207,21 @@ export async function handleStructuredBookingFlow({
     ...currentState,
     updatedAt: new Date().toISOString(),
   };
+  if (!state.serviceId && previousServiceChoice?.serviceId) {
+    Object.assign(state, {
+      serviceId: previousServiceChoice.serviceId,
+      serviceName: previousServiceChoice.serviceName,
+      requestedServiceName: previousServiceChoice.requestedServiceName || previousServiceChoice.serviceName,
+      serviceValue: previousServiceChoice.serviceValue || 0,
+      serviceIsFree: previousServiceChoice.serviceIsFree === true,
+      offerInventoryItems: previousServiceChoice.offerInventoryItems === true,
+      categoryId: previousServiceChoice.categoryId,
+      methodId: previousServiceChoice.methodId,
+      ...serviceDetailsState(previousServiceChoice),
+      serviceDetailsAccepted: false,
+      serviceNote: previousServiceChoice.note || "",
+    });
+  }
   state.clientPhone = normalizeBookingPhone(state.clientPhone, normalized.phoneNumber);
   applyBookingContactFields(state, text, { allowPlainName: state.status === "awaiting_contact" });
   hydrateBookingContactFromClient(state, recorded.client);

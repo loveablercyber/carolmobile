@@ -197,6 +197,43 @@ export function parseBookingDateFromText(text, state = {}) {
     }
   }
 
+  const monthNames = {
+    janeiro: 1,
+    fevereiro: 2,
+    marco: 3,
+    abril: 4,
+    maio: 5,
+    junho: 6,
+    julho: 7,
+    agosto: 8,
+    setembro: 9,
+    outubro: 10,
+    novembro: 11,
+    dezembro: 12,
+  };
+  const namedMonth = normalized.match(
+    /\b(\d{1,2})\s*(?:[\/-]|de\s+)(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s*(?:[\/-]|de\s+)(\d{4}))?\b/,
+  );
+  if (namedMonth) {
+    const day = Number(namedMonth[1]);
+    const month = monthNames[namedMonth[2]];
+    const currentYear = Number(today.slice(0, 4));
+    let year = namedMonth[3] ? Number(namedMonth[3]) : currentYear;
+    let candidate = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const parsed = new Date(`${candidate}T12:00:00.000Z`);
+    if (
+      parsed.getUTCFullYear() === year &&
+      parsed.getUTCMonth() === month - 1 &&
+      parsed.getUTCDate() === day
+    ) {
+      if (!namedMonth[3] && candidate < today) {
+        year += 1;
+        candidate = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      }
+      return candidate;
+    }
+  }
+
   const weekdayTerms = [
     ["domingo", 0],
     ["segunda", 1],
@@ -393,7 +430,12 @@ export function isFinalBookingAlteration(text) {
 }
 
 export function shouldPrioritizeBookingState(text, state = {}, history = []) {
-  if (!isActiveBookingState(state)) return false;
+  if (!isActiveBookingState(state)) {
+    return Boolean(
+      hasTemporalBookingSignal(text, state) &&
+      promptSuggestsBookingAnswer(lastAiText(history)),
+    );
+  }
   const normalized = normalizeText(text);
   const choice = numericChoice(text);
 

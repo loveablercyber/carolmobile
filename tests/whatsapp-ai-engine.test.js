@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test, { afterEach } from "node:test";
 import { pool } from "../server/lib/db.js";
+import { parseBookingDateFromText } from "../server/lib/whatsapp/intent-detector.js";
 
 import {
   buildLocalGreetingResponse,
@@ -29,6 +30,7 @@ import {
   phoneLookupCandidates,
   selectBookingService,
   hydrateBookingContactFromClient,
+  isServiceCatalogMenuIntent,
 } from "../server/lib/whatsapp-ai-engine.js";
 
 const originalQuery = pool.query;
@@ -103,6 +105,17 @@ test("hydrates birth date and contact data from an existing client without overw
     clientCpf: "12345678901",
     clientBirthDate: "1990-05-10",
   });
+});
+
+test("recognizes requests to browse the backend service catalog", () => {
+  assert.equal(isServiceCatalogMenuIntent("Serviços"), true);
+  assert.equal(isServiceCatalogMenuIntent("Quero ver serviços"), true);
+  assert.equal(isServiceCatalogMenuIntent("Como funciona o serviço?"), false);
+});
+
+test("parses dates written with a Portuguese month name", () => {
+  assert.equal(parseBookingDateFromText("18/julho/2026"), "2026-07-18");
+  assert.equal(parseBookingDateFromText("18 de julho de 2026"), "2026-07-18");
 });
 
 test("resets saved booking progress when the client starts over with a greeting", () => {
@@ -543,6 +556,14 @@ test("prioritizes pending booking answers written in natural language", () => {
     ),
     false,
   );
+  assert.equal(
+    shouldPrioritizeBookingState(
+      "Sábado 17h",
+      {},
+      [{ sender_type: "ai", body: "Ponto Americano Invisível. Qual é a data preferida para o serviço?" }],
+    ),
+    true,
+  );
 });
 
 test("routes fibra russa questions to the AI provider instead of a fixed local reply", () => {
@@ -740,6 +761,85 @@ test("handleStructuredBookingFlow shows service details after service selection"
   assert.match(sentTexts.at(-1), /Valor: sem custo/);
   assert.match(sentTexts.at(-1), /1\) Sim/);
   assert.match(sentTexts.at(-1), /2\) Escolher outro servico/);
+});
+
+test("handleStructuredBookingFlow opens inventory choices for a service named in free text", async () => {
+  const sentTexts = [];
+  const savedStates = [];
+  pool.query = async (sql, params = []) => {
+    if (sql.includes("update public.whatsapp_conversations") && sql.includes("booking_state=$2")) {
+      savedStates.push(JSON.parse(params[1]));
+      return { rowCount: 1, rows: [] };
+    }
+    if (sql.includes("insert into public.whatsapp_messages")) {
+      return { rowCount: 1, rows: [{ id: "outbound-inventory" }] };
+    }
+    return { rowCount: 1, rows: [{ id: "generic-id" }] };
+  };
+  pool.connect = async () => ({
+    query: async (sql, params = []) => {
+      if (["begin", "commit", "rollback"].includes(String(sql).toLowerCase())) {
+        return { rowCount: 0, rows: [] };
+      }
+      return pool.query(sql, params);
+    },
+    release: () => {},
+  });
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).includes("/api/send-text")) {
+      sentTexts.push(JSON.parse(options.body || "{}").text || "");
+      return new Response(JSON.stringify({ success: true, messageId: "msg-inventory" }));
+    }
+    return new Response(JSON.stringify({ success: true }));
+  };
+  process.env.BAILEYS_API_URL = "https://baileys.example.test";
+  process.env.BAILEYS_API_KEY = "test-key";
+
+  const response = await handleStructuredBookingFlow({
+    normalized: { phoneNumber: "5511999999999" },
+    conversationId: "conversation-inventory",
+    inboundMessageId: "inbound-inventory",
+    text: "Ponto americano",
+    settings: { allowAutoBooking: true },
+    base: {
+      flows: [{ flow_key: "pre_agendamento", enabled: true }],
+      services: [{
+        id: "service-point",
+        name: "Ponto Americano Invisível",
+        commercial_name: "Ponto Americano Invisível",
+        description: "Aplicação em costura invisível.",
+        active: true,
+        ai_active: true,
+        allow_auto_booking: true,
+        offer_inventory_items: true,
+        category_id: "category-fibra",
+        hair_method_id: "method-aplicacao",
+        duration_minutes: 150,
+      }],
+      inventory: [{
+        id: "inventory-fib-002",
+        active: true,
+        quantity: 1,
+        category_id: "category-fibra",
+        hair_method_id: "method-aplicacao",
+        color: "Castanho Médio",
+        length_cm: "60/65/70",
+        weight_grams: 150,
+        suggested_price: 410,
+      }],
+    },
+    recorded: { conversation: { booking_state: "{}", last_message_preview: "Serviços" } },
+    queueLatencyMs: 0,
+    receivedAt: new Date(),
+    history: [],
+  });
+
+  assert.equal(response.reason, "booking_inventory_options");
+  assert.equal(savedStates.at(-1).status, "awaiting_inventory");
+  assert.match(sentTexts.at(-1), /Castanho Médio/);
+  assert.match(sentTexts.at(-1), /60\/65\/70 cm/);
+  assert.match(sentTexts.at(-1), /150 g/);
+  assert.match(sentTexts.at(-1), /410/);
 });
 
 test("handleStructuredBookingFlow does not replace WhatsApp phone with CPF", async () => {
