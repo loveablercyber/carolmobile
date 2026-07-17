@@ -114,6 +114,7 @@ type AiPanelData = {
     coupons: Array<Record<string, any>>;
     flows: Array<Record<string, any>>;
     conversations: Array<Record<string, any>>;
+    inventory: Array<Record<string, any>>;
     logs: Array<Record<string, any>>;
     requestLogs: Array<Record<string, any>>;
     metricsSummary: Record<string, any>;
@@ -997,6 +998,7 @@ function BaseKnowledgeTab({
               <ServiceSettingsCard
                 key={service.id}
                 service={service}
+                inventory={panel.base.inventory || []}
                 saving={savingServiceId === service.id}
                 disabled={!!savingServiceId}
                 onSave={saveService}
@@ -1069,16 +1071,22 @@ function serviceToForm(service: Record<string, any>): ServiceForm {
 
 function ServiceSettingsCard({
   service,
+  inventory,
   saving,
   disabled,
   onSave,
 }: {
   service: Record<string, any>;
+  inventory: Record<string, any>[];
   saving: boolean;
   disabled: boolean;
   onSave: (form: ServiceForm) => Promise<boolean>;
 }) {
   const [form, setForm] = useState<ServiceForm>(() => serviceToForm(service));
+  const matchingItems = (inventory || []).filter((item: any) => 
+    item.category_id === service.category_id && 
+    (!service.hair_method_id || item.hair_method_id === service.hair_method_id)
+  );
 
   useEffect(() => {
     setForm(serviceToForm(service));
@@ -1109,7 +1117,7 @@ function ServiceSettingsCard({
             {catalogInactive && <Badge tone="rose">catálogo inativo</Badge>}
           </div>
           <p className="mt-1 text-xs text-stone-500">
-            Catálogo: {formatMoney(service.base_price)} •{" "}
+            Catálogo: {service.offer_inventory_items ? "Sob variação de item" : formatMoney(service.base_price)} •{" "}
             {service.duration_minutes || "—"} min
           </p>
         </div>
@@ -1133,17 +1141,23 @@ function ServiceSettingsCard({
             onChange={(event) => set("commercialName", event.target.value)}
           />
         </Field>
-        <Field label="Valor inicial">
-          <input
-            className="field bg-white"
-            type="number"
-            min={0}
-            step="0.01"
-            value={form.initialPrice}
-            disabled={disabledAll}
-            onChange={(event) => set("initialPrice", event.target.value)}
-          />
-        </Field>
+        {service.offer_inventory_items ? (
+          <div className="flex items-center text-xs font-bold text-stone-500 bg-white/40 rounded-2xl px-4 py-3">
+            Preço variável conforme item do estoque
+          </div>
+        ) : (
+          <Field label="Valor inicial">
+            <input
+              className="field bg-white"
+              type="number"
+              min={0}
+              step="0.01"
+              value={form.initialPrice}
+              disabled={disabledAll}
+              onChange={(event) => set("initialPrice", event.target.value)}
+            />
+          </Field>
+        )}
         <Field label="Duração estimada em minutos">
           <input
             className="field bg-white"
@@ -1213,15 +1227,17 @@ function ServiceSettingsCard({
           disabled={disabledAll}
           onChange={(checked) => set("allowAutoBooking", checked)}
         />
-        <CheckField
-          label="Exige sinal"
-          checked={form.requiresDeposit}
-          disabled={disabledAll}
-          onChange={(checked) => set("requiresDeposit", checked)}
-        />
+        {!service.offer_inventory_items && (
+          <CheckField
+            label="Exige sinal"
+            checked={form.requiresDeposit}
+            disabled={disabledAll}
+            onChange={(checked) => set("requiresDeposit", checked)}
+          />
+        )}
       </div>
 
-      {form.requiresDeposit && (
+      {!service.offer_inventory_items && form.requiresDeposit && (
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <Field label="Tipo do sinal">
             <select
@@ -1257,6 +1273,43 @@ function ServiceSettingsCard({
           placeholder="Ex.: Ideal para quem busca mais volume com acabamento discreto."
         />
       </Field>
+
+      {service.offer_inventory_items && (
+        <div className="mt-4 rounded-2xl border border-black/5 p-4 bg-white/40 space-y-2">
+          <span className="text-[10px] font-bold text-stone-500 uppercase tracking-wider block">
+            Itens em estoque vinculados para a IA:
+          </span>
+          {matchingItems.length > 0 ? (
+            <div className="divide-y divide-black/5 max-h-40 overflow-y-auto pr-1">
+              {matchingItems.map((item: any) => (
+                <div key={item.id} className="py-1.5 flex justify-between items-center text-xs">
+                  <div>
+                    <span className="font-bold">{item.name || "Sem código"}</span>
+                    <span className="text-stone-400 mx-1">•</span>
+                    <span>{item.color} {item.shade ? `/ ${item.shade}` : ""}</span>
+                    <span className="text-stone-400 mx-1">•</span>
+                    <span>{item.length_cm ? (String(item.length_cm).toLowerCase().includes('cm') ? item.length_cm : `${item.length_cm}cm`) : "—"}</span>
+                    <span className="text-stone-400 mx-1">•</span>
+                    <span>{item.weight_grams ? `${item.weight_grams}g` : "—"}</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="font-bold block">
+                      {Number(item.suggested_price || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                    </span>
+                    <span className="text-[10px] text-stone-400">
+                      Disponível: {item.quantity} un
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-stone-400 italic">
+              Nenhum item ativo no estoque com a categoria e método deste serviço.
+            </p>
+          )}
+        </div>
+      )}
 
       {catalogInactive && (
         <p className="mt-3 rounded-xl bg-rose-50 p-3 text-xs font-semibold text-rose-700">

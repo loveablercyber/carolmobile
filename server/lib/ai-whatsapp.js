@@ -591,14 +591,19 @@ export function normalizeAiServiceSettingsInput(input = {}, service = {}) {
   if (active && service.active === false)
     throw appError("Não é possível ativar IA para um serviço inativo.");
 
-  const initialPrice = moneyOrNull(
-    input.initialPrice ?? input.initial_price,
-    moneyOrNull(service.initial_price ?? service.base_price, null),
-  );
-  const depositValue = moneyOrNull(
-    input.depositValue ?? input.deposit_value,
-    moneyOrNull(service.deposit_value ?? service.deposit_amount, 0),
-  );
+  const isOfferInventoryItems = Boolean(service.offer_inventory_items);
+  const initialPrice = isOfferInventoryItems
+    ? null
+    : moneyOrNull(
+        input.initialPrice ?? input.initial_price,
+        moneyOrNull(service.initial_price ?? service.base_price, null),
+      );
+  const depositValue = isOfferInventoryItems
+    ? 0
+    : moneyOrNull(
+        input.depositValue ?? input.deposit_value,
+        moneyOrNull(service.deposit_value ?? service.deposit_amount, 0),
+      );
   const estimatedDurationMinutes = intRange(
     input.estimatedDurationMinutes ?? input.estimated_duration_minutes,
     Number(service.estimated_duration_minutes || service.duration_minutes || 60),
@@ -639,7 +644,7 @@ export function normalizeAiServiceSettingsInput(input = {}, service = {}) {
       input.requiresAssessment ?? input.requires_assessment,
       service.requires_assessment || false,
     ),
-    requiresDeposit: bool(
+    requiresDeposit: isOfferInventoryItems ? false : bool(
       input.requiresDeposit ?? input.requires_deposit,
       service.requires_deposit || false,
     ),
@@ -1365,9 +1370,9 @@ export async function getAiCommercialBase() {
       `select * from public.knowledge_articles order by category, priority desc, title`
     ),
     query(
-      `select id,code as name,supplier,category,color,shade,length_cm,texture,weight_grams,quantity,suggested_price,status
+      `select id,code as name,supplier,category,color,shade,length_cm,texture,weight_grams,quantity,suggested_price,category_id,hair_method_id,active
        from public.hair_inventory
-       where coalesce(status,'active')='active'
+       where archived = false and active = true
        order by category, code`
     ),
     query(
