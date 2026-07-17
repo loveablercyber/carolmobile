@@ -7,6 +7,7 @@ import {
   getAiCommercialBase,
   getAiSettings,
 } from "./ai-whatsapp.js";
+import { createSumupCheckout, sumupConfig } from "./sumup.js";
 import {
   schedulePeriod,
   scheduleSlots,
@@ -135,9 +136,10 @@ async function findClientByPhone(client, phoneNumber) {
   if (!withCountry) return null;
   const local = withCountry.startsWith("55") ? withCountry.slice(2) : withCountry;
   const { rows } = await client.query(
-    `select c.id,p.full_name
+    `select c.id, p.full_name, c.cpf, p.birth_date, u.email
        from public.clients c
        join public.profiles p on p.id=c.profile_id
+       left join auth.users u on u.id=p.id
       where regexp_replace(coalesce(p.phone,''), '\\D', '', 'g') = any($1::text[])
       limit 1`,
     [[withCountry, local]],
@@ -1215,8 +1217,10 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       ],
     );
     let paymentId = null;
+    let paymentUrl = null;
     if (shouldCreatePayment) {
       await client.query("alter table public.payments add column if not exists billing_reason text").catch(() => null);
+      await client.query("alter table public.payments add column if not exists hosted_checkout_url text").catch(() => null);
       const payment = await client.query(
         `insert into public.payments(
           appointment_id,client_id,amount,original_amount,discount_amount,method,payment_method,provider,status,notes,billing_reason
@@ -1237,6 +1241,37 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
          values($1,null,'pending',$2,$3)`,
         [paymentId, bookingClient.profile_id || null, "Fatura criada automaticamente pelo WhatsApp"],
       ).catch(() => null);
+
+      try {
+        const sumup = sumupConfig();
+        if (sumup.enabled) {
+          const returnUrl = `${sumup.returnUrl}${sumup.returnUrl.includes("?") ? "&" : "?"}payment_id=${encodeURIComponent(paymentId)}`;
+          const checkout = await createSumupCheckout({
+            reference: `pay-${paymentId}`,
+            amount: paymentInfo.amount,
+            description: `Sinal - ${state.serviceName}`,
+            returnUrl,
+            customerId: bookingClient.sumup_customer_id || null,
+            hostedCheckout: true,
+          });
+          if (checkout?.hostedUrl) {
+            paymentUrl = checkout.hostedUrl;
+            await client.query(
+              `update public.payments
+                  set provider='sumup',
+                      method='card',
+                      payment_method='card',
+                      provider_checkout_id=$2,
+                      hosted_checkout_url=$3,
+                      updated_at=now()
+                where id=$1`,
+              [paymentId, checkout.id, checkout.hostedUrl],
+            );
+          }
+        }
+      } catch (sumupError) {
+        console.error("Failed to generate SumUp checkout for whatsapp booking:", sumupError.message);
+      }
     }
     await client.query(
       `insert into public.appointment_status_history(appointment_id,to_status,changed_by,note)
@@ -1271,6 +1306,8 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       status: "booked",
       appointmentId,
       bookingCode,
+      paymentId,
+      paymentUrl,
       updatedAt: new Date().toISOString(),
     };
     await client.query(
@@ -1301,6 +1338,7 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
         bookingCode,
         paymentId,
         paymentAmount: paymentInfo.amount,
+        paymentUrl,
         billingReason: paymentInfo.billingReason,
         service: service.rows[0].name,
         professional: professional.rows[0].full_name,
@@ -1322,6 +1360,7 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       startsAt: startsAt.toISOString(),
       paymentId,
       paymentAmount: paymentInfo.amount,
+      paymentUrl,
       billingReason: paymentInfo.billingReason,
       service: service.rows[0].name,
       professional: professional.rows[0].full_name,
@@ -1746,15 +1785,17 @@ function buildBookingSummary(state) {
   const valText = state.serviceIsFree ? "Gratuito" : `R$ ${Number(state.serviceValue || 0).toFixed(2)}`;
   const depositText = state.serviceRequiresDeposit ? `\n💳 Sinal: R$ ${Number(state.serviceDepositAmount || 0).toFixed(2)}` : "";
   return [
-    `*📅 Serviço: ${state.serviceName}*`,
-    `*💰 Valor: ${valText}*${depositText ? `*${depositText}*` : ""}`,
-    `*👤 Nome: ${state.clientName}*`,
-    state.clientEmail ? `*📧 E-mail: ${state.clientEmail}*` : "",
-    state.clientCpf ? `*📄 CPF: ${state.clientCpf}*` : "",
-    state.clientBirthDate ? `*📅 Nascimento: ${state.clientBirthDate}*` : "",
-    `*📱 Telefone: ${state.clientPhone}*`,
-    `*🗓️ Data/Hora: ${formatDateLabel(state.date)} às ${state.time}*`,
-    state.professionalName ? `*👩‍💼 Profissional: ${state.professionalName}*` : "",
+    `💇 *Serviço:* ${state.serviceName}`,
+    state.professionalName ? `👤 *Profissional:* ${state.professionalName}` : "",
+    `📅 *Data:* ${formatDateLabel(state.date)}`,
+    `🕒 *Horário:* ${state.time}`,
+    `💰 *Valor:* ${valText}${depositText}`,
+    "",
+    `👤 *Cliente:* ${state.clientName}`,
+    state.clientEmail ? `📧 *E-mail: ${state.clientEmail}*` : "",
+    state.clientCpf ? `📄 *CPF: ${state.clientCpf}*` : "",
+    state.clientBirthDate ? `📅 *Nascimento: ${state.clientBirthDate}*` : "",
+    `📱 *Telefone: ${state.clientPhone}*`,
   ].filter(Boolean).join("\n");
 }
 
@@ -1878,8 +1919,19 @@ export async function handleStructuredBookingFlow({
   };
   state.clientPhone = normalizeBookingPhone(state.clientPhone, normalized.phoneNumber);
   applyBookingContactFields(state, text, { allowPlainName: state.status === "awaiting_contact" });
-  if (!state.clientName && recorded.client?.full_name && !/^Cliente WhatsApp/i.test(recorded.client.full_name)) {
-    state.clientName = recorded.client.full_name;
+  if (recorded.client) {
+    if (!state.clientName && recorded.client.full_name && !/^Cliente WhatsApp/i.test(recorded.client.full_name)) {
+      state.clientName = recorded.client.full_name;
+    }
+    if (!state.clientCpf && recorded.client.cpf) {
+      state.clientCpf = recorded.client.cpf;
+    }
+    if (!state.clientEmail && recorded.client.email && !isFakeWhatsappEmail(recorded.client.email)) {
+      state.clientEmail = recorded.client.email;
+    }
+    if (!state.clientBirthDate && recorded.client.birth_date) {
+      state.clientBirthDate = recorded.client.birth_date;
+    }
   }
 
   const serviceChoice = selectBookingService(text, base, state);
@@ -2179,12 +2231,15 @@ export async function handleStructuredBookingFlow({
         });
         return { ok: true, replied: true, reason: "booking_no_slots", conversationId };
       }
-      if (preferredTime && slotOptions.length === 1) {
+      if (((preferredTime || period) && slotOptions.length > 0) || (preferredTime && slotOptions.length === 1)) {
+        const selected = preferredTime 
+          ? (slotOptions.find(s => s.time === preferredTime) || slotOptions[0])
+          : slotOptions[0];
         Object.assign(state, {
-          date: slotOptions[0].date,
-          time: slotOptions[0].time,
-          professionalId: slotOptions[0].professionalId,
-          professionalName: slotOptions[0].professionalName,
+          date: selected.date,
+          time: selected.time,
+          professionalId: selected.professionalId,
+          professionalName: selected.professionalName,
           slotOptions,
           slotPageStart: 0,
           status: "awaiting_confirmation",
@@ -2306,10 +2361,13 @@ export async function handleStructuredBookingFlow({
       `🕒 Horário: *${state.time}*`,
       appointment.professional ? `👩‍💼 Profissional: *${appointment.professional}*` : "",
       appointment.bookingCode ? `🔑 Protocolo: *${appointment.bookingCode}*` : "",
-      appointment.paymentId
-        ? `💳 Fatura: ${formatBookingCurrency(appointment.paymentAmount)} para pagamento no portal.`
-        : "",
+      appointment.paymentUrl
+        ? `💳 *Sinal:* link para pagamento enviado abaixo:`
+        : appointment.paymentId
+          ? `💳 Fatura: ${formatBookingCurrency(appointment.paymentAmount)} para pagamento no portal.`
+          : `💵 *Pagamento:* No local do atendimento.`,
       "",
+      appointment.paymentUrl ? `${appointment.paymentUrl}\n` : "",
       "✨ Em breve nossa equipe confirmará todos os detalhes com você por aqui! 💖",
       accessText ? `\n${accessText}` : "",
     ].filter(Boolean).join("\n");
