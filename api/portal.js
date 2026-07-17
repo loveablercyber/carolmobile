@@ -832,7 +832,7 @@ async function adminServices(user) {
     query(`select pr.id,p.full_name as name,pr.commission_rate,pr.active
       from public.professionals pr join public.profiles p on p.id=pr.profile_id
       order by p.full_name`),
-    query(`select id, category as name, category, color, shade, length_cm, texture, weight_grams, quantity, suggested_price, category_id, hair_method_id, active
+    query(`select id, code, category as name, category, color, shade, length_cm, texture, weight_grams, quantity, suggested_price, category_id, hair_method_id, active
       from public.hair_inventory
       where archived = false and active = true and quantity > 0`),
   ]);

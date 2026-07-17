@@ -1329,7 +1329,7 @@ export async function getAiCommercialBase() {
   }
   const [services, plans, coupons, promotions, flows, knowledgeArticles, inventory, products] = await Promise.all([
     query(
-      `select s.id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
+      `select s.id,s.category_id,s.hair_method_id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
         coalesce(s.is_free,false) as is_free,
         coalesce(s.show_online_booking,true) as show_online_booking,
         coalesce(s.offer_inventory_items,false) as offer_inventory_items,
