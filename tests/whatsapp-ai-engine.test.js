@@ -31,6 +31,7 @@ import {
   selectBookingService,
   hydrateBookingContactFromClient,
   isServiceCatalogMenuIntent,
+  buildInitialServiceCatalogOptions,
 } from "../server/lib/whatsapp-ai-engine.js";
 
 const originalQuery = pool.query;
@@ -113,6 +114,32 @@ test("recognizes requests to browse the backend service catalog", () => {
   assert.equal(isServiceCatalogMenuIntent("Quais serviços disponíveis"), true);
   assert.equal(isServiceCatalogMenuIntent("Que serviços vocês oferecem"), true);
   assert.equal(isServiceCatalogMenuIntent("Como funciona o serviço?"), false);
+});
+
+test("builds the initial catalog from active online services without requiring AI booking flags", () => {
+  const options = buildInitialServiceCatalogOptions({
+    categories: [{ id: "cat-1", name: "Mega Hair" }],
+    methods: [{ id: "method-1", name: "Ponto Americano" }],
+    services: [
+      {
+        id: "service-visible",
+        name: "Aplicacao completa",
+        active: true,
+        show_online_booking: true,
+        ai_active: false,
+        allow_auto_booking: false,
+        category_id: "cat-1",
+        hair_method_id: "method-1",
+      },
+      { id: "service-internal", name: "Servico interno", active: true, show_online_booking: false },
+      { id: "service-inactive", name: "Servico inativo", active: false, show_online_booking: true },
+    ],
+  });
+
+  assert.equal(options.length, 1);
+  assert.equal(options[0].serviceName, "Aplicacao completa");
+  assert.equal(options[0].categoryName, "Mega Hair");
+  assert.equal(options[0].methodName, "Ponto Americano");
 });
 
 test("parses dates written with a Portuguese month name", () => {
@@ -765,7 +792,7 @@ test("handleStructuredBookingFlow shows service details after service selection"
   assert.match(sentTexts.at(-1), /2\) Escolher outro servico/);
 });
 
-test("handleStructuredBookingFlow opens inventory choices for a service named in free text", async () => {
+test("handleStructuredBookingFlow shows service details before inventory choices", async () => {
   const sentTexts = [];
   const savedStates = [];
   pool.query = async (sql, params = []) => {
@@ -797,7 +824,7 @@ test("handleStructuredBookingFlow opens inventory choices for a service named in
   process.env.BAILEYS_API_URL = "https://baileys.example.test";
   process.env.BAILEYS_API_KEY = "test-key";
 
-  const response = await handleStructuredBookingFlow({
+  const request = {
     normalized: { phoneNumber: "5511999999999" },
     conversationId: "conversation-inventory",
     inboundMessageId: "inbound-inventory",
@@ -835,9 +862,30 @@ test("handleStructuredBookingFlow opens inventory choices for a service named in
     receivedAt: new Date(),
     history: [],
     forceCatalogFlow: true,
+  };
+
+  const response = await handleStructuredBookingFlow(request);
+
+  assert.equal(response.reason, "booking_service_details");
+  assert.equal(savedStates.at(-1).status, "awaiting_service_details");
+  assert.match(sentTexts.at(-1), /Ponto Americano Invis/);
+  assert.match(sentTexts.at(-1), /costura invis/);
+
+  const detailsText = sentTexts.at(-1);
+  const inventoryResponse = await handleStructuredBookingFlow({
+    ...request,
+    inboundMessageId: "inbound-inventory-confirmation",
+    text: "1",
+    recorded: {
+      conversation: {
+        booking_state: JSON.stringify(savedStates.at(-1)),
+        last_message_preview: detailsText,
+      },
+    },
+    history: [{ sender_type: "ai", body: detailsText }],
   });
 
-  assert.equal(response.reason, "booking_inventory_options");
+  assert.equal(inventoryResponse.reason, "booking_inventory_options");
   assert.equal(savedStates.at(-1).status, "awaiting_inventory");
   assert.match(sentTexts.at(-1), /Castanho Médio/);
   assert.match(sentTexts.at(-1), /60\/65\/70 cm/);
@@ -925,12 +973,39 @@ test("handleStructuredBookingFlow does not replace WhatsApp phone with CPF", asy
   assert.match(sentTexts.at(-1), /Telefone: 5511999999999/);
 });
 
-test("handleStructuredBookingFlow returns null to abort on loop/duplicate text", async () => {
+test("handleStructuredBookingFlow may repeat a structured menu without falling back to AI", async () => {
+  const sentTexts = [];
+  pool.query = async (sql) => {
+    if (sql.includes("insert into public.whatsapp_messages")) {
+      return { rowCount: 1, rows: [{ id: "outbound-repeated-menu" }] };
+    }
+    return { rowCount: 1, rows: [{ id: "generic-id" }] };
+  };
+  pool.connect = async () => ({
+    query: async (sql, params = []) => {
+      if (["begin", "commit", "rollback"].includes(String(sql).toLowerCase())) {
+        return { rowCount: 0, rows: [] };
+      }
+      return pool.query(sql, params);
+    },
+    release: () => {},
+  });
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).includes("/api/send-text")) {
+      sentTexts.push(JSON.parse(options.body || "{}").text || "");
+    }
+    return new Response(JSON.stringify({ success: true, messageId: "msg-repeated-menu" }));
+  };
+  process.env.BAILEYS_API_URL = "https://baileys.example.test";
+  process.env.BAILEYS_API_KEY = "test-key";
   const base = {
-    services: [{ id: "s1", name: "Avaliação", duration_minutes: 30, base_price: 0, active: true }]
+    services: [
+      { id: "s1", name: "Avaliacao", duration_minutes: 30, base_price: 0, active: true },
+      { id: "s2", name: "Ponto Americano", duration_minutes: 120, base_price: 410, active: true },
+    ],
   };
   const history = [
-    { sender_type: "ai", body: "Posso registrar o pré-agendamento pelo WhatsApp ✨\n\nEscolha o serviço respondendo só com o número:\n\n1) Avaliação" }
+    { sender_type: "ai", body: "Escolha o servico respondendo so com o numero:\n\n1) Avaliacao\n2) Ponto Americano" },
   ];
   const response = await handleStructuredBookingFlow({
     normalized: { phoneNumber: "5511999999999" },
@@ -944,7 +1019,9 @@ test("handleStructuredBookingFlow returns null to abort on loop/duplicate text",
     receivedAt: new Date(),
     history
   });
-  assert.equal(response, null);
+  assert.equal(response.reason, "booking_service_options");
+  assert.match(sentTexts.at(-1), /Avaliacao/);
+  assert.match(sentTexts.at(-1), /Ponto Americano/);
 });
 
 test("rejects Evolution messages.update event as non-message webhook", () => {

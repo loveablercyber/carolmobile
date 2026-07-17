@@ -90,7 +90,7 @@ test("generateGroqText rotates numbered keys between calls", async () => {
   assert.equal(new Set(authorizations).size, 2);
 });
 
-test("processIncomingWhatsAppWebhook responds with simple greeting template immediately", async () => {
+test("processIncomingWhatsAppWebhook opens the backend service catalog on greeting", async () => {
   const mockSettings = {
     id: "settings-123",
     business_id: "default",
@@ -106,6 +106,7 @@ test("processIncomingWhatsAppWebhook responds with simple greeting template imme
   };
 
   const queue = [];
+  const sentTexts = [];
 
   pool.query = async (text, params) => {
     if (text.includes("insert into public.whatsapp_incoming_queue")) {
@@ -130,8 +131,23 @@ test("processIncomingWhatsAppWebhook responds with simple greeting template imme
     if (text.includes("ai_settings") && text.includes("select")) {
       return { rowCount: 1, rows: [mockSettings] };
     }
+    if (text.includes("select s.id,s.category_id") && text.includes("from public.services s")) {
+      return {
+        rowCount: 2,
+        rows: [
+          { id: "service-1", name: "Ponto Americano", active: true, show_online_booking: true, category_id: "cat-1", hair_method_id: "method-1" },
+          { id: "service-2", name: "Avaliacao personalizada", active: true, show_online_booking: true, category_id: "cat-1", hair_method_id: "method-2", is_free: true },
+        ],
+      };
+    }
+    if (text.includes("from public.service_categories")) {
+      return { rowCount: 1, rows: [{ id: "cat-1", name: "Mega Hair" }] };
+    }
+    if (text.includes("from public.hair_methods")) {
+      return { rowCount: 2, rows: [{ id: "method-1", name: "Aplicacao", category_id: "cat-1" }, { id: "method-2", name: "Avaliacao", category_id: "cat-1" }] };
+    }
     if (text.includes("whatsapp_conversations") && text.includes("select")) {
-      return { rowCount: 1, rows: [{ id: "conv-456", status: "ai", ai_enabled: true }] };
+      return { rowCount: 1, rows: [{ id: "conv-456", status: "ai", ai_enabled: true, booking_state: JSON.stringify({ status: "booked" }) }] };
     }
     if (text.includes("whatsapp_messages") && text.includes("select") && text.includes("count")) {
       return { rowCount: 1, rows: [{ total: 0 }] };
@@ -155,6 +171,7 @@ test("processIncomingWhatsAppWebhook responds with simple greeting template imme
       return new Response(JSON.stringify({ success: true, status: "ready" }));
     }
     if (url.includes("/api/send-text")) {
+      sentTexts.push(JSON.parse(options.body || "{}").text || "");
       return new Response(JSON.stringify({ success: true, messageId: "baileys-msg-abc" }));
     }
     if (url.includes("/api/presence")) {
@@ -176,7 +193,9 @@ test("processIncomingWhatsAppWebhook responds with simple greeting template imme
   const result = await processIncomingWhatsAppWebhook(payload);
   assert.equal(result.ok, true);
   assert.equal(result.replied, true);
-  assert.equal(result.reason, "greeting_template");
+  assert.equal(result.reason, "booking_initial_service_catalog");
+  assert.match(sentTexts.at(-1), /Ponto Americano/);
+  assert.match(sentTexts.at(-1), /Avaliacao personalizada/);
 });
 
 test("processIncomingWhatsAppWebhook uses OpenAI as the only generative provider", async () => {
@@ -231,7 +250,7 @@ test("processIncomingWhatsAppWebhook uses OpenAI as the only generative provider
       return { rowCount: 1, rows: [mockSettings] };
     }
     if (text.includes("whatsapp_conversations") && text.includes("select")) {
-      return { rowCount: 1, rows: [{ id: "conv-456", status: "ai", ai_enabled: true }] };
+      return { rowCount: 1, rows: [{ id: "conv-456", status: "ai", ai_enabled: true, booking_state: JSON.stringify({ status: "booked" }) }] };
     }
     if (text.includes("whatsapp_messages") && text.includes("select") && text.includes("count")) {
       return { rowCount: 1, rows: [{ total: 0 }] };
@@ -358,7 +377,7 @@ test("processIncomingWhatsAppWebhook blocks out-of-scope questions before OpenAI
     if (text.includes("ai_settings") && text.includes("select")) return { rowCount: 1, rows: [mockSettings] };
     if (text.includes("from public.whatsapp_sessions")) return { rowCount: 1, rows: [{ id: "session-id", professional_id: null }] };
     if (text.includes("from public.whatsapp_conversations") && text.includes("where phone_number")) {
-      return { rowCount: 1, rows: [{ id: "conv-scope", status: "ai", ai_enabled: true, booking_state: {}, client_id: null }] };
+      return { rowCount: 1, rows: [{ id: "conv-scope", status: "ai", ai_enabled: true, booking_state: JSON.stringify({ status: "booked" }), client_id: null }] };
     }
     if (text.includes("select id from public.whatsapp_conversations") && text.includes("for update")) {
       return { rowCount: 1, rows: [{ id: "conv-scope" }] };
@@ -463,7 +482,7 @@ test("processIncomingWhatsAppWebhook persists a booking request before replying 
       return { rowCount: 1, rows: [mockSettings] };
     }
     if (text.includes("whatsapp_conversations") && text.includes("select")) {
-      return { rowCount: 1, rows: [{ id: "conv-456", status: "ai", ai_enabled: true }] };
+      return { rowCount: 1, rows: [{ id: "conv-456", status: "ai", ai_enabled: true, booking_state: JSON.stringify({ status: "booked" }) }] };
     }
     if (text.includes("whatsapp_messages") && text.includes("select") && text.includes("count")) {
       return { rowCount: 1, rows: [{ total: 0 }] };

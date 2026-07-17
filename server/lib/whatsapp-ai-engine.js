@@ -225,6 +225,19 @@ function bookableAiServices(base = {}) {
     .sort((a, b) => Number(a.priority_order || 100) - Number(b.priority_order || 100));
 }
 
+function structuredCatalogServices(base = {}) {
+  return (base.services || [])
+    .filter((service) => service.active !== false && service.show_online_booking !== false)
+    .sort((a, b) => {
+      const priority = Number(a.priority_order || 100) - Number(b.priority_order || 100);
+      if (priority !== 0) return priority;
+      return String(a.commercial_name || a.name || "").localeCompare(
+        String(b.commercial_name || b.name || ""),
+        "pt-BR",
+      );
+    });
+}
+
 function serviceSearchText(service) {
   return normalizeText(
     [
@@ -501,7 +514,7 @@ export function isServiceCatalogMenuIntent(text) {
 }
 
 function buildCategoryOptions(base = {}) {
-  const services = bookableAiServices(base);
+  const services = structuredCatalogServices(base);
   const categoriesMap = new Map();
   for (const s of services) {
     if (s.category_id) {
@@ -518,7 +531,7 @@ function buildCategoryOptions(base = {}) {
 }
 
 function buildMethodOptions(base = {}, categoryId) {
-  const services = bookableAiServices(base).filter(s => s.category_id === categoryId);
+  const services = structuredCatalogServices(base).filter(s => s.category_id === categoryId);
   const methodsMap = new Map();
   for (const s of services) {
     if (s.hair_method_id) {
@@ -535,11 +548,11 @@ function buildMethodOptions(base = {}, categoryId) {
 }
 
 function buildServiceOptions(base = {}, categoryId, methodId) {
-  let services = bookableAiServices(base);
+  let services = structuredCatalogServices(base);
   if (categoryId) services = services.filter(s => s.category_id === categoryId);
   if (methodId) services = services.filter(s => s.hair_method_id === methodId);
 
-  return services.slice(0, 10).map((service, index) => ({
+  return services.slice(0, 25).map((service, index) => ({
     id: index + 1,
     serviceId: service.id,
     serviceName: service.commercial_name || service.name,
@@ -549,8 +562,19 @@ function buildServiceOptions(base = {}, categoryId, methodId) {
     offerInventoryItems: service.offer_inventory_items === true,
     categoryId: service.category_id,
     methodId: service.hair_method_id,
+    categoryName: (base.categories || []).find((item) => item.id === service.category_id)?.name || "",
+    methodName: (base.methods || []).find((item) => item.id === service.hair_method_id)?.name || "",
     ...bookingServiceDetails(service),
   }));
+}
+
+export function buildInitialServiceCatalogOptions(base = {}) {
+  return buildServiceOptions(base, "", "");
+}
+
+function serviceCatalogOptionLabel(option = {}) {
+  const classification = [option.categoryName, option.methodName].filter(Boolean).join(" / ");
+  return classification ? `${option.serviceName} - ${classification}` : option.serviceName;
 }
 
 export function buildInventoryOptions(base = {}, serviceChoice) {
@@ -715,7 +739,12 @@ async function processServiceHierarchySelection(text, base, state, conversationI
     }
   }
 
-  if (state.serviceId && state.offerInventoryItems && !state.inventoryId) {
+  if (
+    state.serviceId &&
+    state.serviceDetailsAccepted &&
+    state.offerInventoryItems &&
+    !state.inventoryId
+  ) {
     const inventoryOptions = buildInventoryOptions(base, state);
     if (inventoryOptions.length > 0) {
       state.inventoryOptions = inventoryOptions;
@@ -733,6 +762,55 @@ async function processServiceHierarchySelection(text, base, state, conversationI
   }
 
   return null;
+}
+
+async function openInitialServiceCatalog({
+  normalized,
+  conversationId,
+  base,
+  recorded,
+  greetingText = "",
+}) {
+  const serviceOptions = buildInitialServiceCatalogOptions(base);
+  if (!serviceOptions.length) {
+    const responseText = [
+      greetingText,
+      "No momento não encontrei serviços ativos disponíveis no catálogo.",
+      "Vou encaminhar seu atendimento para a equipe conferir o cadastro.",
+    ].filter(Boolean).join("\n\n");
+    await performSendTextAndRecord({
+      normalized,
+      conversationId,
+      text: responseText,
+      reason: "booking_catalog_empty",
+    });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    return { ok: true, replied: true, reason: "booking_catalog_empty", conversationId };
+  }
+
+  const state = {
+    status: "awaiting_service",
+    serviceOptions,
+    clientPhone: normalized.phoneNumber,
+    updatedAt: new Date().toISOString(),
+  };
+  hydrateBookingContactFromClient(state, recorded.client);
+  await saveBookingState(conversationId, state);
+
+  const responseText = [
+    greetingText,
+    "Estes são os serviços disponíveis:",
+    optionLines(serviceOptions, serviceCatalogOptionLabel),
+    "Responda com o número do serviço para ver a apresentação, os detalhes e as opções disponíveis.",
+  ].filter(Boolean).join("\n\n");
+  await performSendTextAndRecord({
+    normalized,
+    conversationId,
+    text: responseText,
+    reason: "booking_initial_service_catalog",
+  });
+  await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+  return { ok: true, replied: true, reason: "booking_initial_service_catalog", conversationId };
 }
 
 function bookingServiceDetails(service = {}) {
@@ -2088,15 +2166,7 @@ export async function handleStructuredBookingFlow({
     !flowEnabled(base, "verificacao_agenda")
   ) return null;
 
-  const lastAiMessage = (history || []).filter(item => item.sender_type === "ai").pop();
-  const lastAiResponseText = lastAiMessage ? lastAiMessage.body : "";
-
-  const sendTextAndRecord = async ({ normalized, conversationId, text: responseText, reason }) => {
-    if (lastAiResponseText && responseText.trim() === lastAiResponseText.trim()) {
-      throw new Error("LOOP_DETECTED");
-    }
-    return performSendTextAndRecord({ normalized, conversationId, text: responseText, reason });
-  };
+  const sendTextAndRecord = performSendTextAndRecord;
 
   try {
     let currentState = parseJsonObject(recorded.conversation.booking_state);
@@ -2303,6 +2373,17 @@ export async function handleStructuredBookingFlow({
     }
     state.serviceDetailsAccepted = true;
     state.status = "collecting";
+
+    const inventoryResult = await processServiceHierarchySelection(
+      text,
+      base,
+      state,
+      conversationId,
+      normalized,
+      false,
+      "",
+    );
+    if (inventoryResult) return inventoryResult;
   }
 
   const hasDateOrTimeInText = parseBookingDateFromText(text, state) || parseFlexibleBookingTimeFromText(text).time || parseFlexibleBookingTimeFromText(text).period;
@@ -2698,9 +2779,6 @@ export async function handleStructuredBookingFlow({
     return { ok: true, replied: true, reason: "booking_create_failed", conversationId };
   }
   } catch (error) {
-    if (error.message === "LOOP_DETECTED") {
-      return null;
-    }
     throw error;
   }
 }
@@ -3639,40 +3717,30 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     timezone: settings.timezone,
     salonName: settings.salonName,
   });
-  if (localGreetingResponse) {
-    const currentBookingState = parseJsonObject(recorded.conversation.booking_state);
-    const shouldResetBooking = shouldResetBookingStateOnGreeting(concatenatedText, currentBookingState);
-    if (shouldResetBooking) await saveBookingState(conversationId, {});
+  const initialBookingState = parseJsonObject(recorded.conversation.booking_state);
+  const shouldResetBooking = Boolean(localGreetingResponse) &&
+    shouldResetBookingStateOnGreeting(concatenatedText, initialBookingState);
+  const hasPersistedBookingProgress = Boolean(
+    initialBookingState.status ||
+    initialBookingState.serviceId ||
+    initialBookingState.appointmentId ||
+    recorded.conversation.appointment_id,
+  );
+  if (shouldResetBooking) await saveBookingState(conversationId, {});
 
-    await sendTextAndRecord({
+  if (localGreetingResponse || !hasPersistedBookingProgress) {
+    const greetingText = localGreetingResponse || buildLocalGreetingResponse("oi", {
+      date: processingStartedAt,
+      timezone: settings.timezone,
+      salonName: settings.salonName,
+    });
+    return openInitialServiceCatalog({
       normalized,
       conversationId,
-      text: localGreetingResponse,
-      reason: shouldResetBooking ? "booking_state_reset_greeting" : "greeting_template",
+      base,
+      recorded,
+      greetingText,
     });
-    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
-
-    await logAiRequest({
-      conversationId,
-      messageId: inboundMessageId,
-      provider: "local_template",
-      model: "time_based_greeting",
-      status: shouldResetBooking ? "state_reset_greeting" : "success",
-      retryCount: 0,
-      fallbackUsed: false,
-      totalLatencyMs: Date.now() - receivedAt.getTime(),
-      queueLatencyMs,
-      providerLatencyMs: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-    });
-
-    return {
-      ok: true,
-      replied: true,
-      reason: shouldResetBooking ? "booking_state_reset_greeting" : "greeting_template",
-      conversationId,
-    };
   }
 
   if (!isWithinAiHours(settings)) {
