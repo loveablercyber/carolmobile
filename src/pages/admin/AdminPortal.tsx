@@ -3910,6 +3910,7 @@ export function AdminServicesPage() {
   const [parentCategoryForSub, setParentCategoryForSub] = useState<any>(null);
   const [methodForm, setMethodForm] = useState({ id: "", name: "", description: "", maintenanceDays: "", active: true, categoryId: "", parentId: "" });
   const [parentMethodForSub, setParentMethodForSub] = useState<any>(null);
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>("");
 
 
   const renderMethodNode = (met: any, level: number = 0) => {
@@ -4294,6 +4295,11 @@ export function AdminServicesPage() {
       setTimeout(() => setToast(""), 3000);
     }
   };
+
+  const filteredServices = selectedCategoryFilter
+    ? services.filter((s: any) => s.category_id === selectedCategoryFilter)
+    : services;
+
   return (
     <div>
       <Toast show={!!toast} message={toast} />
@@ -4303,6 +4309,19 @@ export function AdminServicesPage() {
         subtitle="Preços, duração e demanda registrados no Neon."
         action={
           <div className="flex items-center gap-3">
+            <select
+              value={selectedCategoryFilter}
+              onChange={(e) => setSelectedCategoryFilter(e.target.value)}
+              className="border border-black/10 rounded-xl bg-white px-3 py-2 text-xs font-medium text-stone-600 focus:outline-none focus:ring-2 focus:ring-champagne"
+              title="Filtrar por categoria"
+            >
+              <option value="">Todas as categorias</option>
+              {categories.map((cat: any) => (
+                <option key={cat.id} value={cat.id}>
+                  {cat.name}
+                </option>
+              ))}
+            </select>
             <div className="flex border border-black/10 rounded-2xl overflow-hidden bg-white">
               <button
                 type="button"
@@ -4328,10 +4347,10 @@ export function AdminServicesPage() {
           </div>
         }
       />
-      {services.length ? (
+      {filteredServices.length ? (
         viewMode === "grid" ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {services.map((x: any) => (
+            {filteredServices.map((x: any) => (
               <div key={x.id} className="surface p-6">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex flex-wrap gap-2">
@@ -4413,7 +4432,7 @@ export function AdminServicesPage() {
                 </tr>
               </thead>
               <tbody>
-                {services.map((x: any) => (
+                {filteredServices.map((x: any) => (
                   <tr key={x.id} className="border-b border-black/5 hover:bg-stone-50/40 transition">
                     <td className="p-4 max-w-xs">
                       <div className="font-display text-lg font-bold text-ink">{x.name}</div>
