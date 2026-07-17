@@ -57,6 +57,8 @@ async function ensureMarketingSchema() {
     );
     create index if not exists marketing_promotions_active_idx on public.marketing_promotions(active, archived, starts_at, ends_at);
     alter table public.service_categories add column if not exists parent_id uuid references public.service_categories(id) on delete cascade;
+    alter table public.hair_methods add column if not exists category_id uuid references public.service_categories(id) on delete cascade;
+    alter table public.hair_methods add column if not exists parent_id uuid references public.hair_methods(id) on delete cascade;
   `);
 }
 
@@ -824,7 +826,7 @@ async function adminServices(user) {
       join public.profiles p on p.id=pr.profile_id
       order by p.full_name`),
     query("select id,name,parent_id from public.service_categories order by sort_order,name"),
-    query("select id,name,active from public.hair_methods order by name"),
+    query("select id,name,active,category_id,parent_id,description,maintenance_days from public.hair_methods order by name"),
     query(`select pr.id,p.full_name as name,pr.commission_rate,pr.active
       from public.professionals pr join public.profiles p on p.id=pr.profile_id
       order by p.full_name`),
@@ -2939,6 +2941,8 @@ async function saveAdminMethod(user, body) {
   const description = clean(body.description || "");
   const maintenanceDays = body.maintenanceDays ? Number.parseInt(body.maintenanceDays, 10) : null;
   const active = body.active !== false;
+  const categoryId = body.categoryId || body.category_id ? validUuid(body.categoryId || body.category_id, "Categoria") : null;
+  const parentId = body.parentId || body.parent_id ? validUuid(body.parentId || body.parent_id, "Método Pai") : null;
 
   if (name.length < 2) throw appError("Informe o nome do método.");
 
@@ -2946,16 +2950,17 @@ async function saveAdminMethod(user, body) {
     let method;
     if (body.id) {
       const id = validUuid(body.id, "Método");
+      if (id === parentId) throw appError("Um método não pode ser pai de si mesmo.");
       const { rows } = await client.query(
-        `update public.hair_methods set name=$1, description=$2, maintenance_days=$3, active=$4 where id=$5 returning *`,
-        [name, description || null, maintenanceDays, active, id]
+        `update public.hair_methods set name=$1, description=$2, maintenance_days=$3, active=$4, category_id=$5, parent_id=$6 where id=$7 returning *`,
+        [name, description || null, maintenanceDays, active, categoryId, parentId, id]
       );
       if (!rows.length) throw appError("Método não encontrado.", 404);
       method = rows[0];
     } else {
       const { rows } = await client.query(
-        `insert into public.hair_methods(name, description, maintenance_days, active) values($1, $2, $3, $4) returning *`,
-        [name, description || null, maintenanceDays, active]
+        `insert into public.hair_methods(name, description, maintenance_days, active, category_id, parent_id) values($1, $2, $3, $4, $5, $6) returning *`,
+        [name, description || null, maintenanceDays, active, categoryId, parentId]
       );
       method = rows[0];
     }

@@ -3835,7 +3835,104 @@ export function AdminServicesPage() {
   const [manageMethodOpen, setManageMethodOpen] = useState(false);
   const [categoryForm, setCategoryForm] = useState({ id: "", name: "", sortOrder: "0", parentId: "" });
   const [parentCategoryForSub, setParentCategoryForSub] = useState<any>(null);
-  const [methodForm, setMethodForm] = useState({ id: "", name: "", description: "", maintenanceDays: "", active: true });
+  const [methodForm, setMethodForm] = useState({ id: "", name: "", description: "", maintenanceDays: "", active: true, categoryId: "", parentId: "" });
+  const [parentMethodForSub, setParentMethodForSub] = useState<any>(null);
+
+  const buildMethodTreeOptions = (methodsList: any[]) => {
+    const roots = methodsList.filter(m => !m.parent_id);
+    const result: { id: string, name: string, level: number }[] = [];
+    
+    const traverse = (node: any, level: number) => {
+      result.push({ id: node.id, name: node.name, level });
+      const children = methodsList.filter(m => m.parent_id === node.id);
+      for (const child of children) {
+        traverse(child, level + 1);
+      }
+    };
+
+    for (const root of roots) {
+      traverse(root, 0);
+    }
+
+    for (const met of methodsList) {
+      if (met.parent_id && !result.some(r => r.id === met.id)) {
+        traverse(met, 0);
+      }
+    }
+    
+    return result;
+  };
+
+  const renderMethodNode = (met: any, level: number = 0) => {
+    const children = methods.filter((m: any) => m.parent_id === met.id);
+    const cat = categories.find((c: any) => c.id === met.category_id);
+    return (
+      <div key={met.id} className="space-y-1">
+        <div className="flex items-center justify-between py-1.5 px-2 hover:bg-black/5 rounded transition text-xs">
+          <div className="flex items-center gap-2 flex-wrap" style={{ paddingLeft: `${level * 16}px` }}>
+            {level > 0 && <span className="text-stone-400">↳</span>}
+            <span className="font-semibold text-ink">{met.name}</span>
+            {!met.active && <span className="scale-75 inline-block"><Badge tone="neutral">Inativo</Badge></span>}
+            {cat && (
+              <span className="text-[10px] bg-champagne/10 text-champagne px-1.5 py-0.5 rounded font-bold">
+                {cat.name}
+              </span>
+            )}
+          </div>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                setMethodForm({
+                  id: "",
+                  name: "",
+                  description: "",
+                  maintenanceDays: "",
+                  active: true,
+                  categoryId: met.category_id || "",
+                  parentId: met.id
+                });
+                setParentMethodForSub(met);
+              }}
+              className="rounded-full p-1 text-stone-500 hover:bg-black/10 hover:text-champagne transition"
+              title="Adicionar Sub-método"
+            >
+              <Plus size={13} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setMethodForm({
+                id: met.id,
+                name: met.name,
+                description: met.description || "",
+                maintenanceDays: met.maintenance_days ? String(met.maintenance_days) : "",
+                active: met.active !== false,
+                categoryId: met.category_id || "",
+                parentId: met.parent_id || ""
+              })}
+              className="rounded-full p-1 text-stone-500 hover:bg-black/10 hover:text-champagne transition"
+              title="Editar"
+            >
+              <Pencil size={13} />
+            </button>
+            <button
+              type="button"
+              onClick={() => deleteMethod(met)}
+              className="rounded-full p-1 text-rose-600 hover:bg-rose-50 transition"
+              title="Excluir"
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        </div>
+        {children.length > 0 && (
+          <div className="space-y-1">
+            {children.map((child: any) => renderMethodNode(child, level + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const buildCategoryTreeOptions = (categoriesList: any[]) => {
     const roots = categoriesList.filter(c => !c.parent_id);
@@ -3883,6 +3980,18 @@ export function AdminServicesPage() {
               title="Adicionar Subcategoria"
             >
               <Plus size={13} />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setManageCategoryOpen(false);
+                setManageMethodOpen(true);
+                setMethodForm({ id: "", name: "", description: "", maintenanceDays: "", active: true, categoryId: cat.id, parentId: "" });
+              }}
+              className="rounded-full p-1 text-stone-500 hover:bg-black/10 hover:text-champagne transition"
+              title="Adicionar Método"
+            >
+              <Boxes size={13} />
             </button>
             <button
               type="button"
@@ -3968,10 +4077,13 @@ export function AdminServicesPage() {
           description: methodForm.description,
           maintenanceDays: methodForm.maintenanceDays ? Number(methodForm.maintenanceDays) : null,
           active: methodForm.active,
+          categoryId: methodForm.categoryId || undefined,
+          parentId: parentMethodForSub?.id || methodForm.parentId || undefined,
         }),
       });
       await p.reload();
-      setMethodForm({ id: "", name: "", description: "", maintenanceDays: "", active: true });
+      setMethodForm({ id: "", name: "", description: "", maintenanceDays: "", active: true, categoryId: "", parentId: "" });
+      setParentMethodForSub(null);
       setToast("Método salvo.");
     } catch (err) {
       console.error(err);
@@ -4631,7 +4743,11 @@ export function AdminServicesPage() {
 
       <Modal
         open={manageMethodOpen}
-        onClose={() => setManageMethodOpen(false)}
+        onClose={() => {
+          setManageMethodOpen(false);
+          setMethodForm({ id: "", name: "", description: "", maintenanceDays: "", active: true, categoryId: "", parentId: "" });
+          setParentMethodForSub(null);
+        }}
         title="Gerenciar Métodos"
       >
         <div className="space-y-6">
@@ -4639,11 +4755,41 @@ export function AdminServicesPage() {
             <h3 className="text-xs font-bold uppercase tracking-wider text-stone-500">
               {methodForm.id ? "Editar Método" : "Novo Método"}
             </h3>
+            {parentMethodForSub && (
+              <div className="flex items-center justify-between text-[11px] bg-champagne/15 text-champagne p-2.5 rounded-xl font-bold">
+                <span>Sub-método de: <b className="text-ink">{parentMethodForSub.name}</b></span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMethodForm({ ...methodForm, parentId: "" });
+                    setParentMethodForSub(null);
+                  }}
+                  className="underline text-[10px] text-stone-500 hover:text-ink transition"
+                >
+                  Remover
+                </button>
+              </div>
+            )}
             <Input
               label="Nome do Método"
               value={methodForm.name}
               set={(v) => setMethodForm({ ...methodForm, name: v })}
             />
+            <div className="block">
+              <span className="mb-2 block text-xs font-bold">Vincular à Categoria</span>
+              <select
+                className="field text-xs"
+                value={methodForm.categoryId || ""}
+                onChange={(e) => setMethodForm({ ...methodForm, categoryId: e.target.value })}
+              >
+                <option value="">Sem Categoria (Geral)</option>
+                {buildCategoryTreeOptions(categories).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {"\u00A0\u00A0".repeat(c.level) + (c.level > 0 ? "↳ " : "") + c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <label className="block">
               <span className="mb-2 block text-xs font-bold">Descrição</span>
               <textarea
@@ -4673,10 +4819,13 @@ export function AdminServicesPage() {
               >
                 {saving ? "Salvando..." : "Salvar"}
               </button>
-              {methodForm.id && (
+              {(methodForm.id || parentMethodForSub || methodForm.categoryId) && (
                 <button
                   type="button"
-                  onClick={() => setMethodForm({ id: "", name: "", description: "", maintenanceDays: "", active: true })}
+                  onClick={() => {
+                    setMethodForm({ id: "", name: "", description: "", maintenanceDays: "", active: true, categoryId: "", parentId: "" });
+                    setParentMethodForSub(null);
+                  }}
                   className="btn-secondary text-xs"
                 >
                   Cancelar
@@ -4688,37 +4837,13 @@ export function AdminServicesPage() {
           <div className="space-y-2">
             <h3 className="text-xs font-bold uppercase tracking-wider text-stone-500">Métodos Cadastrados</h3>
             {methods.length ? (
-              <div className="divide-y divide-black/5 max-h-60 overflow-y-auto pr-1">
-                {methods.map((met: any) => (
-                  <div key={met.id} className="flex items-center justify-between py-2 text-xs">
-                    <div>
-                      <span className="font-semibold text-ink">{met.name}</span>
-                      {!met.active && <span className="ml-2 scale-75 inline-block"><Badge tone="neutral">Inativo</Badge></span>}
-                    </div>
-                    <div className="flex gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setMethodForm({
-                          id: met.id,
-                          name: met.name,
-                          description: met.description || "",
-                          maintenanceDays: met.maintenance_days ? String(met.maintenance_days) : "",
-                          active: met.active !== false
-                        })}
-                        className="rounded-full p-1 text-stone-500 hover:bg-black/5 hover:text-champagne transition"
-                      >
-                        <Pencil size={13} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deleteMethod(met)}
-                        className="rounded-full p-1 text-rose-600 hover:bg-rose-50 transition"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+              <div className="divide-y divide-black/5 max-h-80 overflow-y-auto pr-1">
+                {(() => {
+                  const rootMethods = methods.filter((m: any) => !m.parent_id);
+                  const orphanMethods = methods.filter((m: any) => m.parent_id && !methods.some((p: any) => p.id === m.parent_id));
+                  const topLevel = [...rootMethods, ...orphanMethods];
+                  return topLevel.map((met: any) => renderMethodNode(met, 0));
+                })()}
               </div>
             ) : (
               <p className="text-xs text-stone-400 italic">Nenhum método cadastrado.</p>
