@@ -415,7 +415,7 @@ async function getResource(req, res, user, resource) {
          order by category,color`,
       ),
       query("select id, name, parent_id from public.service_categories order by sort_order, name"),
-      query("select id, name, parent_id from public.hair_methods order by name"),
+      query("select id, name, parent_id, category_id from public.hair_methods order by name"),
       query("select id, name from public.hair_colors order by name"),
     ]);
 
