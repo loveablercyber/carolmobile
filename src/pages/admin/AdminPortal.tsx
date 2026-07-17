@@ -4885,7 +4885,7 @@ export function AdminServicesPage() {
 }
 
 export function AdminInventoryPage() {
-  const p = useLoad<{ inventory: any[], categories?: any[], methods?: any[] }>("/api/data?resource=inventory");
+  const p = useLoad<{ inventory: any[], categories?: any[], methods?: any[], colors?: any[] }>("/api/data?resource=inventory");
   const [open, setOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
 
@@ -4912,13 +4912,62 @@ export function AdminInventoryPage() {
     suggestedPrice: "",
     quantity: "",
     minimumStock: "",
+    weightGrams: "",
+    active: true,
   });
   const [toast, setToast] = useState("");
+
+  const [manageColorOpen, setManageColorOpen] = useState(false);
+  const [colorForm, setColorForm] = useState({ id: "", name: "" });
+  const [savingColor, setSavingColor] = useState(false);
+
+  const saveColor = async (e: FormEvent) => {
+    e.preventDefault();
+    setSavingColor(true);
+    try {
+      await apiFetch("/api/data?resource=admin-color", {
+        method: "POST",
+        body: JSON.stringify({
+          id: colorForm.id || undefined,
+          name: colorForm.name
+        }),
+      });
+      await p.reload();
+      setColorForm({ id: "", name: "" });
+      setToast("Cor salva com sucesso.");
+    } catch (err) {
+      console.error(err);
+      setToast("Erro ao salvar cor.");
+    } finally {
+      setSavingColor(false);
+      setTimeout(() => setToast(""), 2200);
+    }
+  };
+
+  const deleteColor = async (c: any) => {
+    if (!window.confirm(`Excluir cor "${c.name}"?`)) return;
+    setSavingColor(true);
+    try {
+      await apiFetch("/api/data?resource=admin-color", {
+        method: "DELETE",
+        body: JSON.stringify({ id: c.id }),
+      });
+      await p.reload();
+      setToast("Cor excluída.");
+    } catch (err) {
+      console.error(err);
+      setToast(err instanceof Error ? err.message : "Erro ao excluir cor.");
+    } finally {
+      setSavingColor(false);
+      setTimeout(() => setToast(""), 2200);
+    }
+  };
 
   if (p.loading) return <LoadingState />;
   const list = p.data?.inventory || [];
   const categories = p.data?.categories || [];
   const methods = p.data?.methods || [];
+  const colors = p.data?.colors || [];
   const total = list.reduce(
     (s, x) => s + Number(x.unit_cost || 0) * Number(x.qty || 0),
     0,
@@ -4942,6 +4991,8 @@ export function AdminInventoryPage() {
       suggestedPrice: "",
       quantity: "",
       minimumStock: "",
+      weightGrams: "",
+      active: true,
     });
     setOpen(true);
   };
@@ -4963,6 +5014,8 @@ export function AdminInventoryPage() {
       suggestedPrice: String(item.suggested_price || 0),
       quantity: String(item.qty || 0),
       minimumStock: String(item.min || 0),
+      weightGrams: item.weight_grams ? String(item.weight_grams) : "",
+      active: item.active !== false,
     });
     setOpen(true);
   };
@@ -5018,10 +5071,12 @@ export function AdminInventoryPage() {
           id: editingItem?.id || undefined,
           ...form,
           lengthCm: Number(form.lengthCm) || null,
+          weightGrams: Number(form.weightGrams) || null,
           unitCost: Number(form.unitCost),
           suggestedPrice: Number(form.suggestedPrice),
           quantity: Number(form.quantity),
           minimumStock: Number(form.minimumStock),
+          active: form.active,
         }),
       });
       await p.reload();
@@ -5113,6 +5168,11 @@ export function AdminInventoryPage() {
             >
               <span className="text-xs">
                 {x.code}
+                {x.active === false && (
+                  <span className="ml-1.5 scale-75 inline-block align-middle">
+                    <Badge tone="neutral">Inativo</Badge>
+                  </span>
+                )}
                 <small className="block text-stone-400">{x.lot}</small>
               </span>
               <b className="text-xs">
@@ -5228,16 +5288,41 @@ export function AdminInventoryPage() {
               ))}
             </select>
           </div>
-          <Input
-            label="Cor"
-            value={form.color}
-            set={(v) => setForm({ ...form, color: v })}
-          />
+          <div className="col-span-2 block">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-xs font-bold text-stone-500">Cor</span>
+              <button
+                type="button"
+                onClick={() => setManageColorOpen(true)}
+                className="text-[10px] text-champagne font-bold uppercase tracking-wider hover:underline"
+              >
+                Gerenciar Cores
+              </button>
+            </div>
+            <select
+              className="field text-xs"
+              value={form.color}
+              onChange={(e) => setForm({ ...form, color: e.target.value })}
+            >
+              <option value="">Selecione uma cor</option>
+              {colors.map((c: any) => (
+                <option key={c.id} value={c.name}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <Input
             label="Comprimento (cm)"
             type="number"
             value={form.lengthCm}
             set={(v) => setForm({ ...form, lengthCm: v })}
+          />
+          <Input
+            label="Peso (g)"
+            type="number"
+            value={form.weightGrams}
+            set={(v) => setForm({ ...form, weightGrams: v })}
           />
           <Input
             label="Lote"
@@ -5268,8 +5353,86 @@ export function AdminInventoryPage() {
             value={form.minimumStock}
             set={(v) => setForm({ ...form, minimumStock: v })}
           />
+          <label className="flex items-center gap-2 text-xs font-semibold py-1 col-span-2">
+            <input
+              type="checkbox"
+              checked={form.active}
+              onChange={(e) => setForm({ ...form, active: e.target.checked })}
+            />
+            Item ativo (disponível para serviços e venda)
+          </label>
           <button className="btn-primary col-span-2 mt-2">Salvar item</button>
         </form>
+      </Modal>
+
+      <Modal
+        open={manageColorOpen}
+        onClose={() => {
+          setManageColorOpen(false);
+          setColorForm({ id: "", name: "" });
+        }}
+        title="Gerenciar Cores"
+      >
+        <div className="space-y-6">
+          <form onSubmit={saveColor} className="space-y-3 rounded-2xl bg-warm p-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-stone-500">
+              {colorForm.id ? "Editar Cor" : "Nova Cor"}
+            </h3>
+            <Input
+              label="Nome da Cor"
+              value={colorForm.name}
+              set={(v) => setColorForm({ ...colorForm, name: v })}
+            />
+            <div className="flex gap-2">
+              <button
+                disabled={savingColor || !colorForm.name.trim()}
+                className="btn-primary flex-1 text-xs"
+              >
+                {savingColor ? "Salvando..." : "Salvar"}
+              </button>
+              {colorForm.id && (
+                <button
+                  type="button"
+                  onClick={() => setColorForm({ id: "", name: "" })}
+                  className="btn-secondary text-xs"
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
+          </form>
+
+          <div className="space-y-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-stone-500">Cores Cadastradas</h3>
+            {colors.length ? (
+              <div className="divide-y divide-black/5 max-h-60 overflow-y-auto pr-1">
+                {colors.map((c: any) => (
+                  <div key={c.id} className="flex items-center justify-between py-2 text-xs">
+                    <span className="font-semibold text-ink">{c.name}</span>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setColorForm({ id: c.id, name: c.name })}
+                        className="rounded-full p-1 text-stone-500 hover:bg-black/5 hover:text-champagne transition"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteColor(c)}
+                        className="rounded-full p-1 text-rose-600 hover:bg-rose-50 transition"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-stone-400 italic">Nenhuma cor cadastrada.</p>
+            )}
+          </div>
+        </div>
       </Modal>
 
       <Modal open={movementModalOpen} onClose={() => setMovementModalOpen(false)} title="Lançar movimentação">

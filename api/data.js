@@ -384,19 +384,39 @@ async function getResource(req, res, user, resource) {
     await query("alter table public.hair_inventory add column if not exists archived boolean default false");
     await query("alter table public.hair_inventory add column if not exists category_id uuid references public.service_categories(id) on delete set null");
     await query("alter table public.hair_inventory add column if not exists hair_method_id uuid references public.hair_methods(id) on delete set null");
+    await query("alter table public.hair_inventory add column if not exists active boolean default true");
 
-    const [invRes, catRes, metRes] = await Promise.all([
+    await query(`
+      create table if not exists public.hair_colors (
+        id uuid primary key default uuid_generate_v4(),
+        name text unique not null,
+        created_at timestamptz default now()
+      );
+    `);
+    const countRes = await query("select count(*) from public.hair_colors");
+    if (parseInt(countRes.rows[0].count, 10) === 0) {
+      await query(`
+        insert into public.hair_colors (name) values
+        ('Preto'), ('Castanho Escuro'), ('Castanho Médio'), ('Castanho Claro'),
+        ('Loiro Escuro'), ('Loiro Médio'), ('Loiro Claro'), ('Loiro Claríssimo'),
+        ('Ruivo'), ('Platinado')
+        on conflict do nothing;
+      `);
+    }
+
+    const [invRes, catRes, metRes, colRes] = await Promise.all([
       query(
         `select id, code, supplier, category as item, category, color, shade, length_cm, texture, weight_grams, lot,
                 quantity as qty, minimum_stock as min, unit_cost, suggested_price,
                 case when quantity<=minimum_stock then 'Estoque baixo' else 'Em estoque' end as status,
-                archived, category_id, hair_method_id
+                archived, category_id, hair_method_id, active
          from public.hair_inventory
          where archived = false
          order by category,color`,
       ),
       query("select id, name, parent_id from public.service_categories order by sort_order, name"),
       query("select id, name, parent_id from public.hair_methods order by name"),
+      query("select id, name from public.hair_colors order by name"),
     ]);
 
     return send(res, 200, {
@@ -413,6 +433,7 @@ async function getResource(req, res, user, resource) {
       })),
       categories: catRes.rows,
       methods: metRes.rows,
+      colors: colRes.rows,
     });
   }
 
@@ -1453,13 +1474,15 @@ async function saveInventory(req, res, user, body) {
   await query("alter table public.hair_inventory add column if not exists archived boolean default false");
   await query("alter table public.hair_inventory add column if not exists category_id uuid references public.service_categories(id) on delete set null");
   await query("alter table public.hair_inventory add column if not exists hair_method_id uuid references public.hair_methods(id) on delete set null");
+  await query("alter table public.hair_inventory add column if not exists active boolean default true");
 
   if (body.id) {
     const { rows } = await query(
       `update public.hair_inventory
        set code=$1, supplier=$2, category=$3, color=$4, shade=$5, length_cm=$6, texture=$7, weight_grams=$8, lot=$9,
-           unit_cost=$10, suggested_price=$11, minimum_stock=$12, archived=$13, category_id=$14, hair_method_id=$15
-       where id=$16 returning *`,
+           unit_cost=$10, suggested_price=$11, minimum_stock=$12, archived=$13, category_id=$14, hair_method_id=$15,
+           active=$16
+       where id=$17 returning *`,
       [
         body.code,
         body.supplier,
@@ -1476,6 +1499,7 @@ async function saveInventory(req, res, user, body) {
         body.archived === true,
         body.categoryId || null,
         body.hairMethodId || null,
+        body.active !== false,
         body.id
       ]
     );
@@ -1498,7 +1522,7 @@ async function saveInventory(req, res, user, body) {
     return send(res, 200, { item: rows[0] });
   } else {
     const { rows } = await query(
-      `insert into public.hair_inventory(code,supplier,category,color,shade,length_cm,texture,weight_grams,lot,unit_cost,suggested_price,quantity,minimum_stock,category_id,hair_method_id) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) returning *`,
+      `insert into public.hair_inventory(code,supplier,category,color,shade,length_cm,texture,weight_grams,lot,unit_cost,suggested_price,quantity,minimum_stock,category_id,hair_method_id,active) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) returning *`,
       [
         body.code,
         body.supplier,
@@ -1515,6 +1539,7 @@ async function saveInventory(req, res, user, body) {
         body.minimumStock || 0,
         body.categoryId || null,
         body.hairMethodId || null,
+        body.active !== false,
       ],
     );
     if (Number(body.quantity) > 0) {
@@ -1918,7 +1943,32 @@ export default async function handler(req, res) {
       return await updateAppointmentV2(req, res, user, body);
     if (req.method === "PATCH" && resource === "reschedule-requests")
       return await respondReschedule(res, user, body);
-    return methodNotAllowed(res, ["GET", "POST", "PATCH"]);
+    if (req.method === "POST" && resource === "admin-color") {
+      await requireUser(req, ["admin"]);
+      const name = clean(body.name);
+      if (!name) throw appError("Nome da cor é obrigatório.");
+      if (body.id) {
+        const { rows } = await query(
+          "update public.hair_colors set name=$1 where id=$2 returning *",
+          [name, body.id]
+        );
+        return send(res, 200, { color: rows[0] });
+      } else {
+        const { rows } = await query(
+          "insert into public.hair_colors(name) values($1) on conflict (name) do update set name=excluded.name returning *",
+          [name]
+        );
+        return send(res, 201, { color: rows[0] });
+      }
+    }
+    if (req.method === "DELETE" && resource === "admin-color") {
+      await requireUser(req, ["admin"]);
+      const id = body.id;
+      if (!id) throw appError("ID é obrigatório.");
+      await query("delete from public.hair_colors where id=$1", [id]);
+      return send(res, 200, { success: true });
+    }
+    return methodNotAllowed(res, ["GET", "POST", "PATCH", "DELETE"]);
   } catch (error) {
     return handleError(res, error);
   }
