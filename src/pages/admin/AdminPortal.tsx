@@ -3833,8 +3833,83 @@ export function AdminServicesPage() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [manageCategoryOpen, setManageCategoryOpen] = useState(false);
   const [manageMethodOpen, setManageMethodOpen] = useState(false);
-  const [categoryForm, setCategoryForm] = useState({ id: "", name: "", sortOrder: "0" });
+  const [categoryForm, setCategoryForm] = useState({ id: "", name: "", sortOrder: "0", parentId: "" });
+  const [parentCategoryForSub, setParentCategoryForSub] = useState<any>(null);
   const [methodForm, setMethodForm] = useState({ id: "", name: "", description: "", maintenanceDays: "", active: true });
+
+  const buildCategoryTreeOptions = (categoriesList: any[]) => {
+    const roots = categoriesList.filter(c => !c.parent_id);
+    const result: { id: string, name: string, level: number }[] = [];
+    
+    const traverse = (node: any, level: number) => {
+      result.push({ id: node.id, name: node.name, level });
+      const children = categoriesList.filter(c => c.parent_id === node.id);
+      for (const child of children) {
+        traverse(child, level + 1);
+      }
+    };
+
+    for (const root of roots) {
+      traverse(root, 0);
+    }
+
+    for (const cat of categoriesList) {
+      if (cat.parent_id && !result.some(r => r.id === cat.id)) {
+        traverse(cat, 0);
+      }
+    }
+    
+    return result;
+  };
+
+  const renderCategoryNode = (cat: any, level: number = 0) => {
+    const children = categories.filter((c: any) => c.parent_id === cat.id);
+    return (
+      <div key={cat.id} className="space-y-1">
+        <div className="flex items-center justify-between py-1.5 px-2 hover:bg-black/5 rounded transition text-xs">
+          <div className="flex items-center gap-2" style={{ paddingLeft: `${level * 16}px` }}>
+            {level > 0 && <span className="text-stone-400">↳</span>}
+            <span className="font-semibold text-ink">{cat.name}</span>
+            <span className="text-[10px] text-stone-450">(Ordem: {cat.sort_order || 0})</span>
+          </div>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                setCategoryForm({ id: "", name: "", sortOrder: "0", parentId: cat.id });
+                setParentCategoryForSub(cat);
+              }}
+              className="rounded-full p-1 text-stone-500 hover:bg-black/10 hover:text-champagne transition"
+              title="Adicionar Subcategoria"
+            >
+              <Plus size={13} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setCategoryForm({ id: cat.id, name: cat.name, sortOrder: String(cat.sort_order || 0), parentId: cat.parent_id || "" })}
+              className="rounded-full p-1 text-stone-500 hover:bg-black/10 hover:text-champagne transition"
+              title="Editar"
+            >
+              <Pencil size={13} />
+            </button>
+            <button
+              type="button"
+              onClick={() => deleteCategory(cat)}
+              className="rounded-full p-1 text-rose-600 hover:bg-rose-50 transition"
+              title="Excluir"
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        </div>
+        {children.length > 0 && (
+          <div className="space-y-1">
+            {children.map((child: any) => renderCategoryNode(child, level + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const saveCategory = async (e: FormEvent) => {
     e.preventDefault();
@@ -3846,10 +3921,12 @@ export function AdminServicesPage() {
           id: categoryForm.id || undefined,
           name: categoryForm.name,
           sortOrder: Number(categoryForm.sortOrder),
+          parentId: parentCategoryForSub?.id || categoryForm.parentId || undefined,
         }),
       });
       await p.reload();
-      setCategoryForm({ id: "", name: "", sortOrder: "0" });
+      setCategoryForm({ id: "", name: "", sortOrder: "0", parentId: "" });
+      setParentCategoryForSub(null);
       setToast("Categoria salva.");
     } catch (err) {
       console.error(err);
@@ -4347,9 +4424,9 @@ export function AdminServicesPage() {
                 }
               >
                 <option value="">Sem categoria</option>
-                {categories.map((category: any) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
+                {buildCategoryTreeOptions(categories).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {"\u00A0\u00A0".repeat(c.level) + (c.level > 0 ? "↳ " : "") + c.name}
                   </option>
                 ))}
               </select>
@@ -4474,7 +4551,11 @@ export function AdminServicesPage() {
 
       <Modal
         open={manageCategoryOpen}
-        onClose={() => setManageCategoryOpen(false)}
+        onClose={() => {
+          setManageCategoryOpen(false);
+          setCategoryForm({ id: "", name: "", sortOrder: "0", parentId: "" });
+          setParentCategoryForSub(null);
+        }}
         title="Gerenciar Categorias"
       >
         <div className="space-y-6">
@@ -4482,6 +4563,21 @@ export function AdminServicesPage() {
             <h3 className="text-xs font-bold uppercase tracking-wider text-stone-500">
               {categoryForm.id ? "Editar Categoria" : "Nova Categoria"}
             </h3>
+            {parentCategoryForSub && (
+              <div className="flex items-center justify-between text-[11px] bg-champagne/15 text-champagne p-2.5 rounded-xl font-bold">
+                <span>Subcategoria de: <b className="text-ink">{parentCategoryForSub.name}</b></span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCategoryForm({ ...categoryForm, parentId: "" });
+                    setParentCategoryForSub(null);
+                  }}
+                  className="underline text-[10px] text-stone-500 hover:text-ink transition"
+                >
+                  Remover
+                </button>
+              </div>
+            )}
             <Input
               label="Nome da Categoria"
               value={categoryForm.name}
@@ -4500,10 +4596,13 @@ export function AdminServicesPage() {
               >
                 {saving ? "Salvando..." : "Salvar"}
               </button>
-              {categoryForm.id && (
+              {(categoryForm.id || parentCategoryForSub) && (
                 <button
                   type="button"
-                  onClick={() => setCategoryForm({ id: "", name: "", sortOrder: "0" })}
+                  onClick={() => {
+                    setCategoryForm({ id: "", name: "", sortOrder: "0", parentId: "" });
+                    setParentCategoryForSub(null);
+                  }}
                   className="btn-secondary text-xs"
                 >
                   Cancelar
@@ -4515,31 +4614,13 @@ export function AdminServicesPage() {
           <div className="space-y-2">
             <h3 className="text-xs font-bold uppercase tracking-wider text-stone-500">Categorias Cadastradas</h3>
             {categories.length ? (
-              <div className="divide-y divide-black/5 max-h-60 overflow-y-auto pr-1">
-                {categories.map((cat: any) => (
-                  <div key={cat.id} className="flex items-center justify-between py-2 text-xs">
-                    <div>
-                      <span className="font-semibold text-ink">{cat.name}</span>
-                      <span className="text-[10px] text-stone-400 ml-2">(Ordem: {cat.sort_order || 0})</span>
-                    </div>
-                    <div className="flex gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setCategoryForm({ id: cat.id, name: cat.name, sortOrder: String(cat.sort_order || 0) })}
-                        className="rounded-full p-1 text-stone-500 hover:bg-black/5 hover:text-champagne transition"
-                      >
-                        <Pencil size={13} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deleteCategory(cat)}
-                        className="rounded-full p-1 text-rose-600 hover:bg-rose-50 transition"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+              <div className="divide-y divide-black/5 max-h-80 overflow-y-auto pr-1">
+                {(() => {
+                  const rootCategories = categories.filter((cat: any) => !cat.parent_id);
+                  const orphanCategories = categories.filter((cat: any) => cat.parent_id && !categories.some((p: any) => p.id === cat.parent_id));
+                  const topLevel = [...rootCategories, ...orphanCategories];
+                  return topLevel.map((cat: any) => renderCategoryNode(cat, 0));
+                })()}
               </div>
             ) : (
               <p className="text-xs text-stone-400 italic">Nenhuma categoria cadastrada.</p>

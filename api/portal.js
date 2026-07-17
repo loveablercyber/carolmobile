@@ -56,6 +56,7 @@ async function ensureMarketingSchema() {
       updated_at timestamptz not null default now()
     );
     create index if not exists marketing_promotions_active_idx on public.marketing_promotions(active, archived, starts_at, ends_at);
+    alter table public.service_categories add column if not exists parent_id uuid references public.service_categories(id) on delete cascade;
   `);
 }
 
@@ -822,7 +823,7 @@ async function adminServices(user) {
       join public.professionals pr on pr.id=ps.professional_id
       join public.profiles p on p.id=pr.profile_id
       order by p.full_name`),
-    query("select id,name from public.service_categories order by sort_order,name"),
+    query("select id,name,parent_id from public.service_categories order by sort_order,name"),
     query("select id,name,active from public.hair_methods order by name"),
     query(`select pr.id,p.full_name as name,pr.commission_rate,pr.active
       from public.professionals pr join public.profiles p on p.id=pr.profile_id
@@ -2888,22 +2889,24 @@ async function saveAdminCategory(user, body) {
   requireRole(user, ["admin"]);
   const name = clean(body.name);
   const sortOrder = Number.parseInt(body.sortOrder ?? body.sort_order ?? 0, 10);
+  const parentId = body.parentId || body.parent_id ? validUuid(body.parentId || body.parent_id, "Categoria Pai") : null;
   if (name.length < 2) throw appError("Informe o nome da categoria.");
 
   const result = await transaction(async (client) => {
     let category;
     if (body.id) {
       const id = validUuid(body.id, "Categoria");
+      if (id === parentId) throw appError("Uma categoria não pode ser pai de si mesma.");
       const { rows } = await client.query(
-        `update public.service_categories set name=$1, sort_order=$2 where id=$3 returning *`,
-        [name, sortOrder, id]
+        `update public.service_categories set name=$1, sort_order=$2, parent_id=$3 where id=$4 returning *`,
+        [name, sortOrder, parentId, id]
       );
       if (!rows.length) throw appError("Categoria não encontrada.", 404);
       category = rows[0];
     } else {
       const { rows } = await client.query(
-        `insert into public.service_categories(name, sort_order) values($1, $2) returning *`,
-        [name, sortOrder]
+        `insert into public.service_categories(name, sort_order, parent_id) values($1, $2, $3) returning *`,
+        [name, sortOrder, parentId]
       );
       category = rows[0];
     }
