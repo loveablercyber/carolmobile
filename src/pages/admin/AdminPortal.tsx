@@ -3910,6 +3910,7 @@ export function AdminServicesPage() {
   const [parentCategoryForSub, setParentCategoryForSub] = useState<any>(null);
   const [methodForm, setMethodForm] = useState({ id: "", name: "", description: "", maintenanceDays: "", active: true, categoryId: "", parentId: "" });
   const [parentMethodForSub, setParentMethodForSub] = useState<any>(null);
+  const [filterCategoryId, setFilterCategoryId] = useState("");
 
 
   const renderMethodNode = (met: any, level: number = 0) => {
@@ -4328,10 +4329,39 @@ export function AdminServicesPage() {
           </div>
         }
       />
-      {services.length ? (
+      {/* Filtro por categoria */}
+      <div className="mb-6 flex flex-wrap items-center gap-3">
+        <label className="text-xs font-bold text-stone-500 shrink-0">Filtrar por categoria:</label>
+        <select
+          className="field text-xs max-w-xs"
+          value={filterCategoryId}
+          onChange={(e) => setFilterCategoryId(e.target.value)}
+        >
+          <option value="">Todas as categorias</option>
+          {buildCategoryTreeOptions(categories).map((c) => (
+            <option key={c.id} value={c.id}>
+              {"\u00A0\u00A0".repeat(c.level) + (c.level > 0 ? "↳ " : "") + c.name}
+            </option>
+          ))}
+        </select>
+        {filterCategoryId && (
+          <button
+            type="button"
+            onClick={() => setFilterCategoryId("")}
+            className="text-[10px] text-champagne font-bold uppercase tracking-wider hover:underline"
+          >
+            Limpar filtro
+          </button>
+        )}
+      </div>
+      {(() => {
+        const filteredServices = filterCategoryId
+          ? services.filter((x: any) => x.category_id === filterCategoryId)
+          : services;
+        return filteredServices.length ? (
         viewMode === "grid" ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {services.map((x: any) => (
+            {filteredServices.map((x: any) => (
               <div key={x.id} className="surface p-6">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex flex-wrap gap-2">
@@ -4413,7 +4443,7 @@ export function AdminServicesPage() {
                 </tr>
               </thead>
               <tbody>
-                {services.map((x: any) => (
+                {filteredServices.map((x: any) => (
                   <tr key={x.id} className="border-b border-black/5 hover:bg-stone-50/40 transition">
                     <td className="p-4 max-w-xs">
                       <div className="font-display text-lg font-bold text-ink">{x.name}</div>
@@ -4473,8 +4503,9 @@ export function AdminServicesPage() {
           </div>
         )
       ) : (
-        <EmptyState title="Nenhum serviço" text="O catálogo está vazio." />
-      )}
+        <EmptyState title="Nenhum serviço" text={filterCategoryId ? "Nenhum serviço nesta categoria." : "O catálogo está vazio."} />
+      );
+      })()}
       <Modal
         open={open}
         onClose={() => {
