@@ -1573,6 +1573,7 @@ export async function handleLocalAgendaAvailabilityIntent({
     const state = {
       status: "collecting",
       ...currentState,
+      previousAppointmentId: recorded.conversation.appointment_id || currentState.appointmentId || "",
       updatedAt: new Date().toISOString(),
     };
     state.clientPhone = normalizeBookingPhone(state.clientPhone, normalized.phoneNumber);
@@ -1830,7 +1831,7 @@ export async function handleStructuredBookingFlow({
   if (
     persistedAppointmentId &&
     currentState.status !== "booked" &&
-    !currentState.previousAppointmentId
+    currentState.previousAppointmentId !== persistedAppointmentId
   ) {
     currentState = {
       ...currentState,
@@ -1946,6 +1947,25 @@ export async function handleStructuredBookingFlow({
       serviceDetailsAccepted: false,
       serviceNote: serviceChoice.note || "",
     });
+  }
+
+  // Extrai data e hora/período da mensagem se ainda não estiverem definidos no estado
+  if (!state.date) {
+    const parsedDate = parseBookingDateFromText(text, state);
+    if (parsedDate) state.date = parsedDate;
+  }
+  const parsedTimeForAutoExtract = parseFlexibleBookingTimeFromText(text);
+  if (parsedTimeForAutoExtract.time && !state.time) {
+    state.time = parsedTimeForAutoExtract.time;
+  }
+  if (parsedTimeForAutoExtract.period && !state.period) {
+    state.period = parsedTimeForAutoExtract.period;
+  }
+
+  // Se a intenção original era consultar a agenda ou se o usuário já forneceu data/hora/período,
+  // pula a confirmação de detalhes do serviço.
+  if (state.serviceId && (state.date || state.requestedAgendaQuestion || state.period)) {
+    state.serviceDetailsAccepted = true;
   }
 
   if (!state.serviceId) {
@@ -3984,7 +4004,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       conversationId,
       messageId: inboundMessageId,
       provider: "openai",
-      model: runtimeStatus.model,
+      model: settings.primaryModel || settings.model || "gpt-4o",
       status: contingencyReplied ? "contingency_reply" : "provider_error",
       retryCount: retryCountTotal,
       fallbackUsed: false,
