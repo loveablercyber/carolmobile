@@ -13,6 +13,8 @@ import {
   CircleDollarSign,
   CreditCard,
   Download,
+  LayoutGrid,
+  List,
   Pause,
   Pencil,
   Play,
@@ -283,6 +285,7 @@ export function AdminClientsPage() {
   const nav = useNavigate();
   const p = useLoad<any[]>("/api/portal?resource=clients");
   const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState<any>(null);
@@ -370,7 +373,25 @@ export function AdminClientsPage() {
         title="Clientes"
         subtitle="Cadastros reais, conta e relacionamento."
         action={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex border border-black/10 rounded-2xl overflow-hidden bg-white">
+              <button
+                type="button"
+                onClick={() => setViewMode("grid")}
+                className={`p-2 transition ${viewMode === "grid" ? "bg-ink text-white" : "bg-warm text-stone-500 hover:bg-stone-100"}`}
+                title="Visualização em Grade"
+              >
+                <LayoutGrid size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("list")}
+                className={`p-2 transition ${viewMode === "list" ? "bg-ink text-white" : "bg-warm text-stone-500 hover:bg-stone-100"}`}
+                title="Visualização em Lista"
+              >
+                <List size={16} />
+              </button>
+            </div>
             <button onClick={() => setOpen(true)} className="btn-primary">
               <Plus size={15} />
               Novo Cliente
@@ -391,55 +412,122 @@ export function AdminClientsPage() {
         }
       />
       {list.length ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {list.map((c) => (
-            <div key={c.id} className="surface p-5">
-              <button
-                type="button"
-                onClick={() => nav(`/admin/clientes/${c.id}`)}
-                className="w-full text-left"
-              >
-                <div className="flex items-center gap-3">
-                  <Avatar src={c.avatar_url} name={c.name} size="lg" />
-                  <span className="flex-1">
-                    <b className="block font-display text-2xl">{c.name}</b>
-                    <span className="text-[10px] text-stone-400">
-                      {c.email}
-                      <br />
-                      {c.phone}
+        viewMode === "grid" ? (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {list.map((c) => (
+              <div key={c.id} className="surface p-5">
+                <button
+                  type="button"
+                  onClick={() => nav(`/admin/clientes/${c.id}`)}
+                  className="w-full text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <Avatar src={c.avatar_url} name={c.name} size="lg" />
+                    <span className="flex-1">
+                      <b className="block font-display text-2xl">{c.name}</b>
+                      <span className="text-[10px] text-stone-400">
+                        {c.email}
+                        <br />
+                        {c.phone}
+                      </span>
                     </span>
-                  </span>
-                  <Badge tone={tone(c.account_status)}>
-                    {labels[c.account_status] || c.account_status}
-                  </Badge>
-                </div>
-                <div className="mt-5 grid grid-cols-3 rounded-2xl bg-warm p-4 text-center text-xs">
-                  <span>
-                    <b className="block">{c.points}</b>
-                    <small>Pontos</small>
-                  </span>
-                  <span>
-                    <b className="block">{brl(c.lifetime_value)}</b>
-                    <small>LTV</small>
-                  </span>
-                  <span>
-                    <b className="block">{dt(c.next_appointment)}</b>
-                    <small>Próximo</small>
-                  </span>
-                </div>
-              </button>
-              <button
-                type="button"
-                disabled={c.account_status === "anonymized"}
-                onClick={() => setRemoving(c)}
-                className="mt-4 inline-flex min-h-9 items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 text-xs font-bold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
-              >
-                <Trash2 size={14} />
-                Remover
-              </button>
-            </div>
-          ))}
-        </div>
+                    <Badge tone={tone(c.account_status)}>
+                      {labels[c.account_status] || c.account_status}
+                    </Badge>
+                  </div>
+                  <div className="mt-5 grid grid-cols-3 rounded-2xl bg-warm p-4 text-center text-xs">
+                    <span>
+                      <b className="block">{c.points}</b>
+                      <small>Pontos</small>
+                    </span>
+                    <span>
+                      <b className="block">{brl(c.lifetime_value)}</b>
+                      <small>LTV</small>
+                    </span>
+                    <span>
+                      <b className="block">{dt(c.next_appointment)}</b>
+                      <small>Próximo</small>
+                    </span>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  disabled={c.account_status === "anonymized"}
+                  onClick={() => setRemoving(c)}
+                  className="mt-4 inline-flex min-h-9 items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 text-xs font-bold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
+                >
+                  <Trash2 size={14} />
+                  Remover
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="surface overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-black/10 text-stone-450 uppercase tracking-wider text-[10px]">
+                  <th className="p-4 font-bold">Cliente</th>
+                  <th className="p-4 font-bold">Contato</th>
+                  <th className="p-4 font-bold">Status</th>
+                  <th className="p-4 font-bold">Pontos</th>
+                  <th className="p-4 font-bold">LTV</th>
+                  <th className="p-4 font-bold">Próximo</th>
+                  <th className="p-4 font-bold text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((c) => (
+                  <tr key={c.id} className="border-b border-black/5 hover:bg-stone-50/40 transition">
+                    <td className="p-4">
+                      <button
+                        type="button"
+                        onClick={() => nav(`/admin/clientes/${c.id}`)}
+                        className="flex items-center gap-3 text-left hover:underline"
+                      >
+                        <Avatar src={c.avatar_url} name={c.name} size="sm" />
+                        <b className="font-display text-lg text-ink">{c.name}</b>
+                      </button>
+                    </td>
+                    <td className="p-4 text-stone-500">
+                      <div className="font-medium">{c.email}</div>
+                      <div className="text-[10px] text-stone-400">{c.phone}</div>
+                    </td>
+                    <td className="p-4">
+                      <Badge tone={tone(c.account_status)}>
+                        {labels[c.account_status] || c.account_status}
+                      </Badge>
+                    </td>
+                    <td className="p-4 font-semibold text-ink">{c.points}</td>
+                    <td className="p-4 font-semibold text-ink">{brl(c.lifetime_value)}</td>
+                    <td className="p-4 text-stone-500">{dt(c.next_appointment)}</td>
+                    <td className="p-4 text-right">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => nav(`/admin/clientes/${c.id}`)}
+                          className="rounded-full border border-black/10 p-1.5 text-stone-500 hover:border-champagne hover:text-champagne transition"
+                          title="Ver ficha"
+                        >
+                          <Search size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={c.account_status === "anonymized"}
+                          onClick={() => setRemoving(c)}
+                          className="rounded-full border border-rose-200 bg-rose-50 p-1.5 text-rose-700 hover:bg-rose-100 transition disabled:opacity-50"
+                          title="Remover"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
       ) : (
         <EmptyState
           title="Nenhuma cliente encontrada"
@@ -3742,6 +3830,100 @@ export function AdminServicesPage() {
     professionalLinks: [] as any[],
   };
   const [form, setForm] = useState<any>(emptyForm);
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [manageCategoryOpen, setManageCategoryOpen] = useState(false);
+  const [manageMethodOpen, setManageMethodOpen] = useState(false);
+  const [categoryForm, setCategoryForm] = useState({ id: "", name: "", sortOrder: "0" });
+  const [methodForm, setMethodForm] = useState({ id: "", name: "", description: "", maintenanceDays: "", active: true });
+
+  const saveCategory = async (e: FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await apiFetch("/api/portal?resource=admin-category", {
+        method: "POST",
+        body: JSON.stringify({
+          id: categoryForm.id || undefined,
+          name: categoryForm.name,
+          sortOrder: Number(categoryForm.sortOrder),
+        }),
+      });
+      await p.reload();
+      setCategoryForm({ id: "", name: "", sortOrder: "0" });
+      setToast("Categoria salva.");
+    } catch (err) {
+      console.error(err);
+      setToast("Erro ao salvar categoria.");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2200);
+    }
+  };
+
+  const deleteCategory = async (cat: any) => {
+    if (!window.confirm(`Excluir categoria "${cat.name}"?`)) return;
+    setSaving(true);
+    try {
+      await apiFetch("/api/portal?resource=admin-category", {
+        method: "DELETE",
+        body: JSON.stringify({ id: cat.id }),
+      });
+      await p.reload();
+      setToast("Categoria excluída.");
+    } catch (err) {
+      console.error(err);
+      setToast(err instanceof Error ? err.message : "Erro ao excluir categoria.");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2200);
+    }
+  };
+
+  const saveMethod = async (e: FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await apiFetch("/api/portal?resource=admin-method", {
+        method: "POST",
+        body: JSON.stringify({
+          id: methodForm.id || undefined,
+          name: methodForm.name,
+          description: methodForm.description,
+          maintenanceDays: methodForm.maintenanceDays ? Number(methodForm.maintenanceDays) : null,
+          active: methodForm.active,
+        }),
+      });
+      await p.reload();
+      setMethodForm({ id: "", name: "", description: "", maintenanceDays: "", active: true });
+      setToast("Método salvo.");
+    } catch (err) {
+      console.error(err);
+      setToast("Erro ao salvar método.");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2200);
+    }
+  };
+
+  const deleteMethod = async (met: any) => {
+    if (!window.confirm(`Excluir método "${met.name}"?`)) return;
+    setSaving(true);
+    try {
+      await apiFetch("/api/portal?resource=admin-method", {
+        method: "DELETE",
+        body: JSON.stringify({ id: met.id }),
+      });
+      await p.reload();
+      setToast("Método excluído.");
+    } catch (err) {
+      console.error(err);
+      setToast(err instanceof Error ? err.message : "Erro ao excluir método.");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2200);
+    }
+  };
+
   if (p.loading) return <LoadingState />;
   const payload = p.data || {};
   const services = payload.services || [];
@@ -3905,84 +4087,179 @@ export function AdminServicesPage() {
         title="Serviços e métodos"
         subtitle="Preços, duração e demanda registrados no Neon."
         action={
-          <button onClick={openNew} className="btn-primary">
-            <Plus size={15} />
-            Criar serviço
-          </button>
+          <div className="flex items-center gap-3">
+            <div className="flex border border-black/10 rounded-2xl overflow-hidden bg-white">
+              <button
+                type="button"
+                onClick={() => setViewMode("grid")}
+                className={`p-2 transition ${viewMode === "grid" ? "bg-ink text-white" : "bg-warm text-stone-500 hover:bg-stone-100"}`}
+                title="Visualização em Grade"
+              >
+                <LayoutGrid size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("list")}
+                className={`p-2 transition ${viewMode === "list" ? "bg-ink text-white" : "bg-warm text-stone-500 hover:bg-stone-100"}`}
+                title="Visualização em Lista"
+              >
+                <List size={16} />
+              </button>
+            </div>
+            <button onClick={openNew} className="btn-primary">
+              <Plus size={15} />
+              Criar serviço
+            </button>
+          </div>
         }
       />
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {services.length ? (
-          services.map((x: any) => (
-            <div key={x.id} className="surface p-6">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex flex-wrap gap-2">
-                  <Badge tone={x.active ? "green" : "neutral"}>
-                    {x.active ? "ATIVO" : "INATIVO"}
-                  </Badge>
-                  <Badge tone={x.show_online_booking !== false ? "green" : "neutral"}>
-                    {x.show_online_booking !== false ? "ONLINE" : "INTERNO"}
-                  </Badge>
-                  {x.is_free && <Badge tone="green">SEM CUSTO</Badge>}
+      {services.length ? (
+        viewMode === "grid" ? (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {services.map((x: any) => (
+              <div key={x.id} className="surface p-6">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Badge tone={x.active ? "green" : "neutral"}>
+                      {x.active ? "ATIVO" : "INATIVO"}
+                    </Badge>
+                    <Badge tone={x.show_online_booking !== false ? "green" : "neutral"}>
+                      {x.show_online_booking !== false ? "ONLINE" : "INTERNO"}
+                    </Badge>
+                    {x.is_free && <Badge tone="green">SEM CUSTO</Badge>}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openEdit(x)}
+                      className="rounded-full border border-black/10 p-2 text-stone-500 transition hover:border-champagne hover:text-champagne"
+                      title="Editar serviço"
+                    >
+                      <Pencil size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => toggleActive(x)}
+                      className="rounded-full border border-black/10 p-2 text-stone-500 transition hover:border-champagne hover:text-champagne disabled:opacity-50"
+                      title={x.active ? "Pausar serviço" : "Reativar serviço"}
+                    >
+                      {x.active ? <Pause size={15} /> : <Play size={15} />}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => deleteService(x)}
+                      className="rounded-full border border-black/10 p-2 text-stone-500 transition hover:border-rose-600 hover:text-rose-600 disabled:opacity-50"
+                      title="Excluir serviço"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openEdit(x)}
-                    className="rounded-full border border-black/10 p-2 text-stone-500 transition hover:border-champagne hover:text-champagne"
-                    title="Editar serviço"
-                  >
-                    <Pencil size={15} />
-                  </button>
-                  <button
-                    type="button"
-                    disabled={saving}
-                    onClick={() => toggleActive(x)}
-                    className="rounded-full border border-black/10 p-2 text-stone-500 transition hover:border-champagne hover:text-champagne disabled:opacity-50"
-                    title={x.active ? "Pausar serviço" : "Reativar serviço"}
-                  >
-                    {x.active ? <Pause size={15} /> : <Play size={15} />}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={saving}
-                    onClick={() => deleteService(x)}
-                    className="rounded-full border border-black/10 p-2 text-stone-500 transition hover:border-rose-600 hover:text-rose-600 disabled:opacity-50"
-                    title="Excluir serviço"
-                  >
-                    <Trash2 size={15} />
-                  </button>
+                <h2 className="mt-3 font-display text-3xl">{x.name}</h2>
+                <p className="muted mt-2">{x.description}</p>
+                <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-stone-400">
+                  <span>{x.category || "Sem categoria"}</span>
+                  <span>{x.method || "Sem método"}</span>
                 </div>
+                <div className="mt-5 grid grid-cols-3 rounded-2xl bg-warm p-4 text-center text-xs">
+                  <span>
+                    <b className="block">{x.duration_minutes}min</b>
+                    <small>Duração</small>
+                  </span>
+                  <span>
+                    <b className="block">{servicePriceLabel(x)}</b>
+                    <small>Preço</small>
+                  </span>
+                  <span>
+                    <b className="block">{x.appointments}</b>
+                    <small>Reservas</small>
+                  </span>
+                </div>
+                <p className="mt-4 text-[10px] text-stone-400">
+                  {x.professionals?.length || 0} profissionais vinculadas
+                </p>
               </div>
-              <h2 className="mt-3 font-display text-3xl">{x.name}</h2>
-              <p className="muted mt-2">{x.description}</p>
-              <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-stone-400">
-                <span>{x.category || "Sem categoria"}</span>
-                <span>{x.method || "Sem método"}</span>
-              </div>
-              <div className="mt-5 grid grid-cols-3 rounded-2xl bg-warm p-4 text-center text-xs">
-                <span>
-                  <b className="block">{x.duration_minutes}min</b>
-                  <small>Duração</small>
-                </span>
-                <span>
-                  <b className="block">{servicePriceLabel(x)}</b>
-                  <small>Preço</small>
-                </span>
-                <span>
-                  <b className="block">{x.appointments}</b>
-                  <small>Reservas</small>
-                </span>
-              </div>
-              <p className="mt-4 text-[10px] text-stone-400">
-                {x.professionals?.length || 0} profissionais vinculadas
-              </p>
-            </div>
-          ))
+            ))}
+          </div>
         ) : (
-          <EmptyState title="Nenhum serviço" text="O catálogo está vazio." />
-        )}
-      </div>
+          <div className="surface overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-black/10 text-stone-450 uppercase tracking-wider text-[10px]">
+                  <th className="p-4 font-bold">Serviço</th>
+                  <th className="p-4 font-bold">Categoria/Método</th>
+                  <th className="p-4 font-bold">Duração</th>
+                  <th className="p-4 font-bold">Preço</th>
+                  <th className="p-4 font-bold">Reservas</th>
+                  <th className="p-4 font-bold">Profissionais</th>
+                  <th className="p-4 font-bold text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {services.map((x: any) => (
+                  <tr key={x.id} className="border-b border-black/5 hover:bg-stone-50/40 transition">
+                    <td className="p-4 max-w-xs">
+                      <div className="font-display text-lg font-bold text-ink">{x.name}</div>
+                      {x.description && <div className="text-stone-450 mt-1 text-[11px] line-clamp-1">{x.description}</div>}
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        <Badge tone={x.active ? "green" : "neutral"}>
+                          {x.active ? "ATIVO" : "INATIVO"}
+                        </Badge>
+                        <Badge tone={x.show_online_booking !== false ? "green" : "neutral"}>
+                          {x.show_online_booking !== false ? "ONLINE" : "INTERNO"}
+                        </Badge>
+                        {x.is_free && <Badge tone="green">SEM CUSTO</Badge>}
+                      </div>
+                    </td>
+                    <td className="p-4 text-stone-500">
+                      <div className="font-semibold">{x.category || "Sem categoria"}</div>
+                      <div className="text-[10px] text-stone-450 mt-0.5">{x.method || "Sem método"}</div>
+                    </td>
+                    <td className="p-4 font-semibold text-ink">{x.duration_minutes} min</td>
+                    <td className="p-4 font-semibold text-ink">{servicePriceLabel(x)}</td>
+                    <td className="p-4 font-semibold text-ink">{x.appointments}</td>
+                    <td className="p-4 text-stone-500">{x.professionals?.length || 0} vinculadas</td>
+                    <td className="p-4 text-right">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openEdit(x)}
+                          className="rounded-full border border-black/10 p-1.5 text-stone-500 transition hover:border-champagne hover:text-champagne"
+                          title="Editar serviço"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => toggleActive(x)}
+                          className="rounded-full border border-black/10 p-1.5 text-stone-500 transition hover:border-champagne hover:text-champagne disabled:opacity-50"
+                          title={x.active ? "Pausar serviço" : "Reativar serviço"}
+                        >
+                          {x.active ? <Pause size={13} /> : <Play size={13} />}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => deleteService(x)}
+                          className="rounded-full border border-black/10 p-1.5 text-rose-700 transition hover:border-rose-650 hover:text-rose-650 disabled:opacity-50"
+                          title="Excluir serviço"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : (
+        <EmptyState title="Nenhum serviço" text="O catálogo está vazio." />
+      )}
       <Modal
         open={open}
         onClose={() => {
@@ -4051,8 +4328,17 @@ export function AdminServicesPage() {
             Servico gratis / sem custo
           </label>
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className="mb-2 block text-xs font-bold">Categoria</span>
+            <div className="block">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-bold">Categoria</span>
+                <button
+                  type="button"
+                  onClick={() => setManageCategoryOpen(true)}
+                  className="text-[10px] text-champagne font-bold uppercase tracking-wider hover:underline"
+                >
+                  Gerenciar
+                </button>
+              </div>
               <select
                 className="field"
                 value={form.categoryId}
@@ -4067,9 +4353,18 @@ export function AdminServicesPage() {
                   </option>
                 ))}
               </select>
-            </label>
-            <label className="block">
-              <span className="mb-2 block text-xs font-bold">Método</span>
+            </div>
+            <div className="block">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-bold">Método</span>
+                <button
+                  type="button"
+                  onClick={() => setManageMethodOpen(true)}
+                  className="text-[10px] text-champagne font-bold uppercase tracking-wider hover:underline"
+                >
+                  Gerenciar
+                </button>
+              </div>
               <select
                 className="field"
                 value={form.hairMethodId}
@@ -4084,7 +4379,7 @@ export function AdminServicesPage() {
                   </option>
                 ))}
               </select>
-            </label>
+            </div>
           </div>
           <label className="flex items-center gap-3 rounded-2xl bg-warm p-4 text-xs font-bold">
             <input
@@ -4175,6 +4470,180 @@ export function AdminServicesPage() {
             {saving ? "Salvando..." : "Salvar serviço"}
           </button>
         </form>
+      </Modal>
+
+      <Modal
+        open={manageCategoryOpen}
+        onClose={() => setManageCategoryOpen(false)}
+        title="Gerenciar Categorias"
+      >
+        <div className="space-y-6">
+          <form onSubmit={saveCategory} className="space-y-3 rounded-2xl bg-warm p-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-stone-500">
+              {categoryForm.id ? "Editar Categoria" : "Nova Categoria"}
+            </h3>
+            <Input
+              label="Nome da Categoria"
+              value={categoryForm.name}
+              set={(v) => setCategoryForm({ ...categoryForm, name: v })}
+            />
+            <Input
+              label="Ordem de Exibição"
+              type="number"
+              value={categoryForm.sortOrder}
+              set={(v) => setCategoryForm({ ...categoryForm, sortOrder: v })}
+            />
+            <div className="flex gap-2">
+              <button
+                disabled={saving || !categoryForm.name.trim()}
+                className="btn-primary flex-1 text-xs"
+              >
+                {saving ? "Salvando..." : "Salvar"}
+              </button>
+              {categoryForm.id && (
+                <button
+                  type="button"
+                  onClick={() => setCategoryForm({ id: "", name: "", sortOrder: "0" })}
+                  className="btn-secondary text-xs"
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
+          </form>
+
+          <div className="space-y-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-stone-500">Categorias Cadastradas</h3>
+            {categories.length ? (
+              <div className="divide-y divide-black/5 max-h-60 overflow-y-auto pr-1">
+                {categories.map((cat: any) => (
+                  <div key={cat.id} className="flex items-center justify-between py-2 text-xs">
+                    <div>
+                      <span className="font-semibold text-ink">{cat.name}</span>
+                      <span className="text-[10px] text-stone-400 ml-2">(Ordem: {cat.sort_order || 0})</span>
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setCategoryForm({ id: cat.id, name: cat.name, sortOrder: String(cat.sort_order || 0) })}
+                        className="rounded-full p-1 text-stone-500 hover:bg-black/5 hover:text-champagne transition"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteCategory(cat)}
+                        className="rounded-full p-1 text-rose-600 hover:bg-rose-50 transition"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-stone-400 italic">Nenhuma categoria cadastrada.</p>
+            )}
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={manageMethodOpen}
+        onClose={() => setManageMethodOpen(false)}
+        title="Gerenciar Métodos"
+      >
+        <div className="space-y-6">
+          <form onSubmit={saveMethod} className="space-y-3 rounded-2xl bg-warm p-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-stone-500">
+              {methodForm.id ? "Editar Método" : "Novo Método"}
+            </h3>
+            <Input
+              label="Nome do Método"
+              value={methodForm.name}
+              set={(v) => setMethodForm({ ...methodForm, name: v })}
+            />
+            <label className="block">
+              <span className="mb-2 block text-xs font-bold">Descrição</span>
+              <textarea
+                className="field min-h-16 py-2 text-xs"
+                value={methodForm.description}
+                onChange={(e) => setMethodForm({ ...methodForm, description: e.target.value })}
+              />
+            </label>
+            <Input
+              label="Dias recomendados para manutenção"
+              type="number"
+              value={methodForm.maintenanceDays}
+              set={(v) => setMethodForm({ ...methodForm, maintenanceDays: v })}
+            />
+            <label className="flex items-center gap-2 text-xs font-semibold py-1">
+              <input
+                type="checkbox"
+                checked={methodForm.active}
+                onChange={(e) => setMethodForm({ ...methodForm, active: e.target.checked })}
+              />
+              Método ativo
+            </label>
+            <div className="flex gap-2">
+              <button
+                disabled={saving || !methodForm.name.trim()}
+                className="btn-primary flex-1 text-xs"
+              >
+                {saving ? "Salvando..." : "Salvar"}
+              </button>
+              {methodForm.id && (
+                <button
+                  type="button"
+                  onClick={() => setMethodForm({ id: "", name: "", description: "", maintenanceDays: "", active: true })}
+                  className="btn-secondary text-xs"
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
+          </form>
+
+          <div className="space-y-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-stone-500">Métodos Cadastrados</h3>
+            {methods.length ? (
+              <div className="divide-y divide-black/5 max-h-60 overflow-y-auto pr-1">
+                {methods.map((met: any) => (
+                  <div key={met.id} className="flex items-center justify-between py-2 text-xs">
+                    <div>
+                      <span className="font-semibold text-ink">{met.name}</span>
+                      {!met.active && <span className="ml-2 scale-75 inline-block"><Badge tone="neutral">Inativo</Badge></span>}
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setMethodForm({
+                          id: met.id,
+                          name: met.name,
+                          description: met.description || "",
+                          maintenanceDays: met.maintenance_days ? String(met.maintenance_days) : "",
+                          active: met.active !== false
+                        })}
+                        className="rounded-full p-1 text-stone-500 hover:bg-black/5 hover:text-champagne transition"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteMethod(met)}
+                        className="rounded-full p-1 text-rose-600 hover:bg-rose-50 transition"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-stone-400 italic">Nenhum método cadastrado.</p>
+            )}
+          </div>
+        </div>
       </Modal>
     </div>
   );

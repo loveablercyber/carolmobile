@@ -2884,6 +2884,101 @@ async function deleteAdminService(user, body) {
   }
 }
 
+async function saveAdminCategory(user, body) {
+  requireRole(user, ["admin"]);
+  const name = clean(body.name);
+  const sortOrder = Number.parseInt(body.sortOrder ?? body.sort_order ?? 0, 10);
+  if (name.length < 2) throw appError("Informe o nome da categoria.");
+
+  const result = await transaction(async (client) => {
+    let category;
+    if (body.id) {
+      const id = validUuid(body.id, "Categoria");
+      const { rows } = await client.query(
+        `update public.service_categories set name=$1, sort_order=$2 where id=$3 returning *`,
+        [name, sortOrder, id]
+      );
+      if (!rows.length) throw appError("Categoria não encontrada.", 404);
+      category = rows[0];
+    } else {
+      const { rows } = await client.query(
+        `insert into public.service_categories(name, sort_order) values($1, $2) returning *`,
+        [name, sortOrder]
+      );
+      category = rows[0];
+    }
+    return category;
+  });
+  return result;
+}
+
+async function deleteAdminCategory(user, body) {
+  requireRole(user, ["admin"]);
+  const id = validUuid(body.id, "Categoria");
+  try {
+    const result = await transaction(async (client) => {
+      const { rowCount } = await client.query("delete from public.service_categories where id=$1", [id]);
+      if (!rowCount) throw appError("Categoria não encontrada.", 404);
+      return { success: true };
+    });
+    return result;
+  } catch (error) {
+    if (error.code === "23503") {
+      throw appError("Não é possível excluir esta categoria porque existem serviços vinculados a ela. Remova ou altere os serviços antes.", 400);
+    }
+    throw error;
+  }
+}
+
+async function saveAdminMethod(user, body) {
+  requireRole(user, ["admin"]);
+  const name = clean(body.name);
+  const description = clean(body.description || "");
+  const maintenanceDays = body.maintenanceDays ? Number.parseInt(body.maintenanceDays, 10) : null;
+  const active = body.active !== false;
+
+  if (name.length < 2) throw appError("Informe o nome do método.");
+
+  const result = await transaction(async (client) => {
+    let method;
+    if (body.id) {
+      const id = validUuid(body.id, "Método");
+      const { rows } = await client.query(
+        `update public.hair_methods set name=$1, description=$2, maintenance_days=$3, active=$4 where id=$5 returning *`,
+        [name, description || null, maintenanceDays, active, id]
+      );
+      if (!rows.length) throw appError("Método não encontrado.", 404);
+      method = rows[0];
+    } else {
+      const { rows } = await client.query(
+        `insert into public.hair_methods(name, description, maintenance_days, active) values($1, $2, $3, $4) returning *`,
+        [name, description || null, maintenanceDays, active]
+      );
+      method = rows[0];
+    }
+    return method;
+  });
+  return result;
+}
+
+async function deleteAdminMethod(user, body) {
+  requireRole(user, ["admin"]);
+  const id = validUuid(body.id, "Método");
+  try {
+    const result = await transaction(async (client) => {
+      const { rowCount } = await client.query("delete from public.hair_methods where id=$1", [id]);
+      if (!rowCount) throw appError("Método não encontrado.", 404);
+      return { success: true };
+    });
+    return result;
+  } catch (error) {
+    if (error.code === "23503") {
+      throw appError("Não é possível excluir este método porque existem serviços vinculados a ele. Remova ou altere os serviços antes.", 400);
+    }
+    throw error;
+  }
+}
+
 
 const backupTables = [
   "profiles",
@@ -3717,6 +3812,12 @@ async function mutate(user, resource, body, method = "POST") {
   if (resource === "admin-service" && method === "DELETE")
     return deleteAdminService(user, body);
   if (resource === "admin-service") return saveAdminService(user, body);
+  if (resource === "admin-category" && method === "DELETE")
+    return deleteAdminCategory(user, body);
+  if (resource === "admin-category") return saveAdminCategory(user, body);
+  if (resource === "admin-method" && method === "DELETE")
+    return deleteAdminMethod(user, body);
+  if (resource === "admin-method") return saveAdminMethod(user, body);
   if (resource === "admin-professional") return saveAdminProfessional(user, body);
   if (resource === "admin-professional-availability") return saveAdminProfessionalAvailability(user, body);
   if (resource === "professional-availability") return saveProfessionalAvailability(user, body);
