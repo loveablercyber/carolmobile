@@ -5162,7 +5162,13 @@ export function AdminInventoryPage() {
               onChange={(e) => {
                 const val = e.target.value;
                 const cat = categories.find((c: any) => c.id === val);
-                setForm({ ...form, categoryId: val, category: cat ? cat.name : "Cabelo humano" });
+                const matchingMethod = methods.find((m: any) => m.category_id === val);
+                setForm({
+                  ...form,
+                  categoryId: val,
+                  category: cat ? cat.name : "Cabelo humano",
+                  hairMethodId: matchingMethod ? matchingMethod.id : ""
+                });
               }}
             >
               <option value="">Sem Categoria (Geral)</option>
