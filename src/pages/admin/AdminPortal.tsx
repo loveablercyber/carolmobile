@@ -73,6 +73,30 @@ const saoPauloDateKey = (value: unknown) => {
   const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${byType.year}-${byType.month}-${byType.day}`;
 };
+const generateNextCode = (catName: string, itemsList: any[]) => {
+  if (!catName) return "";
+  const normalized = catName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z]/g, "");
+  if (normalized.length < 2) return "";
+  const prefix = normalized.substring(0, 3).toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+  
+  const regex = new RegExp(`^${prefix}-(\\d+)$`);
+  let maxNum = 0;
+  for (const item of itemsList) {
+    if (item.code) {
+      const match = item.code.match(regex);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num > maxNum) {
+          maxNum = num;
+        }
+      }
+    }
+  }
+  
+  const nextNum = maxNum + 1;
+  const padded = String(nextNum).padStart(3, "0");
+  return `${prefix}-${padded}`;
+};
 const buildCategoryTreeOptions = (categoriesList: any[]) => {
   const roots = categoriesList.filter(c => !c.parent_id);
   const result: { id: string, name: string, level: number }[] = [];
@@ -5163,11 +5187,18 @@ export function AdminInventoryPage() {
                 const val = e.target.value;
                 const cat = categories.find((c: any) => c.id === val);
                 const matchingMethod = methods.find((m: any) => m.category_id === val);
+                
+                let nextCode = form.code;
+                if (!editingItem && cat) {
+                  nextCode = generateNextCode(cat.name, list);
+                }
+                
                 setForm({
                   ...form,
                   categoryId: val,
                   category: cat ? cat.name : "Cabelo humano",
-                  hairMethodId: matchingMethod ? matchingMethod.id : ""
+                  hairMethodId: matchingMethod ? matchingMethod.id : "",
+                  code: nextCode
                 });
               }}
             >
