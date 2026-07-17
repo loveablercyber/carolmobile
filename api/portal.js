@@ -810,10 +810,12 @@ async function adminProfessionalDetail(user, id) {
 async function adminServices(user) {
   requireRole(user, ["admin"]);
   await ensureMarketingSchema();
+  await query("alter table public.services add column if not exists offer_inventory_items boolean default false");
   const [services, links, categories, methods, professionals] = await Promise.all([
     query(`select s.id,s.category_id,s.hair_method_id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
       coalesce(s.show_online_booking,true) as show_online_booking,
       coalesce(s.is_free,false) as is_free,
+      coalesce(s.offer_inventory_items,false) as offer_inventory_items,
       hm.name as method,sc.name as category,count(a.id)::int as appointments
       from public.services s
       left join public.hair_methods hm on hm.id=s.hair_method_id
@@ -2720,6 +2722,10 @@ async function saveAdminService(user, body) {
     body.showOnlineBooking === undefined
       ? body.show_online_booking !== false
       : body.showOnlineBooking !== false;
+  const offerInventoryItems =
+    body.offerInventoryItems === undefined
+      ? body.offer_inventory_items === true
+      : body.offerInventoryItems === true;
   const replaceProfessionalLinks = Array.isArray(body.professionalLinks);
   const professionalLinks = replaceProfessionalLinks
     ? body.professionalLinks
@@ -2736,21 +2742,21 @@ async function saveAdminService(user, body) {
               : Number(item.commissionRate),
         }))
     : [];
-  if (name.length < 2) throw appError("Informe o nome do serviÃ§o.");
+  if (name.length < 2) throw appError("Informe o nome do serviço.");
   if (!Number.isFinite(durationMinutes) || durationMinutes < 15 || durationMinutes > 720)
-    throw appError("A duraÃ§Ã£o deve ficar entre 15 e 720 minutos.");
+    throw appError("A duração deve ficar entre 15 e 720 minutos.");
   if (!isFree && (!Number.isFinite(basePrice) || basePrice <= 0))
-    throw appError("Informe um preÃ§o vÃ¡lido.");
+    throw appError("Informe um preço válido.");
   if (!Number.isFinite(depositAmount) || depositAmount < 0 || depositAmount > basePrice)
-    throw appError("O sinal deve ser zero ou menor que o preÃ§o.");
+    throw appError("O sinal deve ser zero ou menor que o preço.");
   for (const link of professionalLinks) {
     if (link.customPrice != null && (!Number.isFinite(link.customPrice) || link.customPrice < 0))
-      throw appError("PreÃ§o personalizado invÃ¡lido.");
+      throw appError("Preço personalizado inválido.");
     if (
       link.commissionRate != null &&
       (!Number.isFinite(link.commissionRate) || link.commissionRate < 0 || link.commissionRate > 100)
     )
-      throw appError("ComissÃ£o deve ficar entre 0 e 100%.");
+      throw appError("Comissão deve ficar entre 0 e 100%.");
   }
   const result = await transaction(async (client) => {
     if (categoryId) {
@@ -2758,14 +2764,14 @@ async function saveAdminService(user, body) {
         "select id from public.service_categories where id=$1",
         [categoryId],
       );
-      if (!category.rowCount) throw appError("Categoria nÃ£o encontrada.", 404);
+      if (!category.rowCount) throw appError("Categoria não encontrada.", 404);
     }
     if (hairMethodId) {
       const method = await client.query(
         "select id from public.hair_methods where id=$1",
         [hairMethodId],
       );
-      if (!method.rowCount) throw appError("MÃ©todo nÃ£o encontrado.", 404);
+      if (!method.rowCount) throw appError("Método não encontrado.", 404);
     }
     if (replaceProfessionalLinks && professionalLinks.length) {
       const professionalIds = [...new Set(professionalLinks.map((item) => item.professionalId))];
@@ -2774,24 +2780,25 @@ async function saveAdminService(user, body) {
         [professionalIds],
       );
       if (found.rowCount !== professionalIds.length)
-        throw appError("Uma das profissionais selecionadas nÃ£o existe.", 404);
+        throw appError("Uma das profissionais selecionadas não existe.", 404);
     }
     let previous = null;
     let service;
     let action = "create";
     if (body.id) {
-      const id = validUuid(body.id, "ServiÃ§o");
+      const id = validUuid(body.id, "Serviço");
       const current = await client.query(
         "select * from public.services where id=$1 for update",
         [id],
       );
       previous = current.rows[0] || null;
-      if (!previous) throw appError("ServiÃ§o nÃ£o encontrado.", 404);
+      if (!previous) throw appError("Serviço não encontrado.", 404);
       const { rows } = await client.query(
         `update public.services
          set name=$1,description=$2,duration_minutes=$3,base_price=$4,deposit_amount=$5,
-             category_id=$6,hair_method_id=$7,active=$8,show_online_booking=$9,is_free=$10
-         where id=$11 returning *`,
+             category_id=$6,hair_method_id=$7,active=$8,show_online_booking=$9,is_free=$10,
+             offer_inventory_items=$11
+         where id=$12 returning *`,
         [
           name,
           description || null,
@@ -2803,6 +2810,7 @@ async function saveAdminService(user, body) {
           active,
           showOnlineBooking,
           isFree,
+          offerInventoryItems,
           id,
         ],
       );
@@ -2810,8 +2818,8 @@ async function saveAdminService(user, body) {
       action = "update";
     } else {
       const { rows } = await client.query(
-        `insert into public.services(name,description,duration_minutes,base_price,deposit_amount,category_id,hair_method_id,active,show_online_booking,is_free)
-         values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *`,
+        `insert into public.services(name,description,duration_minutes,base_price,deposit_amount,category_id,hair_method_id,active,show_online_booking,is_free,offer_inventory_items)
+         values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,
         [
           name,
           description || null,
@@ -2823,6 +2831,7 @@ async function saveAdminService(user, body) {
           active,
           showOnlineBooking,
           isFree,
+          offerInventoryItems,
         ],
       );
       service = rows[0];

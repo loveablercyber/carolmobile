@@ -1327,6 +1327,7 @@ export async function getAiCommercialBase() {
       `select s.id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
         coalesce(s.is_free,false) as is_free,
         coalesce(s.show_online_booking,true) as show_online_booking,
+        coalesce(s.offer_inventory_items,false) as offer_inventory_items,
         ais.id as ai_service_settings_id,
         coalesce(ais.active,false) as ai_active,coalesce(ais.commercial_name,s.name) as commercial_name,
         ais.short_description,ais.detailed_description,ais.initial_price,ais.estimated_duration_minutes,

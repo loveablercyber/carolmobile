@@ -3899,6 +3899,7 @@ export function AdminServicesPage() {
     active: true,
     showOnlineBooking: true,
     isFree: false,
+    offerInventoryItems: false,
     professionalLinks: [] as any[],
   };
   const [form, setForm] = useState<any>(emptyForm);
@@ -4178,6 +4179,7 @@ export function AdminServicesPage() {
       active: service.active !== false,
       showOnlineBooking: service.show_online_booking !== false,
       isFree: service.is_free === true,
+      offerInventoryItems: service.offer_inventory_items === true,
       professionalLinks: linksFor(service),
     });
     setOpen(true);
@@ -4208,6 +4210,7 @@ export function AdminServicesPage() {
           active: form.active,
           showOnlineBooking: form.showOnlineBooking,
           isFree: form.isFree,
+          offerInventoryItems: form.offerInventoryItems,
           professionalLinks: form.professionalLinks
             .filter((item: any) => item.enabled)
             .map((item: any) => ({
@@ -4618,6 +4621,16 @@ export function AdminServicesPage() {
               }
             />
             Mostrar no agendamento online
+          </label>
+          <label className="flex items-center gap-3 rounded-2xl bg-warm p-4 text-xs font-bold">
+            <input
+              type="checkbox"
+              checked={form.offerInventoryItems}
+              onChange={(event) =>
+                setForm({ ...form, offerInventoryItems: event.target.checked })
+              }
+            />
+            Oferecer itens de estoque desta categoria para o cliente
           </label>
           <section>
             <SectionHeading title="Profissionais vinculadas" />

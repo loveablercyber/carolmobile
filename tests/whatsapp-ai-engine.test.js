@@ -523,12 +523,14 @@ test("isReplyingToExplanationOffer detects confirmations to explanation offers",
 
 test("summarizeAiCommercialContext includes active inventory stock", () => {
   const base = {
-    services: [],
+    services: [
+      { id: "serv-1", name: "Alongamento", category_id: "cat-1", offer_inventory_items: true, active: true, ai_active: true }
+    ],
     plans: [],
     coupons: [],
     flows: [],
     inventory: [
-      { name: "Cabelo Loiro Premium", category: "Cabelos", color: "Loiro Claro", shade: "9.0", length_cm: 65, weight_grams: 100, quantity: 5 }
+      { name: "Cabelo Loiro Premium", category: "Cabelos", category_id: "cat-1", color: "Loiro Claro", shade: "9.0", length_cm: 65, weight_grams: 100, quantity: 5 }
     ]
   };
   const summary = summarizeAiCommercialContext(base, {});

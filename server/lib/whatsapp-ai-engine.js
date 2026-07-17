@@ -2470,8 +2470,10 @@ export function summarizeAiCommercialContext(base, settings = {}) {
     .filter((flow) => flow.enabled)
     .map((flow) => flow.name || flow.flow_key)
     .slice(0, 12);
+  const servicesWithOffer = (base.services || []).filter((s) => s.offer_inventory_items);
+  const categoriesWithOffer = new Set(servicesWithOffer.map((s) => s.category_id).filter(Boolean));
   const inventory = (base.inventory || [])
-    .filter((item) => item.quantity > 0)
+    .filter((item) => item.quantity > 0 && item.category_id && categoriesWithOffer.has(item.category_id))
     .slice(0, 15)
     .map((item) => {
       const price = Number(item.suggested_price || 0);
