@@ -485,15 +485,19 @@ export function selectBookingService(text, base = {}, state = {}) {
 
 export function isServiceCatalogMenuIntent(text) {
   const normalized = normalizeText(text).replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
-  return [
+  if ([
     "servico",
     "servicos",
     "ver servicos",
     "quero ver servicos",
     "quais servicos",
+    "quais servicos disponiveis",
+    "quais servicos estao disponiveis",
+    "servicos disponiveis",
     "lista de servicos",
     "catalogo de servicos",
-  ].includes(normalized);
+  ].includes(normalized)) return true;
+  return /^(?:quero saber |me mostra |mostre )?(?:quais |que )?servicos (?:voces? (?:tem|oferece|oferecem)|tem disponiveis)$/.test(normalized);
 }
 
 function buildCategoryOptions(base = {}) {
@@ -2075,9 +2079,14 @@ export async function handleStructuredBookingFlow({
   queueLatencyMs,
   receivedAt,
   history = [],
+  forceCatalogFlow = false,
 }) {
-  if (!settings.allowAutoBooking) return null;
-  if (!flowEnabled(base, "pre_agendamento") && !flowEnabled(base, "verificacao_agenda")) return null;
+  if (!settings.allowAutoBooking && !forceCatalogFlow) return null;
+  if (
+    !forceCatalogFlow &&
+    !flowEnabled(base, "pre_agendamento") &&
+    !flowEnabled(base, "verificacao_agenda")
+  ) return null;
 
   const lastAiMessage = (history || []).filter(item => item.sender_type === "ai").pop();
   const lastAiResponseText = lastAiMessage ? lastAiMessage.body : "";
@@ -2198,6 +2207,7 @@ export async function handleStructuredBookingFlow({
   const active =
     (currentState.status && currentState.status !== "booked") ||
     previousPromptSuggestsBooking ||
+    forceCatalogFlow ||
     isServiceCatalogMenuIntent(text) ||
     Boolean(directServiceChoice?.serviceId);
   if (!active && !isBookingIntent(text)) return null;
@@ -3829,6 +3839,35 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       history,
     });
     if (structuredBooking) return structuredBooking;
+  }
+
+  const backendCatalogRequest =
+    isServiceCatalogMenuIntent(concatenatedText) ||
+    (
+      !isClientAskingQuestion(concatenatedText) &&
+      hasCommercialCatalogReference(concatenatedText, base)
+    );
+  if (!hasActiveBookingState && backendCatalogRequest) {
+    const structuredCatalog = await handleStructuredBookingFlow({
+      normalized,
+      conversationId,
+      inboundMessageId,
+      text: concatenatedText,
+      settings,
+      base,
+      recorded,
+      queueLatencyMs,
+      receivedAt,
+      history,
+      forceCatalogFlow: true,
+    });
+    if (structuredCatalog) return structuredCatalog;
+    console.warn("WhatsApp backend catalog flow returned no response", {
+      conversationId,
+      catalogMenuIntent: isServiceCatalogMenuIntent(concatenatedText),
+      hasCatalogReference: hasCommercialCatalogReference(concatenatedText, base),
+      bookableServices: bookableAiServices(base).length,
+    });
   }
 
   const prioritizeBookingState = !hasActiveBookingState && shouldPrioritizeBookingState(

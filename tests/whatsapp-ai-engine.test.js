@@ -110,6 +110,8 @@ test("hydrates birth date and contact data from an existing client without overw
 test("recognizes requests to browse the backend service catalog", () => {
   assert.equal(isServiceCatalogMenuIntent("Serviços"), true);
   assert.equal(isServiceCatalogMenuIntent("Quero ver serviços"), true);
+  assert.equal(isServiceCatalogMenuIntent("Quais serviços disponíveis"), true);
+  assert.equal(isServiceCatalogMenuIntent("Que serviços vocês oferecem"), true);
   assert.equal(isServiceCatalogMenuIntent("Como funciona o serviço?"), false);
 });
 
@@ -800,7 +802,7 @@ test("handleStructuredBookingFlow opens inventory choices for a service named in
     conversationId: "conversation-inventory",
     inboundMessageId: "inbound-inventory",
     text: "Ponto americano",
-    settings: { allowAutoBooking: true },
+    settings: { allowAutoBooking: false },
     base: {
       flows: [{ flow_key: "pre_agendamento", enabled: true }],
       services: [{
@@ -832,6 +834,7 @@ test("handleStructuredBookingFlow opens inventory choices for a service named in
     queueLatencyMs: 0,
     receivedAt: new Date(),
     history: [],
+    forceCatalogFlow: true,
   });
 
   assert.equal(response.reason, "booking_inventory_options");
