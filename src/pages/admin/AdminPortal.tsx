@@ -4940,6 +4940,7 @@ export function AdminServicesPage() {
 
 export function AdminInventoryPage() {
   const p = useLoad<{ inventory: any[], categories?: any[], methods?: any[], colors?: any[] }>("/api/data?resource=inventory");
+  const servicesData = useLoad<any[]>("/api/portal?resource=admin-services");
   const [open, setOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
 
@@ -5017,11 +5018,12 @@ export function AdminInventoryPage() {
     }
   };
 
-  if (p.loading) return <LoadingState />;
+  if (p.loading || servicesData.loading) return <LoadingState />;
   const list = p.data?.inventory || [];
   const categories = p.data?.categories || [];
   const methods = p.data?.methods || [];
   const colors = p.data?.colors || [];
+  const services = servicesData.data || [];
   const total = list.reduce(
     (s, x) => s + Number(x.unit_cost || 0) * Number(x.qty || 0),
     0,
@@ -5047,6 +5049,7 @@ export function AdminInventoryPage() {
       minimumStock: "",
       weightGrams: "",
       active: true,
+      selectedServiceId: "",
     });
     setOpen(true);
   };
@@ -5070,6 +5073,7 @@ export function AdminInventoryPage() {
       minimumStock: String(item.min || 0),
       weightGrams: item.weight_grams ? String(item.weight_grams) : "",
       active: item.active !== false,
+      selectedServiceId: "",
     });
     setOpen(true);
   };
@@ -5293,6 +5297,56 @@ export function AdminInventoryPage() {
             set={(v) => setForm({ ...form, supplier: v })}
           />
           <div className="col-span-2 block">
+            <span className="mb-2 block text-xs font-bold text-stone-500">Vincular a Serviço (opcional)</span>
+            <select
+              className="field text-xs"
+              value={form.selectedServiceId || ""}
+              onChange={(e) => {
+                const selectedServiceId = e.target.value;
+                if (selectedServiceId) {
+                  const service = services.find((s: any) => s.id === selectedServiceId);
+                  if (service) {
+                    let nextCode = form.code;
+                    if (!editingItem && service.category_id) {
+                      const cat = categories.find((c: any) => c.id === service.category_id);
+                      if (cat) {
+                        nextCode = generateNextCode(cat.name, list);
+                      }
+                    }
+                    setForm({
+                      ...form,
+                      selectedServiceId: service.id,
+                      categoryId: service.category_id || "",
+                      category: service.category_name || "Cabelo humano",
+                      hairMethodId: service.hair_method_id || "",
+                      code: nextCode
+                    });
+                  }
+                } else {
+                  setForm({
+                    ...form,
+                    selectedServiceId: "",
+                    categoryId: "",
+                    category: "Cabelo humano",
+                    hairMethodId: ""
+                  });
+                }
+              }}
+            >
+              <option value="">Selecione um serviço...</option>
+              {services.map((s: any) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            {form.selectedServiceId && (
+              <p className="mt-1 text-[10px] text-stone-400 italic">
+                Categoria e método preenchidos automaticamente.
+              </p>
+            )}
+          </div>
+          <div className="col-span-2 block">
             <span className="mb-2 block text-xs font-bold text-stone-500">Categoria</span>
             <select
               className="field text-xs"
@@ -5312,7 +5366,8 @@ export function AdminInventoryPage() {
                   categoryId: val,
                   category: cat ? cat.name : "Cabelo humano",
                   hairMethodId: matchingMethod ? matchingMethod.id : "",
-                  code: nextCode
+                  code: nextCode,
+                  selectedServiceId: ""
                 });
               }}
             >
