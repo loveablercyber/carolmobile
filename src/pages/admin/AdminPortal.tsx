@@ -73,6 +73,54 @@ const saoPauloDateKey = (value: unknown) => {
   const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${byType.year}-${byType.month}-${byType.day}`;
 };
+const buildCategoryTreeOptions = (categoriesList: any[]) => {
+  const roots = categoriesList.filter(c => !c.parent_id);
+  const result: { id: string, name: string, level: number }[] = [];
+  
+  const traverse = (node: any, level: number) => {
+    result.push({ id: node.id, name: node.name, level });
+    const children = categoriesList.filter(c => c.parent_id === node.id);
+    for (const child of children) {
+      traverse(child, level + 1);
+    }
+  };
+
+  for (const root of roots) {
+    traverse(root, 0);
+  }
+
+  for (const cat of categoriesList) {
+    if (cat.parent_id && !result.some(r => r.id === cat.id)) {
+      traverse(cat, 0);
+    }
+  }
+  
+  return result;
+};
+const buildMethodTreeOptions = (methodsList: any[]) => {
+  const roots = methodsList.filter(m => !m.parent_id);
+  const result: { id: string, name: string, level: number }[] = [];
+  
+  const traverse = (node: any, level: number) => {
+    result.push({ id: node.id, name: node.name, level });
+    const children = methodsList.filter(m => m.parent_id === node.id);
+    for (const child of children) {
+      traverse(child, level + 1);
+    }
+  };
+
+  for (const root of roots) {
+    traverse(root, 0);
+  }
+
+  for (const met of methodsList) {
+    if (met.parent_id && !result.some(r => r.id === met.id)) {
+      traverse(met, 0);
+    }
+  }
+  
+  return result;
+};
 const saoPauloTimeKey = (value: unknown) =>
   new Date(String(value)).toLocaleTimeString("pt-BR", {
     timeZone: "America/Sao_Paulo",
@@ -3838,30 +3886,6 @@ export function AdminServicesPage() {
   const [methodForm, setMethodForm] = useState({ id: "", name: "", description: "", maintenanceDays: "", active: true, categoryId: "", parentId: "" });
   const [parentMethodForSub, setParentMethodForSub] = useState<any>(null);
 
-  const buildMethodTreeOptions = (methodsList: any[]) => {
-    const roots = methodsList.filter(m => !m.parent_id);
-    const result: { id: string, name: string, level: number }[] = [];
-    
-    const traverse = (node: any, level: number) => {
-      result.push({ id: node.id, name: node.name, level });
-      const children = methodsList.filter(m => m.parent_id === node.id);
-      for (const child of children) {
-        traverse(child, level + 1);
-      }
-    };
-
-    for (const root of roots) {
-      traverse(root, 0);
-    }
-
-    for (const met of methodsList) {
-      if (met.parent_id && !result.some(r => r.id === met.id)) {
-        traverse(met, 0);
-      }
-    }
-    
-    return result;
-  };
 
   const renderMethodNode = (met: any, level: number = 0) => {
     const children = methods.filter((m: any) => m.parent_id === met.id);
@@ -3932,31 +3956,6 @@ export function AdminServicesPage() {
         )}
       </div>
     );
-  };
-
-  const buildCategoryTreeOptions = (categoriesList: any[]) => {
-    const roots = categoriesList.filter(c => !c.parent_id);
-    const result: { id: string, name: string, level: number }[] = [];
-    
-    const traverse = (node: any, level: number) => {
-      result.push({ id: node.id, name: node.name, level });
-      const children = categoriesList.filter(c => c.parent_id === node.id);
-      for (const child of children) {
-        traverse(child, level + 1);
-      }
-    };
-
-    for (const root of roots) {
-      traverse(root, 0);
-    }
-
-    for (const cat of categoriesList) {
-      if (cat.parent_id && !result.some(r => r.id === cat.id)) {
-        traverse(cat, 0);
-      }
-    }
-    
-    return result;
   };
 
   const renderCategoryNode = (cat: any, level: number = 0) => {
@@ -4856,7 +4855,7 @@ export function AdminServicesPage() {
 }
 
 export function AdminInventoryPage() {
-  const p = useLoad<{ inventory: any[] }>("/api/data?resource=inventory");
+  const p = useLoad<{ inventory: any[], categories?: any[], methods?: any[] }>("/api/data?resource=inventory");
   const [open, setOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
 
@@ -4872,6 +4871,8 @@ export function AdminInventoryPage() {
     code: "",
     supplier: "",
     category: "Cabelo humano",
+    categoryId: "",
+    hairMethodId: "",
     color: "",
     shade: "",
     lengthCm: "",
@@ -4886,6 +4887,8 @@ export function AdminInventoryPage() {
 
   if (p.loading) return <LoadingState />;
   const list = p.data?.inventory || [];
+  const categories = p.data?.categories || [];
+  const methods = p.data?.methods || [];
   const total = list.reduce(
     (s, x) => s + Number(x.unit_cost || 0) * Number(x.qty || 0),
     0,
@@ -4898,6 +4901,8 @@ export function AdminInventoryPage() {
       code: "",
       supplier: "",
       category: "Cabelo humano",
+      categoryId: "",
+      hairMethodId: "",
       color: "",
       shade: "",
       lengthCm: "",
@@ -4916,7 +4921,9 @@ export function AdminInventoryPage() {
     setForm({
       code: item.code || "",
       supplier: item.supplier || "",
-      category: item.item || "",
+      category: item.category || "",
+      categoryId: item.category_id || "",
+      hairMethodId: item.hair_method_id || "",
       color: item.color || "",
       shade: item.shade || "",
       lengthCm: item.length_cm ? String(item.length_cm) : "",
@@ -5078,7 +5085,14 @@ export function AdminInventoryPage() {
                 {x.code}
                 <small className="block text-stone-400">{x.lot}</small>
               </span>
-              <b className="text-xs">{x.item}</b>
+              <b className="text-xs">
+                {x.item}
+                {x.hair_method_id && methods.find((m: any) => m.id === x.hair_method_id) && (
+                  <span className="block text-[10px] text-stone-400 font-normal">
+                    Método: {methods.find((m: any) => m.id === x.hair_method_id).name}
+                  </span>
+                )}
+              </b>
               <span className="hidden text-xs sm:block">{x.detail || "—"}</span>
               <span className="text-xs">
                 {x.qty} / {x.min}
@@ -5134,11 +5148,43 @@ export function AdminInventoryPage() {
             value={form.supplier}
             set={(v) => setForm({ ...form, supplier: v })}
           />
-          <Input
-            label="Categoria"
-            value={form.category}
-            set={(v) => setForm({ ...form, category: v })}
-          />
+          <div className="col-span-2 block">
+            <span className="mb-2 block text-xs font-bold text-stone-500">Categoria</span>
+            <select
+              className="field text-xs"
+              value={form.categoryId || ""}
+              onChange={(e) => {
+                const val = e.target.value;
+                const cat = categories.find((c: any) => c.id === val);
+                setForm({ ...form, categoryId: val, category: cat ? cat.name : "Cabelo humano" });
+              }}
+            >
+              <option value="">Sem Categoria (Geral)</option>
+              {buildCategoryTreeOptions(categories).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {"\u00A0\u00A0".repeat(c.level) + (c.level > 0 ? "↳ " : "") + c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="col-span-2 block">
+            <span className="mb-2 block text-xs font-bold text-stone-500">Método</span>
+            <select
+              className="field text-xs"
+              value={form.hairMethodId || ""}
+              onChange={(e) => {
+                const val = e.target.value;
+                setForm({ ...form, hairMethodId: val });
+              }}
+            >
+              <option value="">Sem Método (Geral)</option>
+              {buildMethodTreeOptions(methods).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {"\u00A0\u00A0".repeat(m.level) + (m.level > 0 ? "↳ " : "") + m.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <Input
             label="Cor"
             value={form.color}

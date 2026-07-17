@@ -382,17 +382,25 @@ async function getResource(req, res, user, resource) {
   if (resource === "inventory") {
     await requireUser(req, ["professional", "admin"]);
     await query("alter table public.hair_inventory add column if not exists archived boolean default false");
-    const { rows } = await query(
-      `select id, code, supplier, category as item, category, color, shade, length_cm, texture, weight_grams, lot,
-              quantity as qty, minimum_stock as min, unit_cost, suggested_price,
-              case when quantity<=minimum_stock then 'Estoque baixo' else 'Em estoque' end as status,
-              archived
-       from public.hair_inventory
-       where archived = false
-       order by category,color`,
-    );
+    await query("alter table public.hair_inventory add column if not exists category_id uuid references public.service_categories(id) on delete set null");
+    await query("alter table public.hair_inventory add column if not exists hair_method_id uuid references public.hair_methods(id) on delete set null");
+
+    const [invRes, catRes, metRes] = await Promise.all([
+      query(
+        `select id, code, supplier, category as item, category, color, shade, length_cm, texture, weight_grams, lot,
+                quantity as qty, minimum_stock as min, unit_cost, suggested_price,
+                case when quantity<=minimum_stock then 'Estoque baixo' else 'Em estoque' end as status,
+                archived, category_id, hair_method_id
+         from public.hair_inventory
+         where archived = false
+         order by category,color`,
+      ),
+      query("select id, name, parent_id from public.service_categories order by sort_order, name"),
+      query("select id, name, parent_id from public.hair_methods order by name"),
+    ]);
+
     return send(res, 200, {
-      inventory: rows.map((row) => ({
+      inventory: invRes.rows.map((row) => ({
         ...row,
         detail: [row.color, row.shade, row.length_cm ? `${row.length_cm} cm` : "", row.texture].filter(Boolean).join(" • "),
         cost: Number(row.unit_cost || 0).toLocaleString("pt-BR", {
@@ -403,6 +411,8 @@ async function getResource(req, res, user, resource) {
           ? `${Math.round((1 - Number(row.unit_cost) / Number(row.suggested_price)) * 100)}%`
           : "—",
       })),
+      categories: catRes.rows,
+      methods: metRes.rows,
     });
   }
 
@@ -1441,13 +1451,15 @@ async function createPhoto(req, res, user, body) {
 async function saveInventory(req, res, user, body) {
   await requireUser(req, ["admin"]);
   await query("alter table public.hair_inventory add column if not exists archived boolean default false");
+  await query("alter table public.hair_inventory add column if not exists category_id uuid references public.service_categories(id) on delete set null");
+  await query("alter table public.hair_inventory add column if not exists hair_method_id uuid references public.hair_methods(id) on delete set null");
 
   if (body.id) {
     const { rows } = await query(
       `update public.hair_inventory
        set code=$1, supplier=$2, category=$3, color=$4, shade=$5, length_cm=$6, texture=$7, weight_grams=$8, lot=$9,
-           unit_cost=$10, suggested_price=$11, minimum_stock=$12, archived=$13
-       where id=$14 returning *`,
+           unit_cost=$10, suggested_price=$11, minimum_stock=$12, archived=$13, category_id=$14, hair_method_id=$15
+       where id=$16 returning *`,
       [
         body.code,
         body.supplier,
@@ -1462,6 +1474,8 @@ async function saveInventory(req, res, user, body) {
         body.suggestedPrice || 0,
         body.minimumStock || 0,
         body.archived === true,
+        body.categoryId || null,
+        body.hairMethodId || null,
         body.id
       ]
     );
@@ -1484,7 +1498,7 @@ async function saveInventory(req, res, user, body) {
     return send(res, 200, { item: rows[0] });
   } else {
     const { rows } = await query(
-      `insert into public.hair_inventory(code,supplier,category,color,shade,length_cm,texture,weight_grams,lot,unit_cost,suggested_price,quantity,minimum_stock) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning *`,
+      `insert into public.hair_inventory(code,supplier,category,color,shade,length_cm,texture,weight_grams,lot,unit_cost,suggested_price,quantity,minimum_stock,category_id,hair_method_id) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) returning *`,
       [
         body.code,
         body.supplier,
@@ -1499,6 +1513,8 @@ async function saveInventory(req, res, user, body) {
         body.suggestedPrice || 0,
         body.quantity || 0,
         body.minimumStock || 0,
+        body.categoryId || null,
+        body.hairMethodId || null,
       ],
     );
     if (Number(body.quantity) > 0) {
