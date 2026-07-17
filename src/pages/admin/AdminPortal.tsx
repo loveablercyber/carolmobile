@@ -4530,9 +4530,15 @@ export function AdminServicesPage() {
               <select
                 className="field"
                 value={form.categoryId}
-                onChange={(event) =>
-                  setForm({ ...form, categoryId: event.target.value })
-                }
+                onChange={(event) => {
+                  const catId = event.target.value;
+                  const matchingMethod = methods.find((m: any) => m.category_id === catId);
+                  setForm({
+                    ...form,
+                    categoryId: catId,
+                    hairMethodId: matchingMethod ? matchingMethod.id : ""
+                  });
+                }}
               >
                 <option value="">Sem categoria</option>
                 {buildCategoryTreeOptions(categories).map((c) => (
