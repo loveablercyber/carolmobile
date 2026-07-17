@@ -161,7 +161,7 @@ export function ProfessionalRecordsPage(){
 - Lote: ${activeHairLot || 'Sem lote'}
 - Quantidade: ${form.strandsCount ? `${form.strandsCount} mechas` : 'Não informado'}
 - Peso: ${form.weightGrams ? `${form.weightGrams}g` : 'Não informado'}
-- Comprimento: ${form.lengthCm ? `${form.lengthCm}cm` : 'Não informado'}
+- Comprimento: ${form.lengthCm ? (String(form.lengthCm).toLowerCase().includes('cm') ? form.lengthCm : `${form.lengthCm}cm`) : 'Não informado'}
 - Cor/Tonalidade: ${[form.color, form.shade].filter(Boolean).join(' / ') || 'Não informado'}
 - Textura: ${form.texture || 'Não informado'}
 
@@ -217,7 +217,7 @@ ${form.recommendations || 'Sem recomendações específicas.'}
                 <option value="">Nenhum (Usar sem lote)</option>
                 {data.inventory.map((x: any) => (
                   <option key={x.id} value={x.id}>
-                    {x.lot} ({x.category} • {x.color} • {x.length_cm}cm • {x.quantity} un)
+                    {x.lot} ({x.category} • {x.color} • {x.length_cm ? (String(x.length_cm).toLowerCase().includes('cm') ? x.length_cm : `${x.length_cm}cm`) : ''} • {x.quantity} un)
                   </option>
                 ))}
               </select>
@@ -237,7 +237,7 @@ ${form.recommendations || 'Sem recomendações específicas.'}
           )}
           <TechnicalInput label="Quantidade de mechas" type="number" value={form.strandsCount} set={v=>setForm({...form,strandsCount:v})}/>
           <TechnicalInput disabled={!!form.hairInventoryId} label="Peso (g)" type="number" value={form.weightGrams} set={v=>setForm({...form,weightGrams:v})}/>
-          <TechnicalInput disabled={!!form.hairInventoryId} label="Comprimento (cm)" type="number" value={form.lengthCm} set={v=>setForm({...form,lengthCm:v})}/>
+          <TechnicalInput disabled={!!form.hairInventoryId} label="Comprimento" type="text" placeholder="ex: 60/65/70cm" value={form.lengthCm} set={v=>setForm({...form,lengthCm:v})}/>
           <TechnicalInput disabled={!!form.hairInventoryId} label="Cor" value={form.color} set={v=>setForm({...form,color:v})}/>
           <TechnicalInput disabled={!!form.hairInventoryId} label="Tonalidade" value={form.shade} set={v=>setForm({...form,shade:v})}/>
           <TechnicalInput disabled={!!form.hairInventoryId} label="Textura" value={form.texture} set={v=>setForm({...form,texture:v})}/>
@@ -408,7 +408,7 @@ ${form.recommendations || 'Sem recomendações específicas.'}
   </div>
 }
 
-function TechnicalInput({label,value,set,type='text',disabled=false}:{label:string;value:string;set:(v:string)=>void;type?:string;disabled?:boolean}){return <label className="block"><span className="mb-2 block text-xs font-bold">{label}</span><input disabled={disabled} className="field disabled:opacity-60" min={type==='number'?'0':undefined} step={type==='number'?'any':undefined} type={type} value={value} onChange={e=>set(e.target.value)}/></label>}
+function TechnicalInput({label,value,set,type='text',disabled=false,placeholder}:{label:string;value:string;set:(v:string)=>void;type?:string;disabled?:boolean;placeholder?:string}){return <label className="block"><span className="mb-2 block text-xs font-bold">{label}</span><input disabled={disabled} className="field disabled:opacity-60" min={type==='number'?'0':undefined} step={type==='number'?'any':undefined} type={type} placeholder={placeholder} value={value} onChange={e=>set(e.target.value)}/></label>}
 
 export function ProfessionalAvailabilityPage(){
   const p=useLoad<any>('/api/portal?resource=professional-availability');

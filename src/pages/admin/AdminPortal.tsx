@@ -5124,7 +5124,7 @@ export function AdminInventoryPage() {
         body: JSON.stringify({
           id: editingItem?.id || undefined,
           ...form,
-          lengthCm: Number(form.lengthCm) || null,
+          lengthCm: form.lengthCm || null,
           weightGrams: Number(form.weightGrams) || null,
           unitCost: Number(form.unitCost),
           suggestedPrice: Number(form.suggestedPrice),
@@ -5377,8 +5377,9 @@ export function AdminInventoryPage() {
             </select>
           </div>
           <Input
-            label="Comprimento (cm)"
-            type="number"
+            label="Comprimento"
+            type="text"
+            placeholder="ex: 60/65/70cm"
             value={form.lengthCm}
             set={(v) => setForm({ ...form, lengthCm: v })}
           />

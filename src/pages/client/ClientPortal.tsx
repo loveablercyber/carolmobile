@@ -1642,7 +1642,7 @@ export function ClientHistoryPage() {
                     </span>
                     <span>
                       <b className="block">
-                        {r.length_cm ? `${r.length_cm} cm` : "—"}
+                        {r.length_cm ? (String(r.length_cm).toLowerCase().includes('cm') ? r.length_cm : `${r.length_cm} cm`) : "—"}
                       </b>
                       <small className="text-stone-400">Comprimento</small>
                     </span>

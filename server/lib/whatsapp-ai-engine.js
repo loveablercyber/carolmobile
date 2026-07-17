@@ -2478,7 +2478,7 @@ export function summarizeAiCommercialContext(base, settings = {}) {
     .map((item) => {
       const price = Number(item.suggested_price || 0);
       const priceText = price > 0 ? `valor R$ ${price.toFixed(2)}` : "valor não cadastrado";
-      return `- ${item.name} (${item.category}): Cor ${item.color || "N/A"}, Tom ${item.shade || "N/A"}, ${item.length_cm || "N/A"}cm, ${item.texture || "textura N/A"}, ${item.weight_grams || "N/A"}g — ${priceText}; disponibilidade: ${item.quantity} unidades.`;
+      return `- ${item.name} (${item.category}): Cor ${item.color || "N/A"}, Tom ${item.shade || "N/A"}, ${item.length_cm ? (String(item.length_cm).toLowerCase().includes('cm') ? item.length_cm : `${item.length_cm}cm`) : "N/A"}, ${item.texture || "textura N/A"}, ${item.weight_grams || "N/A"}g — ${priceText}; disponibilidade: ${item.quantity} unidades.`;
     });
   const products = (base.products || [])
     .filter((item) => item.active !== false && Number(item.stock_quantity || 0) > 0)

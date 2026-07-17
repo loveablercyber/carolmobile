@@ -422,7 +422,7 @@ async function getResource(req, res, user, resource) {
     return send(res, 200, {
       inventory: invRes.rows.map((row) => ({
         ...row,
-        detail: [row.color, row.shade, row.length_cm ? `${row.length_cm} cm` : "", row.texture].filter(Boolean).join(" • "),
+        detail: [row.color, row.shade, row.length_cm ? (String(row.length_cm).toLowerCase().includes('cm') ? String(row.length_cm) : `${row.length_cm} cm`) : "", row.texture].filter(Boolean).join(" • "),
         cost: Number(row.unit_cost || 0).toLocaleString("pt-BR", {
           style: "currency",
           currency: "BRL",
@@ -1475,6 +1475,8 @@ async function saveInventory(req, res, user, body) {
   await query("alter table public.hair_inventory add column if not exists category_id uuid references public.service_categories(id) on delete set null");
   await query("alter table public.hair_inventory add column if not exists hair_method_id uuid references public.hair_methods(id) on delete set null");
   await query("alter table public.hair_inventory add column if not exists active boolean default true");
+  await query("alter table public.hair_inventory alter column length_cm type text using length_cm::text").catch(() => {});
+  await query("alter table public.technical_records alter column length_cm type text using length_cm::text").catch(() => {});
 
   if (body.id) {
     const { rows } = await query(
