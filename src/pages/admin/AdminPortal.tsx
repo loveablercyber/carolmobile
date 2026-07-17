@@ -5294,12 +5294,22 @@ export function AdminInventoryPage() {
               }}
             >
               <option value="">Sem Método (Geral)</option>
-              {buildMethodTreeOptions(methods).map((m) => (
+              {buildMethodTreeOptions(
+                form.categoryId
+                  ? methods.filter((m: any) => m.category_id === form.categoryId)
+                  : []
+              ).map((m) => (
                 <option key={m.id} value={m.id}>
                   {"\u00A0\u00A0".repeat(m.level) + (m.level > 0 ? "↳ " : "") + m.name}
                 </option>
               ))}
             </select>
+            {!form.categoryId && (
+              <p className="mt-1 text-[10px] text-stone-400 italic">Selecione uma categoria para ver os métodos disponíveis.</p>
+            )}
+            {form.categoryId && buildMethodTreeOptions(methods.filter((m: any) => m.category_id === form.categoryId)).length === 0 && (
+              <p className="mt-1 text-[10px] text-stone-400 italic">Nenhum método cadastrado para esta categoria.</p>
+            )}
           </div>
           <div className="col-span-2 block">
             <div className="flex justify-between items-center mb-2">
