@@ -1466,6 +1466,7 @@ function isNewBookingRequestAfterBooked(text) {
   const normalized = normalizeText(text);
   if (numericChoice(text) === 1) return true;
   if (asksAboutExistingBooking(text)) return false;
+  if (isBookingIntent(text) || isAgendaAvailabilityIntent(text)) return true;
   const hasServiceAction = includesAny(normalized, [
     "quero fazer aplicacao",
     "quero fazer uma aplicacao",
@@ -1827,18 +1828,36 @@ export async function handleStructuredBookingFlow({
 
   try {
     let currentState = parseJsonObject(recorded.conversation.booking_state);
-  const persistedAppointmentId = recorded.conversation.appointment_id || currentState.appointmentId || "";
-  if (
-    persistedAppointmentId &&
-    currentState.status !== "booked" &&
-    currentState.previousAppointmentId !== persistedAppointmentId
-  ) {
-    currentState = {
-      ...currentState,
-      status: "booked",
-      appointmentId: persistedAppointmentId,
-    };
-  }
+    let persistedAppointmentId = recorded.conversation.appointment_id || currentState.appointmentId || "";
+    if (persistedAppointmentId) {
+      const appQuery = await query(
+        `select id
+           from public.appointments
+          where id = $1
+            and starts_at > now() - interval '2 hours'
+            and status not in ('cancelled', 'rejected')`,
+        [persistedAppointmentId]
+      ).catch(() => null);
+      if (!appQuery || appQuery.rowCount === 0) {
+        persistedAppointmentId = "";
+        if (currentState.status === "booked") {
+          currentState.status = "";
+          currentState.appointmentId = "";
+        }
+      }
+    }
+
+    if (
+      persistedAppointmentId &&
+      currentState.status !== "booked" &&
+      currentState.previousAppointmentId !== persistedAppointmentId
+    ) {
+      currentState = {
+        ...currentState,
+        status: "booked",
+        appointmentId: persistedAppointmentId,
+      };
+    }
   if (shouldResetBookingStateOnGreeting(text, currentState)) {
     await saveBookingState(conversationId, {});
     const responseText = settings.welcomeMessage;
