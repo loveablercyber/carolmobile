@@ -25,6 +25,10 @@ import {
   shouldPrioritizeBookingState,
   isSimpleGreeting,
   localGreetingForDate,
+  buildInventoryOptions,
+  phoneLookupCandidates,
+  selectBookingService,
+  hydrateBookingContactFromClient,
 } from "../server/lib/whatsapp-ai-engine.js";
 
 const originalQuery = pool.query;
@@ -41,6 +45,64 @@ afterEach(() => {
   else process.env.BAILEYS_API_URL = originalBaileysUrl;
   if (originalBaileysKey === undefined) delete process.env.BAILEYS_API_KEY;
   else process.env.BAILEYS_API_KEY = originalBaileysKey;
+});
+
+test("matches migrated Brazilian client phones with or without country and ninth digit", () => {
+  const candidates = phoneLookupCandidates("5514988773387");
+  assert.ok(candidates.exact.includes("5514988773387"));
+  assert.ok(candidates.exact.includes("14988773387"));
+  assert.ok(candidates.exact.includes("1488773387"));
+  assert.ok(candidates.exact.includes("551488773387"));
+});
+
+test("lists available inventory for a service, including generic category items", () => {
+  const options = buildInventoryOptions(
+    {
+      inventory: [
+        { id: "exact", active: true, quantity: 2, category_id: "cat-1", hair_method_id: "method-1", color: "Loiro", length_cm: "60", suggested_price: 900 },
+        { id: "generic", active: true, quantity: 1, category_id: "cat-1", hair_method_id: null, color: "Castanho", length_cm: "55", suggested_price: 800 },
+        { id: "empty", active: true, quantity: 0, category_id: "cat-1", hair_method_id: "method-1", color: "Preto" },
+        { id: "other-method", active: true, quantity: 3, category_id: "cat-1", hair_method_id: "method-2", color: "Ruivo" },
+      ],
+    },
+    { offerInventoryItems: true, categoryId: "cat-1", methodId: "method-1" },
+  );
+  assert.deepEqual(options.map((item) => item.inventoryId), ["exact", "generic"]);
+});
+
+test("keeps inventory linkage when a service is selected from natural language", () => {
+  const selected = selectBookingService("quero agendar Alongamento Premium", {
+    services: [{
+      id: "service-1",
+      name: "Alongamento Premium",
+      active: true,
+      ai_active: true,
+      allow_auto_booking: true,
+      offer_inventory_items: true,
+      category_id: "category-1",
+      hair_method_id: "method-1",
+    }],
+  });
+  assert.equal(selected.offerInventoryItems, true);
+  assert.equal(selected.categoryId, "category-1");
+  assert.equal(selected.methodId, "method-1");
+});
+
+test("hydrates birth date and contact data from an existing client without overwriting state", () => {
+  const state = { clientPhone: "5514999999999", clientName: "Nome mantido" };
+  hydrateBookingContactFromClient(state, {
+    full_name: "Cliente cadastrada",
+    email: "cliente@example.test",
+    cpf: "12345678901",
+    birth_date: new Date("1990-05-10T00:00:00.000Z"),
+  });
+  assert.deepEqual(state, {
+    clientPhone: "5514999999999",
+    clientName: "Nome mantido",
+    clientEmail: "cliente@example.test",
+    clientCpf: "12345678901",
+    clientBirthDate: "1990-05-10",
+  });
 });
 
 test("resets saved booking progress when the client starts over with a greeting", () => {

@@ -1532,7 +1532,7 @@ export async function getAiCommercialBase() {
   if (baseCache && (now - baseCacheTime < 60000)) {
     return baseCache;
   }
-  const [services, plans, coupons, promotions, flows, knowledgeArticles, inventory, products] = await Promise.all([
+  const [services, plans, coupons, promotions, flows, knowledgeArticles, inventory, products, categories, methods] = await Promise.all([
     query(
       `select s.id,s.category_id,s.hair_method_id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
         coalesce(s.is_free,false) as is_free,
@@ -1585,6 +1585,12 @@ export async function getAiCommercialBase() {
        from public.products
        where active=true
        order by category,name`
+    ),
+    query(
+      `select id, name, parent_id from public.service_categories order by sort_order, name`
+    ),
+    query(
+      `select id, name, active, category_id, parent_id from public.hair_methods order by name`
     )
   ]);
   const base = {
@@ -1596,6 +1602,8 @@ export async function getAiCommercialBase() {
     knowledgeArticles: knowledgeArticles.rows,
     inventory: inventory.rows,
     products: products.rows,
+    categories: categories.rows,
+    methods: methods.rows,
   };
   baseCache = base;
   baseCacheTime = now;
