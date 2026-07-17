@@ -5307,9 +5307,11 @@ export function AdminInventoryPage() {
                   const service = services.find((s: any) => s.id === selectedServiceId);
                   if (service) {
                     let nextCode = form.code;
-                    if (!editingItem && service.category_id) {
+                    let categoryName = "Cabelo humano";
+                    if (service.category_id) {
                       const cat = categories.find((c: any) => c.id === service.category_id);
                       if (cat) {
+                        categoryName = cat.name;
                         nextCode = generateNextCode(cat.name, list);
                       }
                     }
@@ -5317,7 +5319,7 @@ export function AdminInventoryPage() {
                       ...form,
                       selectedServiceId: service.id,
                       categoryId: service.category_id || "",
-                      category: service.category_name || "Cabelo humano",
+                      category: categoryName,
                       hairMethodId: service.hair_method_id || "",
                       code: nextCode
                     });
