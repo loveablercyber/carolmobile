@@ -65,6 +65,15 @@ import {
 
 const money = (n: number) =>
   n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const bookingDepositAmount = (
+  service: Record<string, any> | undefined,
+  finalPrice: number,
+) => {
+  if (!service?.id || service.is_free) return 0;
+  const configuredDeposit = Math.max(0, Number(service.deposit_amount || 0));
+  const payablePrice = Math.max(0, Number(finalPrice || 0));
+  return Math.min(configuredDeposit, payablePrice);
+};
 const servicePriceLabel = (service: Record<string, any>, inventoryItems: Array<Record<string, any>> = []) => {
   if (service?.offer_inventory_items) {
     const matching = (inventoryItems || []).filter(
@@ -1601,8 +1610,7 @@ function ClientAgenda() {
           : (service ? Number(service.base_price || 0) : 0);
         const discount = couponInfo?.code === selected.couponCode ? couponInfo.discount : 0;
         const finalPrice = Math.max(0, servicePrice - discount);
-        const depositAmount = service?.offer_inventory_items ? 0 : (service ? Number(service.deposit_amount || 0) : 0);
-        const finalDeposit = Math.min(depositAmount, finalPrice);
+        const finalDeposit = bookingDepositAmount(service, finalPrice);
 
         return (
           <Modal open={success} onClose={() => setSuccess(false)}>
@@ -1856,8 +1864,7 @@ function BookingStep({
       : (service ? Number(service.base_price || 0) : 0);
     const discount = couponInfo?.code === selected.couponCode ? couponInfo.discount : 0;
     const finalPrice = Math.max(0, servicePrice - discount);
-    const depositAmount = service?.offer_inventory_items ? 0 : (service ? Number(service.deposit_amount || 0) : 0);
-    const finalDeposit = Math.min(depositAmount, finalPrice);
+    const finalDeposit = bookingDepositAmount(service, finalPrice);
 
     return (
       <div className="mt-5">
@@ -1965,8 +1972,7 @@ function BookingStep({
     : (service ? Number(service.base_price || 0) : 0);
   const discount = couponInfo?.code === selected.couponCode ? couponInfo.discount : 0;
   const finalPrice = Math.max(0, servicePrice - discount);
-  const depositAmount = service?.offer_inventory_items ? 0 : (service ? Number(service.deposit_amount || 0) : 0);
-  const finalDeposit = Math.min(depositAmount, finalPrice);
+  const finalDeposit = bookingDepositAmount(service, finalPrice);
 
   const paymentOptions: Array<{
     name: string;

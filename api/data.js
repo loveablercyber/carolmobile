@@ -99,6 +99,13 @@ async function appointmentScope(user, alias = "a") {
   return { sql: "true", params: [] };
 }
 
+export function appointmentDepositAmount(service = {}, total = 0) {
+  if (service.is_free === true) return 0;
+  const configuredDeposit = Math.max(0, Number(service.deposit_amount || 0));
+  const payableTotal = Math.max(0, Number(total || 0));
+  return Math.min(configuredDeposit, payableTotal);
+}
+
 async function getResource(req, res, user, resource) {
   if (resource === "bootstrap") {
     await ensureServicesVisibilityColumn();
@@ -718,7 +725,8 @@ async function createAppointment(req, res, user, body) {
       await client.query("select uuid_generate_v4() as id")
     ).rows[0].id;
     const bookingCode = `CS-${String(appointmentId).replace(/-/g, "").slice(-12).toUpperCase()}`;
-    const requiresDeposit = !service.offer_inventory_items && Number(service.deposit_amount || 0) > 0;
+    const deposit = appointmentDepositAmount(service, couponResult.total);
+    const requiresDeposit = deposit > 0;
     const requestedStatus =
       (user.role === "admin" || user.role === "professional") && appointmentStatuses.includes(body.status)
         ? body.status
@@ -751,10 +759,6 @@ async function createAppointment(req, res, user, body) {
       requiresDeposit &&
       !["confirmed", "in_service", "completed"].includes(initialStatus)
     ) {
-      const deposit = Math.min(
-        Number(service.deposit_amount || 0),
-        couponResult.total,
-      );
       const provider =
         body.paymentMethod === "card"
           ? "sumup"
@@ -767,7 +771,7 @@ async function createAppointment(req, res, user, body) {
           rows[0].id,
           clientId,
           deposit,
-          service.deposit_amount,
+          Number(service.deposit_amount || 0),
           Math.min(couponResult.discount, Number(service.deposit_amount || 0)),
           couponResult.coupon?.id || null,
           body.paymentMethod || "pix",
