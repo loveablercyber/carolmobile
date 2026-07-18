@@ -1448,6 +1448,24 @@ function whatsappBookingPaymentInfo(service = {}, state = {}) {
   };
 }
 
+function bookingCreatedPaymentLines(appointment = {}) {
+  const amount = Number(appointment.paymentAmount || 0);
+  const signalLine = amount > 0 ? `💳 *Sinal:* ${formatBookingCurrency(amount)}` : "";
+  if (appointment.paymentUrl) {
+    return [
+      `${signalLine}\n\nlink para pagamento enviado abaixo:\n${appointment.paymentUrl}`,
+    ];
+  }
+  if (appointment.paymentId) {
+    return [
+      amount > 0
+        ? `💳 *Sinal:* ${formatBookingCurrency(amount)} para pagamento no portal.`
+        : "💳 Fatura gerada para pagamento no portal.",
+    ];
+  }
+  return ["💵 *Pagamento:* No local do atendimento."];
+}
+
 function missingBookingContactFields(state) {
   const missing = [];
   if (!clean(state.clientName)) missing.push("nome completo");
@@ -3054,13 +3072,8 @@ export async function handleStructuredBookingFlow({
       `🕒 Horário: *${state.time}*`,
       appointment.professional ? `👩‍💼 Profissional: *${appointment.professional}*` : "",
       appointment.bookingCode ? `🔑 Protocolo: *${appointment.bookingCode}*` : "",
-      appointment.paymentUrl
-        ? `💳 *Sinal:* link para pagamento enviado abaixo:`
-        : appointment.paymentId
-          ? `💳 Fatura: ${formatBookingCurrency(appointment.paymentAmount)} para pagamento no portal.`
-          : `💵 *Pagamento:* No local do atendimento.`,
+      ...bookingCreatedPaymentLines(appointment),
       "",
-      appointment.paymentUrl ? `${appointment.paymentUrl}\n` : "",
       "✨ Em breve nossa equipe confirmará todos os detalhes com você por aqui! 💖",
       accessText ? `\n${accessText}` : "",
     ].filter(Boolean).join("\n");

@@ -825,7 +825,8 @@ test("processIncomingWhatsAppWebhook creates a real appointment for confirmed Wh
   assert.equal(paymentCreated, true);
   assert.equal(conversationLinked, true);
   assert.equal(openAiCalled, false);
-  assert.equal(sentTexts.some(text => text.includes("Fatura:")), true);
+  assert.equal(sentTexts.some(text => /Sinal:.*R\$\s*30,00 para pagamento no portal\./s.test(text)), true);
+  assert.equal(sentTexts.some(text => text.includes("Fatura:")), false);
   assert.equal(sentTexts.some(text => text.includes("1) Agendar outro")), true);
   assert.equal(sentTexts.some(text => text.includes("2) Tirar uma dúvida")), true);
   assert.equal(sentTexts.some(text => text.includes("3) Falar com a equipe")), true);
