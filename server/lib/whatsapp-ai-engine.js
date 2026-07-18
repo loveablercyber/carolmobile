@@ -112,6 +112,23 @@ export {
 
 const MAX_AI_MESSAGE_CHARS = 6000;
 const SLOT_PAGE_SIZE = 5;
+const BOOKING_FLOW_HELP_TEXT = [
+  "Comandos: cancelar | voltar | menu | trocar servico | atendente",
+  "Pode enviar qualquer duvida a qualquer momento. Eu respondo e continuo seu agendamento de onde parou.",
+].join("\n");
+
+function shouldAppendBookingFlowHelp(reason = "", text = "") {
+  const value = String(reason || "");
+  if (!/^(booking|agenda)_/.test(value)) return false;
+  if (/^(booking_created|booking_global_cancel|booking_global_handoff|booking_followup_handoff)/.test(value)) return false;
+  return !String(text || "").includes("Comandos: cancelar | voltar | menu | trocar servico | atendente");
+}
+
+function withBookingFlowHelp(text, reason) {
+  const body = String(text || "").trim();
+  if (!shouldAppendBookingFlowHelp(reason, body)) return body;
+  return [body, BOOKING_FLOW_HELP_TEXT].filter(Boolean).join("\n\n");
+}
 
 function prunePayload(value, depth = 0) {
   if (depth > 4) return "[truncated]";
@@ -3517,15 +3534,16 @@ async function recordAiInteraction({ conversationId, messageId, model, inputSumm
 }
 
 async function performSendTextAndRecord({ normalized, conversationId, text, reason }) {
+  const finalText = withBookingFlowHelp(text, reason);
   const result = await sendBaileysTextMessage({
     number: normalized.phoneNumber,
-    text,
+    text: finalText,
     skipStatusCheck: true,
   });
   const sent = await recordOutboundAiMessage({
     conversationId,
     providerMessageId: result.data?.messageId || null,
-    text,
+    text: finalText,
     payload: { reason, provider: result.data },
   });
   return { sent, provider: result.data };

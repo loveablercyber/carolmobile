@@ -807,6 +807,8 @@ test("handleStructuredBookingFlow shows service details after service selection"
   assert.match(sentTexts.at(-1), /Valor: sem custo/);
   assert.match(sentTexts.at(-1), /1\) Sim/);
   assert.match(sentTexts.at(-1), /2\) Escolher outro servico/);
+  assert.match(sentTexts.at(-1), /Comandos: cancelar \| voltar \| menu \| trocar servico \| atendente/);
+  assert.match(sentTexts.at(-1), /Pode enviar qualquer duvida a qualquer momento/);
 });
 
 test("service with inventory does not show default price before inventory choice", async () => {
@@ -880,6 +882,7 @@ test("service with inventory does not show default price before inventory choice
   assert.match(sentTexts.at(-1), /Ponto Americano Invisivel/);
   assert.match(sentTexts.at(-1), /Valor: conforme item escolhido no estoque/);
   assert.doesNotMatch(sentTexts.at(-1), /R\$\s*360/);
+  assert.match(sentTexts.at(-1), /Comandos: cancelar \| voltar \| menu \| trocar servico \| atendente/);
 });
 
 test("active category state wins over an old appointment when option 3 is selected", async () => {
