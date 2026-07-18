@@ -725,6 +725,10 @@ function ProfessionalAgenda() {
             Object.entries(updating).find(([, value]) => value)?.[0] || ""
           }
           onStatusChange={updateAppointmentStatus}
+          onOpenDiagnosis={(item) => {
+            setSelectedIntake(item.intake_data);
+            setSelectedIntakeClient(item.client || "Cliente");
+          }}
         />
       </div>
       <section className="surface overflow-hidden">

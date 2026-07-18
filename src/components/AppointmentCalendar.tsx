@@ -19,6 +19,7 @@ export type AppointmentCalendarItem = {
   estimated_value?: number | string | null;
   location?: string | null;
   notes?: string | null;
+  intake_data?: any;
 };
 
 type StatusOption = {
@@ -34,6 +35,7 @@ type AppointmentCalendarProps = {
   updatingId?: string;
   onStatusChange?: (id: string, status: string) => void | Promise<void>;
   onOpenDetails?: (item: AppointmentCalendarItem) => void;
+  onOpenDiagnosis?: (item: AppointmentCalendarItem) => void;
 };
 
 const terminalStatuses = new Set([
@@ -147,6 +149,7 @@ export function AppointmentCalendar({
   updatingId = "",
   onStatusChange,
   onOpenDetails,
+  onOpenDiagnosis,
 }: AppointmentCalendarProps) {
   const [selected, setSelected] = useState<AppointmentCalendarItem | null>(null);
   const days = useMemo(() => {
@@ -177,6 +180,7 @@ export function AppointmentCalendar({
     return map;
   }, [items]);
   const selectedVisual = selected ? visualStatus(selected) : null;
+  const selectedHasDiagnosis = Boolean(selected?.intake_data?.answers);
 
   const changeSelectedStatus = (status: string) => {
     if (!selected || !onStatusChange) return;
@@ -341,6 +345,18 @@ export function AppointmentCalendar({
                 <span className="text-stone-400">Observacoes</span>
                 <p className="mt-1 font-semibold">{selected.notes}</p>
               </div>
+            )}
+            {selectedHasDiagnosis && onOpenDiagnosis && (
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenDiagnosis(selected);
+                  setSelected(null);
+                }}
+                className="text-xs font-bold text-champagne hover:underline"
+              >
+                [Ver Diagnóstico]
+              </button>
             )}
             {onStatusChange && statusOptions.length > 0 && (
               <label className="block">

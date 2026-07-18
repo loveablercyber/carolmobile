@@ -41,6 +41,7 @@ import {
 } from "../../components/ui";
 import { AppointmentCalendar } from "../../components/AppointmentCalendar";
 import { apiFetch } from "../../lib/api";
+import { IntakeDetailsModal } from "../professional/ProfessionalPortal";
 
 type Result<T> = { data: T };
 const brl = (v: unknown) =>
@@ -2673,6 +2674,8 @@ export function AdminAppointmentsPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailData, setDetailData] = useState<any>(null);
+  const [selectedIntake, setSelectedIntake] = useState<any>(null);
+  const [selectedIntakeClient, setSelectedIntakeClient] = useState("");
   const [filters, setFilters] = useState({
     professionalId: "",
     serviceId: "",
@@ -3105,6 +3108,10 @@ export function AdminAppointmentsPage() {
           updatingId={busy}
           onStatusChange={change}
           onOpenDetails={openAppointmentDetail}
+          onOpenDiagnosis={(appointment: any) => {
+            setSelectedIntake(appointment.intake_data);
+            setSelectedIntakeClient(appointment.client || "Cliente");
+          }}
         />
       </div>
 
@@ -3219,6 +3226,18 @@ export function AdminAppointmentsPage() {
                 <span className="text-stone-400">Observações</span>
                 <p className="mt-1 font-semibold">{detailData.appointment.notes}</p>
               </div>
+            )}
+            {detailData.appointment.intake_data?.answers && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedIntake(detailData.appointment.intake_data);
+                  setSelectedIntakeClient(detailData.appointment.client || "Cliente");
+                }}
+                className="text-xs font-bold text-champagne hover:underline"
+              >
+                [Ver Diagnóstico]
+              </button>
             )}
             <section>
               <SectionHeading title="Pagamentos vinculados" />
@@ -3342,6 +3361,15 @@ export function AdminAppointmentsPage() {
           </p>
         )}
       </Modal>
+      <IntakeDetailsModal
+        open={Boolean(selectedIntake)}
+        onClose={() => {
+          setSelectedIntake(null);
+          setSelectedIntakeClient("");
+        }}
+        intakeData={selectedIntake}
+        clientName={selectedIntakeClient}
+      />
       <Modal
         open={appointmentOpen}
         onClose={() => {

@@ -1144,11 +1144,19 @@ export function ProfessionalAppointmentDetailPage() {
                 {updating ? "Salvando..." : "Salvar observação rápida"}
               </button>
             </div>
+            {a.intake_data?.answers && (
+              <a
+                href="#appointment-diagnosis"
+                className="mt-3 inline-block text-xs font-bold text-champagne hover:underline"
+              >
+                [Ver Diagnóstico]
+              </a>
+            )}
           </section>
 
           {/* Diagnosis / Intake Data */}
           {a.intake_data && a.intake_data.answers && (
-            <section className="surface p-6">
+            <section id="appointment-diagnosis" className="surface p-6">
               <SectionHeading title="Diagnóstico Prévio (Intake)" />
               <div className="grid gap-3 sm:grid-cols-2">
                 {Object.entries(a.intake_data.answers).map(([key, val]: any) => (
