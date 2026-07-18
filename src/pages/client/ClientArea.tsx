@@ -270,12 +270,28 @@ const objectives = [
   ["Avaliação personalizada", "Receba uma análise antes de escolher o método."],
 ];
 
+type DiscoveryPhoto = {
+  id: string;
+  url: string;
+  kind: string;
+};
+
+type DiscoveryRecommendation = {
+  personalizedMessage: string;
+  service: Record<string, any>;
+  inventoryItem: Record<string, any> | null;
+};
+
 function Discover() {
   const [step, setStep] = useState(0);
   const [answer, setAnswer] = useState<Record<string, string>>({});
-  const [files, setFiles] = useState<string[]>([]);
+  const [files, setFiles] = useState<Array<DiscoveryPhoto | null>>([]);
   const [uploading, setUploading] = useState<number | null>(null);
   const [uploadMessage, setUploadMessage] = useState("");
+  const [recommendation, setRecommendation] = useState<DiscoveryRecommendation | null>(null);
+  const [recommendationLoading, setRecommendationLoading] = useState(false);
+  const [recommendationError, setRecommendationError] = useState("");
+  const [recommendationAttempt, setRecommendationAttempt] = useState(0);
   const [specialist, setSpecialist] = useState<{ name: string; photo: string } | null>(null);
   const navigate = useNavigate();
 
@@ -293,8 +309,53 @@ function Discover() {
       .catch((error) => console.error("Discover specialist load error", error));
   }, []);
 
-  const next = () => setStep(Math.min(4, step + 1));
-  const prev = () => setStep(Math.max(0, step - 1));
+  useEffect(() => {
+    if (step !== 4) return;
+    let cancelled = false;
+    setRecommendationLoading(true);
+    setRecommendationError("");
+    apiFetch<{ recommendation: DiscoveryRecommendation }>(
+      "/api/data?resource=discovery-recommendation",
+      {
+        method: "POST",
+        body: JSON.stringify({ answers: answer }),
+      },
+    )
+      .then((data) => {
+        if (!data.recommendation?.service?.id)
+          throw new Error("Não foi possível preparar sua recomendação.");
+        if (!cancelled) setRecommendation(data.recommendation);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error("Discovery recommendation error", error);
+        setRecommendationError(
+          error instanceof Error
+            ? error.message
+            : "Não foi possível preparar sua recomendação.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setRecommendationLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [step, answer, recommendationAttempt]);
+
+  const next = () => {
+    const nextStep = Math.min(4, step + 1);
+    if (nextStep === 4 && step !== 4) {
+      setRecommendation(null);
+      setRecommendationError("");
+      setRecommendationAttempt((value) => value + 1);
+    }
+    setStep(nextStep);
+  };
+  const prev = () => {
+    if (step === 4) setRecommendation(null);
+    setStep(Math.max(0, step - 1));
+  };
   const addFiles = async (
     e: ChangeEvent<HTMLInputElement>,
     index: number,
@@ -311,7 +372,9 @@ function Discover() {
     setUploading(index);
     try {
       const uploaded = await uploadImage(file, kind.toLowerCase());
-      await apiFetch("/api/data?resource=photos", {
+      const saved = await apiFetch<{
+        photo: { id: string; kind: string; storage_path: string };
+      }>("/api/data?resource=photos", {
         method: "POST",
         body: JSON.stringify({
           url: uploaded.url,
@@ -319,9 +382,14 @@ function Discover() {
           publicId: uploaded.publicId,
         }),
       });
+      if (!saved.photo?.id) throw new Error("A foto não foi vinculada à sua avaliação.");
       setFiles((current) => {
         const next = [...current];
-        next[index] = uploaded.url;
+        next[index] = {
+          id: saved.photo.id,
+          url: uploaded.url,
+          kind: saved.photo.kind || kind.toLowerCase(),
+        };
         return next;
       });
       setUploadMessage("Foto enviada com sucesso.");
@@ -493,7 +561,7 @@ function Discover() {
                       >
                         {files[i] ? (
                           <img
-                            src={files[i]}
+                            src={files[i]?.url}
                             alt={label}
                             className={`absolute inset-0 h-full w-full object-cover ${uploading === i ? "opacity-50" : ""}`}
                           />
@@ -575,21 +643,54 @@ function Discover() {
             </div>
           </aside>
         </div>
-      ) : (
+      ) : recommendationLoading ? (
+        <div className="surface p-8 text-center">
+          <Sparkles className="mx-auto text-champagne" size={28} />
+          <h2 className="mt-4 font-display text-3xl font-semibold">
+            Preparando sua recomendação
+          </h2>
+          <p className="muted mt-2">
+            Consultando os serviços e itens disponíveis para você.
+          </p>
+        </div>
+      ) : recommendation ? (
         <Recommendation
           specialist={specialist}
+          recommendation={recommendation}
           onSchedule={() => {
+            const discoveryPhotos = files.filter(
+              (file): file is DiscoveryPhoto => Boolean(file),
+            );
             sessionStorage.setItem(
               "carol_sol_discovery",
               JSON.stringify({
                 answers: answer,
-                photos: files.filter(Boolean),
+                photos: discoveryPhotos.map((photo) => photo.url),
+                photoIds: discoveryPhotos.map((photo) => photo.id),
+                recommendation,
+                recommendedServiceId: recommendation.service.id,
+                recommendedInventoryItemId: recommendation.inventoryItem?.id || "",
                 createdAt: new Date().toISOString(),
               }),
             );
             navigate("/cliente/agenda?origem=descobrir");
           }}
         />
+      ) : (
+        <div className="surface p-8 text-center">
+          <h2 className="font-display text-3xl font-semibold">
+            Não foi possível preparar a recomendação
+          </h2>
+          <p className="muted mt-2">
+            {recommendationError || "Tente novamente em instantes."}
+          </p>
+          <button
+            onClick={() => setRecommendationAttempt((value) => value + 1)}
+            className="btn-primary mt-5"
+          >
+            Tentar novamente
+          </button>
+        </div>
       )}
     </div>
   );
@@ -708,30 +809,45 @@ function OptionGroup({
 function Recommendation({
   onSchedule,
   specialist,
+  recommendation,
 }: {
   onSchedule: () => void;
   specialist: { name: string; photo: string } | null;
+  recommendation: DiscoveryRecommendation;
 }) {
+  const service = recommendation.service;
+  const inventoryItem = recommendation.inventoryItem;
+  const value = inventoryItem
+    ? Number(inventoryItem.suggested_price || 0)
+    : Number(service.base_price || 0);
+  const itemDetails = inventoryItem
+    ? [
+        inventoryItem.color,
+        inventoryItem.shade,
+        inventoryItem.length_cm ? `${inventoryItem.length_cm}` : "",
+        inventoryItem.weight_grams ? `${inventoryItem.weight_grams}g` : "",
+      ]
+        .filter(Boolean)
+        .join(" - ")
+    : "A confirmar na avaliação";
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
       <div className="surface overflow-hidden">
         <div className="hair-gradient p-7 text-white sm:p-10">
           <Badge tone="gold">RECOMENDAÇÃO PERSONALIZADA</Badge>
           <h2 className="mt-5 max-w-xl font-display text-4xl font-semibold leading-none sm:text-5xl">
-            Fita Adesiva ou Microlink Premium
+            {service.name}
           </h2>
           <p className="mt-4 max-w-xl text-sm leading-relaxed text-white/60">
-            Pelo seu objetivo de volume com naturalidade e rotina de manutenção,
-            estes métodos oferecem equilíbrio entre leveza, movimento e
-            durabilidade.
+            {recommendation.personalizedMessage}
           </p>
         </div>
         <div className="grid gap-4 p-6 sm:grid-cols-2 sm:p-8">
           {[
-            ["Tempo médio", "3h30 a 4h30"],
-            ["Faixa estimada", "R$ 1.250 a R$ 2.400"],
-            ["Manutenção", "A cada 45–60 dias"],
-            ["Resultado", "Volume natural e móvel"],
+            ["Tempo estimado", service.duration_minutes ? `${service.duration_minutes} min` : "A confirmar"],
+            ["Valor", service.is_free ? "Sem custo" : money(value)],
+            ["Sinal", Number(service.deposit_amount || 0) > 0 ? money(Math.min(Number(service.deposit_amount || 0), value)) : "Sem sinal"],
+            [inventoryItem ? "Item sugerido" : "Detalhe", itemDetails],
           ].map(([a, b]) => (
             <div key={a} className="rounded-2xl bg-warm p-4">
               <div className="text-[10px] font-bold uppercase tracking-wider text-stone-400">
@@ -813,6 +929,9 @@ function ClientAgenda() {
         .map(([key, value]) => `${key}: ${value}`)
         .join(" • ")
     : "";
+  const discoveryRecommendationNote = discoveryDraft?.recommendation?.service?.name
+    ? `Recomendação da descoberta: ${discoveryDraft.recommendation.service.name}`
+    : "";
   const [booking, setBooking] = useState(Boolean(discoveryDraft));
   const [step, setStep] = useState(discoveryDraft ? 2 : 0);
   const mappedMethod = useMemo(() => {
@@ -830,7 +949,7 @@ function ClientAgenda() {
     date: dates[0] || "",
     time: "09:00",
     payment: "Pix",
-    notes: discoveryNotes,
+    notes: [discoveryRecommendationNote, discoveryNotes].filter(Boolean).join("\n"),
     couponCode: "",
     inventoryItemId: "",
   });
@@ -932,12 +1051,26 @@ function ClientAgenda() {
           professionals: data.professionals || [],
           inventoryItems: data.inventoryItems || [],
         });
-        const defaultService = (discoveryDraft && data.services?.find((s: any) => s.name === "Avaliação personalizada")?.name) || data.services?.[0]?.name || "";
+        const recommendedServiceId = String(
+          discoveryDraft?.recommendedServiceId || discoveryDraft?.recommendation?.service?.id || "",
+        );
+        const recommendedInventoryItemId = String(
+          discoveryDraft?.recommendedInventoryItemId || discoveryDraft?.recommendation?.inventoryItem?.id || "",
+        );
+        const recommendedService = data.services?.find((s: any) => s.id === recommendedServiceId);
+        const defaultService =
+          recommendedService?.name ||
+          (discoveryDraft && data.services?.find((s: any) => s.name === "Avaliação personalizada")?.name) ||
+          data.services?.[0]?.name ||
+          "";
+        const recommendedInventoryItem = recommendedService?.offer_inventory_items
+          ? data.inventoryItems?.find((item: any) => item.id === recommendedInventoryItemId)
+          : null;
         setSelected((current) => ({
           ...current,
           service: current.service || defaultService,
           professional: current.professional || "Primeira disponível",
-          inventoryItemId: "",
+          inventoryItemId: current.inventoryItemId || recommendedInventoryItem?.id || "",
         }));
       })
       .catch((error) => {
@@ -1097,6 +1230,9 @@ function ClientAgenda() {
             notes: finalNotes,
             paymentMethod,
             intakeData: discoveryDraft || {},
+            discoveryPhotoIds: Array.isArray(discoveryDraft?.photoIds)
+              ? discoveryDraft.photoIds
+              : [],
             couponCode: selected.couponCode || null,
             inventoryItemId: selected.inventoryItemId || null,
           }),

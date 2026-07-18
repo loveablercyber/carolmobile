@@ -33,6 +33,18 @@ import {
   methodNotAllowed,
   send,
 } from "../server/lib/http.js";
+import { generateOpenAiText } from "../server/lib/openai-client.js";
+import {
+  bookableDiscoveryServices,
+  fallbackDiscoveryRecommendation,
+  inventoryForDiscoveryService,
+  normalizeDiscoveryAnswers,
+  parseDiscoveryRecommendationJson,
+  publicDiscoveryInventoryItem,
+  publicDiscoveryService,
+  safeAiDiscoveryMessage,
+  suggestedInventoryForDiscoveryService,
+} from "../server/lib/discovery-recommendation.js";
 
 async function ensureServicesVisibilityColumn() {
   await query(
@@ -104,6 +116,121 @@ export function appointmentDepositAmount(service = {}, total = 0) {
   const configuredDeposit = Math.max(0, Number(service.deposit_amount || 0));
   const payableTotal = Math.max(0, Number(total || 0));
   return Math.min(configuredDeposit, payableTotal);
+}
+
+export function normalizeDiscoveryPhotoIds(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 4)
+    throw appError("Envie no maximo quatro fotos da descoberta.");
+  const ids = value.map((item) => String(item || "").trim());
+  if (ids.some((id) => !uuidPattern.test(id)))
+    throw appError("Foto da descoberta invalida.");
+  return [...new Set(ids)];
+}
+
+function discoveryMessageForService(service, answers) {
+  const objective = answers.objective || "resultado desejado";
+  return `Considerando seu objetivo de ${objective}, a sugestão inicial é ${service.name}. A avaliação presencial confirma a saúde dos fios, a técnica e o acabamento ideal para você.`;
+}
+
+function discoveryAiCatalog(services, inventory) {
+  return services.map((service) => ({
+    ...publicDiscoveryService(service),
+    inventory: inventoryForDiscoveryService(service, inventory)
+      .slice(0, 12)
+      .map(publicDiscoveryInventoryItem),
+  }));
+}
+
+async function createDiscoveryRecommendation(res, user, body) {
+  if (user.role !== "client") throw appError("Acesso negado.", 403);
+  await ensureServicesVisibilityColumn();
+  const answers = normalizeDiscoveryAnswers(body.answers);
+  const [servicesResult, inventoryResult] = await Promise.all([
+    query(
+      `select s.id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,
+        coalesce(s.is_free,false) as is_free,
+        coalesce(s.show_online_booking,true) as show_online_booking,
+        coalesce(s.offer_inventory_items,false) as offer_inventory_items,
+        s.category_id,s.hair_method_id
+       from public.services s
+       where s.active and coalesce(s.show_online_booking,true)
+         and exists(
+           select 1
+           from public.professional_services ps
+           join public.professionals p on p.id=ps.professional_id
+           where ps.service_id=s.id and p.active
+         )
+       order by s.base_price,s.name`,
+    ),
+    query(
+      `select id,category_id,hair_method_id,color,shade,length_cm,texture,weight_grams,
+        quantity,suggested_price,active
+       from public.hair_inventory
+       where archived=false and active=true and quantity>0
+       order by suggested_price,id`,
+    ),
+  ]);
+  const inventory = inventoryResult.rows;
+  const services = bookableDiscoveryServices(servicesResult.rows, inventory);
+  const fallback = fallbackDiscoveryRecommendation({ services, inventory, answers });
+  if (!fallback.service)
+    throw appError("Nao ha servicos ativos disponiveis para recomendacao.", 409);
+
+  let service = fallback.service;
+  let inventoryItem = fallback.inventoryItem;
+  let personalizedMessage = fallback.personalizedMessage;
+  try {
+    const aiSettingsResult = await query(
+      `select primary_model,model,openai_api_key,openai_enabled
+       from public.ai_settings
+       where business_id='default'
+       limit 1`,
+    ).catch(() => ({ rows: [] }));
+    const aiSettings = aiSettingsResult.rows[0] || null;
+    const result = await generateOpenAiText({
+      systemPrompt: [
+        "Voce e uma especialista em Mega Hair. Responda somente JSON valido, sem markdown.",
+        "Escolha exatamente um serviceId do catalogo fornecido.",
+        "Para servicos com offer_inventory_items=true, escolha um inventoryItemId daquele mesmo servico quando houver uma opcao adequada.",
+        "Nunca invente servico, item, preco, comprimento, gramatura, disponibilidade ou tecnica.",
+        "A mensagem deve ter no maximo dois paragrafos curtos, em portugues do Brasil, sem valores, medidas ou diagnostico medico.",
+        'Formato: {"serviceId":"...","inventoryItemId":"... ou vazio","personalizedMessage":"..."}.',
+      ].join("\n"),
+      message: JSON.stringify({
+        answers,
+        services: discoveryAiCatalog(services, inventory),
+      }),
+      model: aiSettings?.primary_model || aiSettings?.model || undefined,
+      apiKey: aiSettings?.openai_enabled ? aiSettings.openai_api_key || null : null,
+      maxTokens: 360,
+    });
+    const parsed = parseDiscoveryRecommendationJson(result.text);
+    const aiService = services.find((item) => item.id === parsed?.serviceId);
+    if (aiService) {
+      service = aiService;
+      const serviceInventory = inventoryForDiscoveryService(service, inventory);
+      inventoryItem =
+        serviceInventory.find((item) => item.id === parsed?.inventoryItemId) ||
+        suggestedInventoryForDiscoveryService(service, inventory, answers);
+      personalizedMessage =
+        safeAiDiscoveryMessage(parsed?.personalizedMessage) ||
+        discoveryMessageForService(service, answers);
+    }
+  } catch (error) {
+    console.error("Discovery recommendation AI failed", {
+      message: error.message,
+      code: error.code,
+    });
+  }
+
+  return send(res, 200, {
+    recommendation: {
+      personalizedMessage,
+      service: publicDiscoveryService(service),
+      inventoryItem: publicDiscoveryInventoryItem(inventoryItem),
+    },
+  });
 }
 
 async function getResource(req, res, user, resource) {
@@ -643,6 +770,9 @@ async function createAppointment(req, res, user, body) {
     throw appError("Serviço inválido.");
   if (!uuidPattern.test(String(body.professionalId || "")))
     throw appError("Profissional inválida.");
+  const discoveryPhotoIds = normalizeDiscoveryPhotoIds(body.discoveryPhotoIds);
+  if (user.role !== "client" && discoveryPhotoIds.length)
+    throw appError("Fotos da descoberta so podem ser vinculadas pela cliente.", 403);
   const appointment = await transaction(async (client) => {
     let clientId = body.clientId;
     if (user.role === "client") {
@@ -702,14 +832,27 @@ async function createAppointment(req, res, user, body) {
         409,
       );
     let basePrice = Number(service.base_price || 0);
-    if (service.offer_inventory_items && body.inventoryItemId) {
+    if (service.offer_inventory_items && user.role === "client" && !body.inventoryItemId)
+      throw appError("Selecione uma opcao de cabelo/mecha para este servico.");
+    if (!service.offer_inventory_items && body.inventoryItemId)
+      throw appError("Este servico nao aceita item de estoque.");
+    if (body.inventoryItemId) {
+      if (!uuidPattern.test(String(body.inventoryItemId)))
+        throw appError("Item de estoque invalido.");
       const inventoryRes = await client.query(
-        "select suggested_price from public.hair_inventory where id = $1",
-        [body.inventoryItemId]
+        `select id,suggested_price,category_id,hair_method_id
+         from public.hair_inventory
+         where id=$1 and archived=false and active=true and quantity>0`,
+        [body.inventoryItemId],
       );
-      if (inventoryRes.rows[0]) {
-        basePrice = Number(inventoryRes.rows[0].suggested_price || 0);
-      }
+      const inventoryItem = inventoryRes.rows[0];
+      if (!inventoryItem) throw appError("Item de estoque indisponivel.", 409);
+      if (
+        (service.category_id && inventoryItem.category_id !== service.category_id) ||
+        (service.hair_method_id && inventoryItem.hair_method_id !== service.hair_method_id)
+      )
+        throw appError("O item de estoque nao pertence ao servico escolhido.", 409);
+      basePrice = Number(inventoryItem.suggested_price || 0);
     }
 
     const couponResult = await validateCoupon(client, {
@@ -754,6 +897,19 @@ async function createAppointment(req, res, user, body) {
         user.id,
       ],
     );
+    let discoveryPhotos = [];
+    if (discoveryPhotoIds.length) {
+      const attachedPhotos = await client.query(
+        `update public.client_photos
+         set appointment_id=$1
+         where client_id=$2 and appointment_id is null and id = any($3::uuid[])
+         returning id,kind,storage_path`,
+        [rows[0].id, clientId, discoveryPhotoIds],
+      );
+      if (attachedPhotos.rowCount !== discoveryPhotoIds.length)
+        throw appError("Uma ou mais fotos da descoberta nao estao disponiveis.", 409);
+      discoveryPhotos = attachedPhotos.rows;
+    }
     let paymentId = null;
     if (
       requiresDeposit &&
@@ -828,6 +984,7 @@ async function createAppointment(req, res, user, body) {
     return {
       ...details.rows[0],
       payment_id: paymentId,
+      discovery_photos: discoveryPhotos,
       professional_email: professional.email,
       professional_phone: professional.phone,
       client_notification_id: clientNotification.rows[0]?.id,
@@ -1953,6 +2110,8 @@ export default async function handler(req, res) {
     if (req.method === "GET")
       return await getResource(req, res, user, resource);
     const body = getBody(req);
+    if (req.method === "POST" && resource === "discovery-recommendation")
+      return await createDiscoveryRecommendation(res, user, body);
     if (req.method === "POST" && resource === "appointments")
       return await createAppointment(req, res, user, body);
     if (req.method === "POST" && resource === "reschedule-requests")
