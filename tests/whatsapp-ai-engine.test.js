@@ -32,6 +32,7 @@ import {
   hydrateBookingContactFromClient,
   isServiceCatalogMenuIntent,
   buildInitialServiceCatalogOptions,
+  buildInitialCategoryCatalogOptions,
 } from "../server/lib/whatsapp-ai-engine.js";
 
 const originalQuery = pool.query;
@@ -117,7 +118,7 @@ test("recognizes requests to browse the backend service catalog", () => {
 });
 
 test("builds the initial catalog from active online services without requiring AI booking flags", () => {
-  const options = buildInitialServiceCatalogOptions({
+  const base = {
     categories: [{ id: "cat-1", name: "Mega Hair" }],
     methods: [{ id: "method-1", name: "Ponto Americano" }],
     services: [
@@ -134,12 +135,15 @@ test("builds the initial catalog from active online services without requiring A
       { id: "service-internal", name: "Servico interno", active: true, show_online_booking: false },
       { id: "service-inactive", name: "Servico inativo", active: false, show_online_booking: true },
     ],
-  });
+  };
+  const options = buildInitialServiceCatalogOptions(base);
+  const categories = buildInitialCategoryCatalogOptions(base);
 
   assert.equal(options.length, 1);
   assert.equal(options[0].serviceName, "Aplicacao completa");
   assert.equal(options[0].categoryName, "Mega Hair");
   assert.equal(options[0].methodName, "Ponto Americano");
+  assert.deepEqual(categories.map((item) => item.categoryName), ["Mega Hair"]);
 });
 
 test("parses dates written with a Portuguese month name", () => {
@@ -792,7 +796,7 @@ test("handleStructuredBookingFlow shows service details after service selection"
   assert.match(sentTexts.at(-1), /2\) Escolher outro servico/);
 });
 
-test("handleStructuredBookingFlow shows service details before inventory choices", async () => {
+test("handleStructuredBookingFlow shows service presentation together with inventory choices", async () => {
   const sentTexts = [];
   const savedStates = [];
   pool.query = async (sql, params = []) => {
@@ -828,10 +832,12 @@ test("handleStructuredBookingFlow shows service details before inventory choices
     normalized: { phoneNumber: "5511999999999" },
     conversationId: "conversation-inventory",
     inboundMessageId: "inbound-inventory",
-    text: "Ponto americano",
+    text: "1",
     settings: { allowAutoBooking: false },
     base: {
       flows: [{ flow_key: "pre_agendamento", enabled: true }],
+      categories: [{ id: "category-fibra", name: "Fibra Russa" }],
+      methods: [{ id: "method-aplicacao", name: "Ponto Americano", category_id: "category-fibra" }],
       services: [{
         id: "service-point",
         name: "Ponto Americano Invisível",
@@ -857,7 +863,15 @@ test("handleStructuredBookingFlow shows service details before inventory choices
         suggested_price: 410,
       }],
     },
-    recorded: { conversation: { booking_state: "{}", last_message_preview: "Serviços" } },
+    recorded: {
+      conversation: {
+        booking_state: JSON.stringify({
+          status: "awaiting_category",
+          categoryOptions: [{ id: 1, categoryId: "category-fibra", categoryName: "Fibra Russa" }],
+        }),
+        last_message_preview: "1) Fibra Russa",
+      },
+    },
     queueLatencyMs: 0,
     receivedAt: new Date(),
     history: [],
@@ -866,27 +880,10 @@ test("handleStructuredBookingFlow shows service details before inventory choices
 
   const response = await handleStructuredBookingFlow(request);
 
-  assert.equal(response.reason, "booking_service_details");
-  assert.equal(savedStates.at(-1).status, "awaiting_service_details");
+  assert.equal(response.reason, "booking_inventory_options");
+  assert.equal(savedStates.at(-1).status, "awaiting_inventory");
   assert.match(sentTexts.at(-1), /Ponto Americano Invis/);
   assert.match(sentTexts.at(-1), /costura invis/);
-
-  const detailsText = sentTexts.at(-1);
-  const inventoryResponse = await handleStructuredBookingFlow({
-    ...request,
-    inboundMessageId: "inbound-inventory-confirmation",
-    text: "1",
-    recorded: {
-      conversation: {
-        booking_state: JSON.stringify(savedStates.at(-1)),
-        last_message_preview: detailsText,
-      },
-    },
-    history: [{ sender_type: "ai", body: detailsText }],
-  });
-
-  assert.equal(inventoryResponse.reason, "booking_inventory_options");
-  assert.equal(savedStates.at(-1).status, "awaiting_inventory");
   assert.match(sentTexts.at(-1), /Castanho Médio/);
   assert.match(sentTexts.at(-1), /60\/65\/70 cm/);
   assert.match(sentTexts.at(-1), /150 g/);

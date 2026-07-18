@@ -485,6 +485,9 @@ export function selectBookingService(text, base = {}, state = {}) {
         (asksMaintenance ? "Manutenção" : asksApplication ? "Aplicação de Mega Hair" : evaluation.name),
       serviceValue: serviceValue(evaluation),
       serviceIsFree: isFreeService(evaluation),
+      offerInventoryItems: evaluation.offer_inventory_items === true,
+      categoryId: evaluation.category_id,
+      methodId: evaluation.hair_method_id,
       ...bookingServiceDetails(evaluation),
       note:
         matched && !matched.allow_auto_booking
@@ -528,6 +531,10 @@ function buildCategoryOptions(base = {}) {
       categoryId: c.id,
       categoryName: c.name,
     }));
+}
+
+export function buildInitialCategoryCatalogOptions(base = {}) {
+  return buildCategoryOptions(base);
 }
 
 function buildMethodOptions(base = {}, categoryId) {
@@ -610,9 +617,27 @@ export function buildInventoryOptions(base = {}, serviceChoice) {
 async function processServiceHierarchySelection(text, base, state, conversationId, normalized, isAgendaIntent = false, parsedDate = "") {
   const choice = numericChoice(text);
 
-  if (state.status === "awaiting_category" && choice && Array.isArray(state.categoryOptions)) {
-    const selected = state.categoryOptions.find(item => Number(item.id) === choice);
-    if (selected) state.categoryId = selected.categoryId;
+  if (state.status === "awaiting_category" && Array.isArray(state.categoryOptions)) {
+    const normalizedText = normalizeText(text);
+    const selected = state.categoryOptions.find(item =>
+      (choice && Number(item.id) === choice) ||
+      normalizeText(item.categoryName) === normalizedText ||
+      normalizedText.includes(normalizeText(item.categoryName)),
+    );
+    if (selected) {
+      state.categoryId = selected.categoryId;
+      state.categoryName = selected.categoryName;
+      state.status = "collecting";
+    } else {
+      await saveBookingState(conversationId, state);
+      const responseText = [
+        "Escolha uma categoria respondendo com o número:",
+        optionLines(state.categoryOptions, (item) => item.categoryName),
+      ].join("\n\n");
+      await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_category_options" });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      return { ok: true, replied: true, reason: "booking_category_options", conversationId };
+    }
   }
   if (state.status === "awaiting_method" && choice && Array.isArray(state.methodOptions)) {
     const selected = state.methodOptions.find(item => Number(item.id) === choice);
@@ -685,27 +710,8 @@ async function processServiceHierarchySelection(text, base, state, conversationI
     }
   }
 
-  if (!state.serviceId && state.categoryId && !state.methodId) {
-    const methodOptions = buildMethodOptions(base, state.categoryId);
-    if (methodOptions.length === 1 || methodOptions.length === 0) {
-      if (methodOptions.length === 1) state.methodId = methodOptions[0].methodId;
-    } else {
-      state.methodOptions = methodOptions;
-      state.status = "awaiting_method";
-      await saveBookingState(conversationId, state);
-      const responseText = [
-        "Certo! Qual o método de aplicação?",
-        "Responda só com o número:",
-        optionLines(methodOptions, (item) => item.methodName),
-      ].join("\n\n");
-      await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_method_options" });
-      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
-      return { ok: true, replied: true, reason: "booking_method_options", conversationId };
-    }
-  }
-
   if (!state.serviceId) {
-    const serviceOptions = buildServiceOptions(base, state.categoryId, state.methodId);
+    const serviceOptions = buildServiceOptions(base, state.categoryId, "");
     if (serviceOptions.length === 1) {
       const selected = serviceOptions[0];
       Object.assign(state, {
@@ -725,7 +731,9 @@ async function processServiceHierarchySelection(text, base, state, conversationI
       state.status = "awaiting_service";
       await saveBookingState(conversationId, state);
       const prefix = isAgendaIntent ? `Consigo consultar a agenda real${parsedDate ? ` para ${formatDateLabel(parsedDate)}` : ""}.` : "Posso registrar o pré-agendamento pelo WhatsApp ✨";
-      const instruction = state.categoryId && state.methodId ? "Excelente. Agora escolha o serviço específico:" : "Escolha o serviço respondendo só com o número:";
+      const instruction = state.categoryId
+        ? `Serviços ativos em ${state.categoryName || "sua categoria"}:`
+        : "Escolha o serviço respondendo só com o número:";
       const responseText = [
         prefix,
         instruction,
@@ -741,19 +749,22 @@ async function processServiceHierarchySelection(text, base, state, conversationI
 
   if (
     state.serviceId &&
-    state.serviceDetailsAccepted &&
     state.offerInventoryItems &&
     !state.inventoryId
   ) {
     const inventoryOptions = buildInventoryOptions(base, state);
     if (inventoryOptions.length > 0) {
       state.inventoryOptions = inventoryOptions;
+      state.serviceDetailsAccepted = true;
       state.status = "awaiting_inventory";
       await saveBookingState(conversationId, state);
       const responseText = [
-        "Para esse serviço, escolha a variação desejada (tamanho, cor, etc):",
-        "Responda só com o número:",
-        optionLines(inventoryOptions, (item) => item.inventoryValue ? `${item.inventoryName} (A partir de R$ ${item.inventoryValue})` : item.inventoryName),
+        buildServicePresentation(state),
+        "Itens disponíveis em estoque para este serviço:",
+        optionLines(inventoryOptions, (item) => item.inventoryValue
+          ? `${item.inventoryName} - ${formatBookingCurrency(item.inventoryValue)}`
+          : item.inventoryName),
+        "Responda com o número do item desejado.",
       ].join("\n\n");
       await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_inventory_options" });
       await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
@@ -771,8 +782,9 @@ async function openInitialServiceCatalog({
   recorded,
   greetingText = "",
 }) {
+  const categoryOptions = buildInitialCategoryCatalogOptions(base);
   const serviceOptions = buildInitialServiceCatalogOptions(base);
-  if (!serviceOptions.length) {
+  if (!categoryOptions.length && !serviceOptions.length) {
     const responseText = [
       greetingText,
       "No momento não encontrei serviços ativos disponíveis no catálogo.",
@@ -789,8 +801,9 @@ async function openInitialServiceCatalog({
   }
 
   const state = {
-    status: "awaiting_service",
-    serviceOptions,
+    status: categoryOptions.length ? "awaiting_category" : "awaiting_service",
+    categoryOptions,
+    serviceOptions: categoryOptions.length ? [] : serviceOptions,
     clientPhone: normalized.phoneNumber,
     updatedAt: new Date().toISOString(),
   };
@@ -799,18 +812,27 @@ async function openInitialServiceCatalog({
 
   const responseText = [
     greetingText,
-    "Estes são os serviços disponíveis:",
-    optionLines(serviceOptions, serviceCatalogOptionLabel),
-    "Responda com o número do serviço para ver a apresentação, os detalhes e as opções disponíveis.",
+    categoryOptions.length ? "Categorias de serviços disponíveis:" : "Serviços disponíveis:",
+    categoryOptions.length
+      ? optionLines(categoryOptions, (item) => item.categoryName)
+      : optionLines(serviceOptions, serviceCatalogOptionLabel),
+    categoryOptions.length
+      ? "Responda com o número da categoria para ver os serviços e itens disponíveis."
+      : "Responda com o número do serviço para ver a apresentação, os detalhes e as opções disponíveis.",
   ].filter(Boolean).join("\n\n");
   await performSendTextAndRecord({
     normalized,
     conversationId,
     text: responseText,
-    reason: "booking_initial_service_catalog",
+    reason: categoryOptions.length ? "booking_initial_category_catalog" : "booking_initial_service_catalog",
   });
   await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
-  return { ok: true, replied: true, reason: "booking_initial_service_catalog", conversationId };
+  return {
+    ok: true,
+    replied: true,
+    reason: categoryOptions.length ? "booking_initial_category_catalog" : "booking_initial_service_catalog",
+    conversationId,
+  };
 }
 
 function bookingServiceDetails(service = {}) {
@@ -1069,7 +1091,7 @@ function serviceValue(service = {}) {
   return Number.isFinite(amount) ? amount : 0;
 }
 
-function buildServiceDetailsResponse(state = {}) {
+function buildServicePresentation(state = {}) {
   const description = state.serviceDetailedDescription || state.serviceDescription || "";
   const duration = Number(state.serviceDurationMinutes || 0);
   const valueLabel = formatServiceValue({ is_free: state.serviceIsFree }, state.serviceValue);
@@ -1083,8 +1105,14 @@ function buildServiceDetailsResponse(state = {}) {
     description ? `📝 ${description}` : "",
     duration > 0 ? `⏱️ *Duracao: ${duration} minutos*` : "",
     `*💰 Valor: ${valueLabel}*${depositText}${assessmentLabel}${recomLabel}`,
-    `🗓️ Posso verificar os horários disponíveis para você?\n\n1) Sim\n2) Escolher outro servico`
   ].filter(Boolean).join("\n");
+}
+
+function buildServiceDetailsResponse(state = {}) {
+  return [
+    buildServicePresentation(state),
+    "🗓️ Posso verificar os horários disponíveis para você?\n\n1) Sim\n2) Escolher outro servico",
+  ].join("\n");
 }
 
 function isServiceDetailsAccepted(text) {
@@ -2271,7 +2299,15 @@ export async function handleStructuredBookingFlow({
       "responda só com o número",
     ]);
   const directServiceChoice = selectBookingService(text, base, currentState);
-  const previousServiceChoice = !currentState.serviceId && previousPromptSuggestsBooking
+  const canRecoverServiceFromPreviousPrompt = ![
+    "awaiting_category",
+    "awaiting_method",
+    "awaiting_service",
+    "awaiting_inventory",
+  ].includes(String(currentState.status || ""));
+  const previousServiceChoice = !currentState.serviceId &&
+    canRecoverServiceFromPreviousPrompt &&
+    previousPromptSuggestsBooking
     ? selectBookingService(previousAiPrompt, base, currentState)
     : null;
   const active =

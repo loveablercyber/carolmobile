@@ -193,9 +193,10 @@ test("processIncomingWhatsAppWebhook opens the backend service catalog on greeti
   const result = await processIncomingWhatsAppWebhook(payload);
   assert.equal(result.ok, true);
   assert.equal(result.replied, true);
-  assert.equal(result.reason, "booking_initial_service_catalog");
-  assert.match(sentTexts.at(-1), /Ponto Americano/);
-  assert.match(sentTexts.at(-1), /Avaliacao personalizada/);
+  assert.equal(result.reason, "booking_initial_category_catalog");
+  assert.match(sentTexts.at(-1), /Mega Hair/);
+  assert.doesNotMatch(sentTexts.at(-1), /Ponto Americano/);
+  assert.doesNotMatch(sentTexts.at(-1), /Avaliacao personalizada/);
 });
 
 test("processIncomingWhatsAppWebhook uses OpenAI as the only generative provider", async () => {
