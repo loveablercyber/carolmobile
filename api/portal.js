@@ -1085,8 +1085,9 @@ async function updateProfile(user, body) {
         throw appError("Perfil profissional não encontrado.", 404);
     }
     await client.query(
-      `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data) values($1,'update','profile',$1,$2)`,
-      [user.id, JSON.stringify({ fullName, phone, email })],
+      `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
+       values($1::uuid,'update','profile',$2::text,$3::jsonb)`,
+      [user.id, user.id, JSON.stringify({ fullName, phone, email })],
     );
     return rows[0];
   });
