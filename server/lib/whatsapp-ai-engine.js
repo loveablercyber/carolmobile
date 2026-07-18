@@ -2187,9 +2187,19 @@ export async function handleStructuredBookingFlow({
   history = [],
   forceCatalogFlow = false,
 }) {
-  if (!settings.allowAutoBooking && !forceCatalogFlow) return null;
+  const persistedBookingState = parseJsonObject(recorded.conversation.booking_state);
+  const isCatalogStateActive = [
+    "awaiting_category",
+    "awaiting_method",
+    "awaiting_service",
+    "awaiting_service_details",
+    "awaiting_inventory",
+  ].includes(String(persistedBookingState.status || ""));
+
+  if (!settings.allowAutoBooking && !forceCatalogFlow && !isCatalogStateActive) return null;
   if (
     !forceCatalogFlow &&
+    !isCatalogStateActive &&
     !flowEnabled(base, "pre_agendamento") &&
     !flowEnabled(base, "verificacao_agenda")
   ) return null;
@@ -2197,7 +2207,7 @@ export async function handleStructuredBookingFlow({
   const sendTextAndRecord = performSendTextAndRecord;
 
   try {
-    let currentState = parseJsonObject(recorded.conversation.booking_state);
+    let currentState = persistedBookingState;
     let persistedAppointmentId = recorded.conversation.appointment_id || currentState.appointmentId || "";
     if (persistedAppointmentId) {
       const appQuery = await query(

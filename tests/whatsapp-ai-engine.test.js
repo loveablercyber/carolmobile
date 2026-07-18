@@ -875,7 +875,6 @@ test("handleStructuredBookingFlow shows service presentation together with inven
     queueLatencyMs: 0,
     receivedAt: new Date(),
     history: [],
-    forceCatalogFlow: true,
   };
 
   const response = await handleStructuredBookingFlow(request);
