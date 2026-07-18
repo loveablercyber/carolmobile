@@ -1351,7 +1351,11 @@ function serviceValue(service = {}) {
 function buildServicePresentation(state = {}) {
   const description = state.serviceDetailedDescription || state.serviceDescription || "";
   const duration = Number(state.serviceDurationMinutes || 0);
-  const valueLabel = formatServiceValue({ is_free: state.serviceIsFree }, state.serviceValue);
+  const isWaitingInventoryPrice = state.offerInventoryItems === true && !state.inventoryId;
+  const valueLabel = isWaitingInventoryPrice
+    ? "conforme item escolhido no estoque"
+    : formatServiceValue({ is_free: state.serviceIsFree }, state.serviceValue);
+  if (isWaitingInventoryPrice) state.serviceRequiresDeposit = false;
   const assessmentLabel = state.serviceRequiresAssessment ? "\n⚠️ Observação: Requer avaliação prévia." : "";
   const recomLabel = state.serviceRecommendedMessage ? `\n💡 Dica: ${state.serviceRecommendedMessage}` : "";
   const depositText = state.serviceRequiresDeposit ? `\n💳 Sinal: R$ ${Number(state.serviceDepositAmount || 0).toFixed(2)}` : "";

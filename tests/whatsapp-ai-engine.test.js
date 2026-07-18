@@ -809,6 +809,79 @@ test("handleStructuredBookingFlow shows service details after service selection"
   assert.match(sentTexts.at(-1), /2\) Escolher outro servico/);
 });
 
+test("service with inventory does not show default price before inventory choice", async () => {
+  const sentTexts = [];
+  const savedStates = [];
+  pool.query = async (sql, params = []) => {
+    if (sql.includes("update public.whatsapp_conversations") && sql.includes("booking_state=$2")) {
+      savedStates.push(JSON.parse(params[1]));
+      return { rowCount: 1, rows: [] };
+    }
+    if (sql.includes("insert into public.whatsapp_messages")) {
+      return { rowCount: 1, rows: [{ id: "outbound-service-details" }] };
+    }
+    return { rowCount: 1, rows: [{ id: "generic-id" }] };
+  };
+  pool.connect = async () => ({
+    query: async (sql, params = []) => {
+      if (["begin", "commit", "rollback"].includes(String(sql).toLowerCase())) {
+        return { rowCount: 0, rows: [] };
+      }
+      return pool.query(sql, params);
+    },
+    release: () => {},
+  });
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).includes("/api/send-text")) {
+      sentTexts.push(JSON.parse(options.body || "{}").text || "");
+      return new Response(JSON.stringify({ success: true, messageId: "msg-service-details" }));
+    }
+    return new Response(JSON.stringify({ success: true }));
+  };
+  process.env.BAILEYS_API_URL = "https://baileys.example.test";
+  process.env.BAILEYS_API_KEY = "test-key";
+
+  const response = await handleStructuredBookingFlow({
+    normalized: { phoneNumber: "5511999999999" },
+    conversationId: "conversation-inventory-price",
+    inboundMessageId: "inbound-inventory-price",
+    text: "1",
+    settings: { allowAutoBooking: true },
+    base: {
+      flows: [{ flow_key: "pre_agendamento", enabled: true }],
+      services: [],
+    },
+    recorded: {
+      conversation: {
+        booking_state: JSON.stringify({
+          status: "awaiting_service",
+          serviceOptions: [{
+            id: 1,
+            serviceId: "svc-ponto-americano",
+            serviceName: "Ponto Americano Invisivel",
+            requestedServiceName: "Ponto Americano Invisivel",
+            serviceValue: 360,
+            serviceIsFree: false,
+            offerInventoryItems: true,
+            serviceDescription: "Tecnica moderna de aplicacao em costura invisivel.",
+            serviceDurationMinutes: 150,
+            serviceDepositAmount: 0,
+          }],
+        }),
+      },
+    },
+    queueLatencyMs: 0,
+    receivedAt: new Date(),
+    history: [],
+  });
+
+  assert.equal(response.reason, "booking_service_details");
+  assert.equal(savedStates.at(-1).status, "awaiting_service_details");
+  assert.match(sentTexts.at(-1), /Ponto Americano Invisivel/);
+  assert.match(sentTexts.at(-1), /Valor: conforme item escolhido no estoque/);
+  assert.doesNotMatch(sentTexts.at(-1), /R\$\s*360/);
+});
+
 test("active category state wins over an old appointment when option 3 is selected", async () => {
   const sentTexts = [];
   const savedStates = [];
