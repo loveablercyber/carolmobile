@@ -427,9 +427,22 @@ function buildPriceIntentResponse(text, base = {}) {
 
 export function selectBookingService(text, base = {}, state = {}) {
   const choice = numericChoice(text);
-  if (choice && state.status === "awaiting_service" && Array.isArray(state.serviceOptions)) {
-    const selected = state.serviceOptions.find((item) => Number(item.id) === choice);
-    if (selected?.serviceId) return selected;
+  if (state.status === "awaiting_service" && Array.isArray(state.serviceOptions)) {
+    if (choice) {
+      const selected = state.serviceOptions.find((item) => Number(item.id) === choice);
+      return selected?.serviceId ? selected : null;
+    }
+
+    const normalizedChoice = normalizeText(text);
+    const selected = state.serviceOptions.find((item) => {
+      const serviceName = normalizeText(item.serviceName || item.requestedServiceName || "");
+      return serviceName && (
+        normalizedChoice === serviceName ||
+        serviceName.includes(normalizedChoice) ||
+        normalizedChoice.includes(serviceName)
+      );
+    });
+    return selected?.serviceId ? selected : null;
   }
 
 
@@ -516,6 +529,34 @@ export function isServiceCatalogMenuIntent(text) {
   return /^(?:quero saber |me mostra |mostre )?(?:quais |que )?servicos (?:voces? (?:tem|oferece|oferecem)|tem disponiveis)$/.test(normalized);
 }
 
+export function detectBookingGlobalCommand(text) {
+  const normalized = normalizeText(text)
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (
+    ["cancelar", "cancela", "cacenlar", "desistir"].includes(normalized) ||
+    includesAny(normalized, ["cancelar agendamento", "nao quero mais"])
+  ) return "cancel";
+
+  if (["voltar", "voltar menu", "retornar", "anterior"].includes(normalized)) return "back";
+  if (["menu", "inicio", "comecar novamente"].includes(normalized)) return "main_menu";
+  if (includesAny(normalized, ["outro servico", "trocar servico", "mudar servico"])) return "change_service";
+  if (
+    ["atendente", "humano"].includes(normalized) ||
+    includesAny(normalized, [
+      "falar com alguem",
+      "falar com atendente",
+      "falar com um atendente",
+      "falar com humano",
+      "chamar atendente",
+    ])
+  ) return "handoff";
+
+  return "";
+}
+
 function buildCategoryOptions(base = {}) {
   const services = structuredCatalogServices(base);
   const categoriesMap = new Map();
@@ -559,7 +600,7 @@ function buildServiceOptions(base = {}, categoryId, methodId) {
   if (categoryId) services = services.filter(s => s.category_id === categoryId);
   if (methodId) services = services.filter(s => s.hair_method_id === methodId);
 
-  return services.slice(0, 25).map((service, index) => ({
+  return services.map((service, index) => ({
     id: index + 1,
     serviceId: service.id,
     serviceName: service.commercial_name || service.name,
@@ -598,7 +639,7 @@ export function buildInventoryOptions(base = {}, serviceChoice) {
     ? categoryItems.filter((item) => !item.hair_method_id)
     : [];
   const items = [...exactMethodItems, ...genericCategoryItems];
-  return items.slice(0, 15).map((item, index) => ({
+  return items.map((item, index) => ({
     id: index + 1,
     inventoryId: item.id,
     inventoryName: [
@@ -612,6 +653,23 @@ export function buildInventoryOptions(base = {}, serviceChoice) {
     ].filter(Boolean).join(" - ") || item.name,
     inventoryValue: Number(item.suggested_price || 0),
   }));
+}
+
+function applyServiceChoiceToState(state, selected) {
+  Object.assign(state, {
+    serviceId: selected.serviceId,
+    serviceName: selected.serviceName,
+    baseServiceName: selected.serviceName,
+    requestedServiceName: selected.requestedServiceName || selected.serviceName,
+    serviceValue: selected.serviceValue || 0,
+    serviceIsFree: selected.serviceIsFree === true,
+    offerInventoryItems: selected.offerInventoryItems === true,
+    categoryId: selected.categoryId || state.categoryId || "",
+    methodId: selected.methodId || state.methodId || "",
+    ...serviceDetailsState(selected),
+    serviceDetailsAccepted: false,
+    serviceNote: selected.note || "",
+  });
 }
 
 async function processServiceHierarchySelection(text, base, state, conversationId, normalized, isAgendaIntent = false, parsedDate = "") {
@@ -645,48 +703,36 @@ async function processServiceHierarchySelection(text, base, state, conversationI
   }
   if (state.status === "awaiting_service" && choice && Array.isArray(state.serviceOptions)) {
     const selected = state.serviceOptions.find(item => Number(item.id) === choice);
-    if (selected) {
-      Object.assign(state, {
-        serviceId: selected.serviceId,
-        serviceName: selected.serviceName,
-        requestedServiceName: selected.requestedServiceName || selected.serviceName,
-        serviceValue: selected.serviceValue || 0,
-        serviceIsFree: selected.serviceIsFree === true,
-        offerInventoryItems: selected.offerInventoryItems === true,
-        categoryId: selected.categoryId || state.categoryId || "",
-        methodId: selected.methodId || state.methodId || "",
-        ...serviceDetailsState(selected),
-        serviceDetailsAccepted: false,
-        serviceNote: selected.note || "",
-      });
-    }
+    if (selected) applyServiceChoiceToState(state, selected);
   }
-  if (state.status === "awaiting_inventory" && choice && Array.isArray(state.inventoryOptions)) {
-    const selected = state.inventoryOptions.find(item => Number(item.id) === choice);
-    if (selected) {
-      state.inventoryId = selected.inventoryId;
-      state.inventoryName = selected.inventoryName;
-      if (selected.inventoryValue > 0) state.serviceValue = selected.inventoryValue;
-      state.serviceName = `${state.serviceName} - ${state.inventoryName}`;
+  if (state.status === "awaiting_inventory" && Array.isArray(state.inventoryOptions)) {
+    const selected = choice
+      ? state.inventoryOptions.find(item => Number(item.id) === choice)
+      : null;
+    if (!selected) {
+      await saveBookingState(conversationId, state);
+      const responseText = [
+        "Agora estamos escolhendo o item de estoque deste serviço.",
+        optionLines(state.inventoryOptions, (item) => item.inventoryValue
+          ? `${item.inventoryName} - ${formatBookingCurrency(item.inventoryValue)}`
+          : item.inventoryName),
+        "Responda com o número do item desejado.",
+      ].join("\n\n");
+      await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_inventory_invalid_choice" });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      return { ok: true, replied: true, reason: "booking_inventory_invalid_choice", conversationId };
     }
+    state.inventoryId = selected.inventoryId;
+    state.inventoryName = selected.inventoryName;
+    if (selected.inventoryValue > 0) state.serviceValue = selected.inventoryValue;
+    state.serviceName = `${state.baseServiceName || state.requestedServiceName || state.serviceName} - ${state.inventoryName}`;
+    state.status = "collecting";
   }
 
   if (!state.serviceId && !choice) {
     const serviceChoice = selectBookingService(text, base, state);
     if (serviceChoice) {
-      Object.assign(state, {
-        serviceId: serviceChoice.serviceId,
-        serviceName: serviceChoice.serviceName,
-        requestedServiceName: serviceChoice.requestedServiceName || serviceChoice.serviceName,
-        serviceValue: serviceChoice.serviceValue || 0,
-        serviceIsFree: serviceChoice.serviceIsFree === true,
-        offerInventoryItems: serviceChoice.offerInventoryItems === true,
-        categoryId: serviceChoice.categoryId || state.categoryId || "",
-        methodId: serviceChoice.methodId || state.methodId || "",
-        ...serviceDetailsState(serviceChoice),
-        serviceDetailsAccepted: false,
-        serviceNote: serviceChoice.note || "",
-      });
+      applyServiceChoiceToState(state, serviceChoice);
     }
   }
 
@@ -714,18 +760,7 @@ async function processServiceHierarchySelection(text, base, state, conversationI
     const serviceOptions = buildServiceOptions(base, state.categoryId, "");
     if (serviceOptions.length === 1) {
       const selected = serviceOptions[0];
-      Object.assign(state, {
-        serviceId: selected.serviceId,
-        serviceName: selected.serviceName,
-        requestedServiceName: selected.requestedServiceName || selected.serviceName,
-        serviceValue: selected.serviceValue || 0,
-        serviceIsFree: selected.serviceIsFree === true,
-        offerInventoryItems: selected.offerInventoryItems === true,
-        categoryId: selected.categoryId || state.categoryId || "",
-        methodId: selected.methodId || state.methodId || "",
-        ...serviceDetailsState(selected),
-        serviceDetailsAccepted: false,
-      });
+      applyServiceChoiceToState(state, selected);
     } else if (serviceOptions.length > 1) {
       state.serviceOptions = serviceOptions;
       state.status = "awaiting_service";
@@ -743,7 +778,17 @@ async function processServiceHierarchySelection(text, base, state, conversationI
       await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
       return { ok: true, replied: true, reason: "booking_service_options", conversationId };
     } else {
-      return null;
+      state.status = "awaiting_category";
+      state.categoryOptions = buildCategoryOptions(base);
+      await saveBookingState(conversationId, state);
+      const responseText = [
+        "Não encontrei serviços ativos nessa categoria.",
+        "Escolha outra categoria:",
+        optionLines(state.categoryOptions, (item) => item.categoryName),
+      ].filter(Boolean).join("\n\n");
+      await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_category_without_services" });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      return { ok: true, replied: true, reason: "booking_category_without_services", conversationId };
     }
   }
 
@@ -805,6 +850,7 @@ async function openInitialServiceCatalog({
     categoryOptions,
     serviceOptions: categoryOptions.length ? [] : serviceOptions,
     clientPhone: normalized.phoneNumber,
+    previousAppointmentId: recorded.conversation.appointment_id || "",
     updatedAt: new Date().toISOString(),
   };
   hydrateBookingContactFromClient(state, recorded.client);
@@ -833,6 +879,217 @@ async function openInitialServiceCatalog({
     reason: categoryOptions.length ? "booking_initial_category_catalog" : "booking_initial_service_catalog",
     conversationId,
   };
+}
+
+function clearSelectedService(state) {
+  Object.assign(state, {
+    serviceId: "",
+    serviceName: "",
+    baseServiceName: "",
+    requestedServiceName: "",
+    serviceValue: 0,
+    serviceIsFree: false,
+    serviceNote: "",
+    serviceDescription: "",
+    serviceDetailedDescription: "",
+    serviceDurationMinutes: 0,
+    serviceDepositAmount: 0,
+    serviceDepositType: "amount",
+    serviceRequiresAssessment: false,
+    serviceRequiresDeposit: false,
+    serviceRecommendedMessage: "",
+    serviceDetailsAccepted: false,
+    offerInventoryItems: false,
+    inventoryId: "",
+    inventoryName: "",
+    inventoryOptions: [],
+    date: "",
+    dateOptions: [],
+    time: "",
+    period: "",
+    preferredTime: "",
+    professionalId: "",
+    professionalName: "",
+    slotOptions: [],
+    slotPageStart: 0,
+  });
+}
+
+async function openServicesForCurrentCategory({ normalized, conversationId, base, recorded, state }) {
+  if (!state.categoryId) {
+    return openInitialServiceCatalog({ normalized, conversationId, base, recorded });
+  }
+
+  const serviceOptions = buildServiceOptions(base, state.categoryId, "");
+  if (!serviceOptions.length) {
+    return openInitialServiceCatalog({ normalized, conversationId, base, recorded });
+  }
+
+  clearSelectedService(state);
+  state.status = "awaiting_service";
+  state.serviceOptions = serviceOptions;
+  state.updatedAt = new Date().toISOString();
+  await saveBookingState(conversationId, state);
+
+  const responseText = [
+    `Serviços ativos em ${state.categoryName || "sua categoria"}:`,
+    optionLines(serviceOptions, (item) => item.serviceName),
+    "Responda com o número do serviço desejado.",
+  ].join("\n\n");
+  await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_back_to_services" });
+  await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+  return { ok: true, replied: true, reason: "booking_back_to_services", conversationId };
+}
+
+async function reopenInventoryStep({ normalized, conversationId, base, state }) {
+  const inventoryOptions = buildInventoryOptions(base, state);
+  if (!inventoryOptions.length) return null;
+
+  state.inventoryId = "";
+  state.inventoryName = "";
+  state.inventoryOptions = inventoryOptions;
+  state.serviceName = state.baseServiceName || state.requestedServiceName || state.serviceName;
+  state.date = "";
+  state.dateOptions = [];
+  state.time = "";
+  state.period = "";
+  state.preferredTime = "";
+  state.professionalId = "";
+  state.professionalName = "";
+  state.slotOptions = [];
+  state.slotPageStart = 0;
+  state.serviceDetailsAccepted = true;
+  state.status = "awaiting_inventory";
+  state.updatedAt = new Date().toISOString();
+  await saveBookingState(conversationId, state);
+
+  const responseText = [
+    buildServicePresentation(state),
+    "Itens disponíveis em estoque para este serviço:",
+    optionLines(inventoryOptions, (item) => item.inventoryValue
+      ? `${item.inventoryName} - ${formatBookingCurrency(item.inventoryValue)}`
+      : item.inventoryName),
+    "Responda com o número do item desejado.",
+  ].join("\n\n");
+  await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_back_to_inventory" });
+  await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+  return { ok: true, replied: true, reason: "booking_back_to_inventory", conversationId };
+}
+
+async function reopenDateStep({ normalized, conversationId, state }) {
+  state.date = "";
+  state.time = "";
+  state.period = "";
+  state.preferredTime = "";
+  state.professionalId = "";
+  state.professionalName = "";
+  state.slotOptions = [];
+  state.slotPageStart = 0;
+  state.dateOptions = dateOptionsFrom();
+  state.status = "awaiting_date";
+  state.updatedAt = new Date().toISOString();
+  await saveBookingState(conversationId, state);
+
+  const responseText = [
+    "Escolha a data respondendo com o número:",
+    optionLines(state.dateOptions, (item) => item.label),
+    "Se preferir outro dia, envie no formato 10/07.",
+  ].join("\n\n");
+  await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_back_to_date" });
+  await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+  return { ok: true, replied: true, reason: "booking_back_to_date", conversationId };
+}
+
+async function reopenSlotStep({ normalized, conversationId, state }) {
+  if (!state.date || !Array.isArray(state.slotOptions) || !state.slotOptions.length) return null;
+
+  state.time = "";
+  state.professionalId = "";
+  state.professionalName = "";
+  state.slotPageStart = 0;
+  state.status = "awaiting_slot";
+  state.updatedAt = new Date().toISOString();
+  await saveBookingState(conversationId, state);
+
+  const responseText = [
+    `Escolha novamente o horário para ${formatDateLabel(state.date)}:`,
+    slotPageLines(state.slotOptions, 0),
+  ].join("\n\n");
+  await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_back_to_slot" });
+  await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+  return { ok: true, replied: true, reason: "booking_back_to_slot", conversationId };
+}
+
+async function handleBookingGlobalCommand({
+  command,
+  normalized,
+  conversationId,
+  inboundMessageId,
+  settings,
+  base,
+  recorded,
+}) {
+  const state = parseJsonObject(recorded.conversation.booking_state);
+
+  if (command === "cancel") {
+    await saveBookingState(conversationId, {});
+    const responseText = "Tudo bem. O fluxo atual foi cancelado. Quando quiser recomeçar, envie menu.";
+    await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_global_cancel" });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    return { ok: true, replied: true, reason: "booking_global_cancel", conversationId };
+  }
+
+  if (command === "handoff") {
+    await saveBookingState(conversationId, {});
+    const responseText = settings.humanHandoffMessage || "Certo, chamei a equipe para continuar seu atendimento por aqui.";
+    await requestHumanAttention({
+      conversationId,
+      messageId: inboundMessageId,
+      reason: "booking_global_handoff",
+      responseText,
+    });
+    await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_global_handoff" });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    return { ok: true, replied: true, reason: "booking_global_handoff", conversationId };
+  }
+
+  if (command === "main_menu" || command === "change_service") {
+    return openInitialServiceCatalog({ normalized, conversationId, base, recorded });
+  }
+
+  if (command === "back") {
+    if (["awaiting_inventory", "awaiting_service_details"].includes(String(state.status || ""))) {
+      return openServicesForCurrentCategory({ normalized, conversationId, base, recorded, state });
+    }
+    if (state.status === "awaiting_date") {
+      const inventoryResult = await reopenInventoryStep({ normalized, conversationId, base, state });
+      if (inventoryResult) return inventoryResult;
+      state.status = "awaiting_service_details";
+      state.serviceDetailsAccepted = false;
+      await saveBookingState(conversationId, state);
+      const responseText = buildServiceDetailsResponse(state);
+      await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_back_to_service_details" });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      return { ok: true, replied: true, reason: "booking_back_to_service_details", conversationId };
+    }
+    if (["awaiting_contact", "awaiting_confirmation"].includes(String(state.status || ""))) {
+      const slotResult = await reopenSlotStep({ normalized, conversationId, state });
+      if (slotResult) return slotResult;
+      return reopenDateStep({ normalized, conversationId, state });
+    }
+    if (state.status === "awaiting_slot") {
+      return reopenDateStep({ normalized, conversationId, state });
+    }
+    if (state.status === "awaiting_service") {
+      return openInitialServiceCatalog({ normalized, conversationId, base, recorded });
+    }
+    if (state.serviceId) {
+      return openServicesForCurrentCategory({ normalized, conversationId, base, recorded, state });
+    }
+    return openInitialServiceCatalog({ normalized, conversationId, base, recorded });
+  }
+
+  return null;
 }
 
 function bookingServiceDetails(service = {}) {
@@ -2188,18 +2445,12 @@ export async function handleStructuredBookingFlow({
   forceCatalogFlow = false,
 }) {
   const persistedBookingState = parseJsonObject(recorded.conversation.booking_state);
-  const isCatalogStateActive = [
-    "awaiting_category",
-    "awaiting_method",
-    "awaiting_service",
-    "awaiting_service_details",
-    "awaiting_inventory",
-  ].includes(String(persistedBookingState.status || ""));
+  const isPersistedStateActive = isActiveBookingState(persistedBookingState);
 
-  if (!settings.allowAutoBooking && !forceCatalogFlow && !isCatalogStateActive) return null;
+  if (!settings.allowAutoBooking && !forceCatalogFlow && !isPersistedStateActive) return null;
   if (
     !forceCatalogFlow &&
-    !isCatalogStateActive &&
+    !isPersistedStateActive &&
     !flowEnabled(base, "pre_agendamento") &&
     !flowEnabled(base, "verificacao_agenda")
   ) return null;
@@ -2208,6 +2459,13 @@ export async function handleStructuredBookingFlow({
 
   try {
     let currentState = persistedBookingState;
+    const hasActiveCatalogMenu = [
+      "awaiting_category",
+      "awaiting_method",
+      "awaiting_service",
+      "awaiting_service_details",
+      "awaiting_inventory",
+    ].includes(String(currentState.status || ""));
     let persistedAppointmentId = recorded.conversation.appointment_id || currentState.appointmentId || "";
     if (persistedAppointmentId) {
       const appQuery = await query(
@@ -2229,6 +2487,7 @@ export async function handleStructuredBookingFlow({
 
     if (
       persistedAppointmentId &&
+      !hasActiveCatalogMenu &&
       currentState.status !== "booked" &&
       currentState.previousAppointmentId !== persistedAppointmentId
     ) {
@@ -2238,7 +2497,7 @@ export async function handleStructuredBookingFlow({
         appointmentId: persistedAppointmentId,
       };
     }
-  if (shouldResetBookingStateOnGreeting(text, currentState)) {
+  if (shouldResetBookingStateOnGreeting(text, currentState) && !isActiveBookingState(currentState)) {
     await saveBookingState(conversationId, {});
     const responseText = settings.welcomeMessage;
     await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_state_reset_greeting" });
@@ -2367,7 +2626,12 @@ export async function handleStructuredBookingFlow({
 
   const hierarchyResult = await processServiceHierarchySelection(text, base, state, conversationId, normalized, false, "");
   if (hierarchyResult) return hierarchyResult;
-  if (!state.serviceId) return null;
+  if (!state.serviceId) {
+    if (isPersistedStateActive) {
+      return openInitialServiceCatalog({ normalized, conversationId, base, recorded });
+    }
+    return null;
+  }
 
   // Se a intenção original era consultar a agenda ou se o usuário já forneceu data/hora/período,
   // pula a confirmação de detalhes do serviço.
@@ -3657,6 +3921,19 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   const processingStartedAt = new Date();
   const queueLatencyMs = processingStartedAt.getTime() - receivedAt.getTime();
 
+  const globalBookingCommand = detectBookingGlobalCommand(concatenatedText);
+  if (globalBookingCommand) {
+    return handleBookingGlobalCommand({
+      command: globalBookingCommand,
+      normalized,
+      conversationId,
+      inboundMessageId,
+      settings,
+      base,
+      recorded,
+    });
+  }
+
   // 6. Keywords checkpoints
   if (keywordInText(concatenatedText, settings.resumeKeyword)) {
     await query(
@@ -3764,7 +4041,9 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     salonName: settings.salonName,
   });
   const initialBookingState = parseJsonObject(recorded.conversation.booking_state);
+  const hasActiveInitialBookingState = isActiveBookingState(initialBookingState);
   const shouldResetBooking = Boolean(localGreetingResponse) &&
+    !hasActiveInitialBookingState &&
     shouldResetBookingStateOnGreeting(concatenatedText, initialBookingState);
   const hasPersistedBookingProgress = Boolean(
     initialBookingState.status ||
@@ -3774,7 +4053,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   );
   if (shouldResetBooking) await saveBookingState(conversationId, {});
 
-  if (localGreetingResponse || !hasPersistedBookingProgress) {
+  if ((localGreetingResponse && !hasActiveInitialBookingState) || !hasPersistedBookingProgress) {
     const greetingText = localGreetingResponse || buildLocalGreetingResponse("oi", {
       date: processingStartedAt,
       timezone: settings.timezone,

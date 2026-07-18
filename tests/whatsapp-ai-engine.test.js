@@ -33,6 +33,7 @@ import {
   isServiceCatalogMenuIntent,
   buildInitialServiceCatalogOptions,
   buildInitialCategoryCatalogOptions,
+  detectBookingGlobalCommand,
 } from "../server/lib/whatsapp-ai-engine.js";
 
 const originalQuery = pool.query;
@@ -57,6 +58,18 @@ test("matches migrated Brazilian client phones with or without country and ninth
   assert.ok(candidates.exact.includes("14988773387"));
   assert.ok(candidates.exact.includes("1488773387"));
   assert.ok(candidates.exact.includes("551488773387"));
+});
+
+test("detects global booking commands without assigning meaning to isolated numbers", () => {
+  assert.equal(detectBookingGlobalCommand("cancelar agendamento"), "cancel");
+  assert.equal(detectBookingGlobalCommand("cacenlar"), "cancel");
+  assert.equal(detectBookingGlobalCommand("não quero mais"), "cancel");
+  assert.equal(detectBookingGlobalCommand("voltar"), "back");
+  assert.equal(detectBookingGlobalCommand("início"), "main_menu");
+  assert.equal(detectBookingGlobalCommand("trocar serviço"), "change_service");
+  assert.equal(detectBookingGlobalCommand("falar com alguém"), "handoff");
+  assert.equal(detectBookingGlobalCommand("quero falar com atendente por favor"), "handoff");
+  assert.equal(detectBookingGlobalCommand("3"), "");
 });
 
 test("lists available inventory for a service, including generic category items", () => {
@@ -796,7 +809,7 @@ test("handleStructuredBookingFlow shows service details after service selection"
   assert.match(sentTexts.at(-1), /2\) Escolher outro servico/);
 });
 
-test("handleStructuredBookingFlow shows service presentation together with inventory choices", async () => {
+test("active category state wins over an old appointment when option 3 is selected", async () => {
   const sentTexts = [];
   const savedStates = [];
   pool.query = async (sql, params = []) => {
@@ -832,7 +845,7 @@ test("handleStructuredBookingFlow shows service presentation together with inven
     normalized: { phoneNumber: "5511999999999" },
     conversationId: "conversation-inventory",
     inboundMessageId: "inbound-inventory",
-    text: "1",
+    text: "3",
     settings: { allowAutoBooking: false },
     base: {
       flows: [{ flow_key: "pre_agendamento", enabled: true }],
@@ -867,9 +880,10 @@ test("handleStructuredBookingFlow shows service presentation together with inven
       conversation: {
         booking_state: JSON.stringify({
           status: "awaiting_category",
-          categoryOptions: [{ id: 1, categoryId: "category-fibra", categoryName: "Fibra Russa" }],
+          categoryOptions: [{ id: 3, categoryId: "category-fibra", categoryName: "Fibra Russa" }],
         }),
-        last_message_preview: "1) Fibra Russa",
+        appointment_id: "appointment-old",
+        last_message_preview: "3) Fibra Russa",
       },
     },
     queueLatencyMs: 0,
@@ -887,6 +901,22 @@ test("handleStructuredBookingFlow shows service presentation together with inven
   assert.match(sentTexts.at(-1), /60\/65\/70 cm/);
   assert.match(sentTexts.at(-1), /150 g/);
   assert.match(sentTexts.at(-1), /410/);
+
+  const invalidResponse = await handleStructuredBookingFlow({
+    ...request,
+    text: "não entendi",
+    recorded: {
+      ...request.recorded,
+      conversation: {
+        ...request.recorded.conversation,
+        booking_state: JSON.stringify(savedStates.at(-1)),
+      },
+    },
+  });
+
+  assert.equal(invalidResponse.reason, "booking_inventory_invalid_choice");
+  assert.match(sentTexts.at(-1), /escolhendo o item de estoque/i);
+  assert.match(sentTexts.at(-1), /Castanho Médio/);
 });
 
 test("handleStructuredBookingFlow does not replace WhatsApp phone with CPF", async () => {

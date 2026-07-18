@@ -105,6 +105,8 @@ test("builds runtime prompt with anti-hallucination rules and no secrets", () =>
 
   assert.match(prompt, /Nunca inventar preços/);
   assert.match(prompt, /ferramentas reais do backend/);
+  assert.match(prompt, /Um número só representa a opção definida pelo estado atual do backend/);
+  assert.doesNotMatch(prompt, /Se o usuário digitar a opção "3"/);
   assert.doesNotMatch(prompt, /GEMINI_API_KEY/i);
   assert.doesNotMatch(prompt, /apiKey/i);
 });
