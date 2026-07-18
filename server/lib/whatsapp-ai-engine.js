@@ -2223,6 +2223,10 @@ function formatSlot(slot) {
   return `${slot.time} com ${slot.professionalName}`;
 }
 
+function slotAvailabilityContextLine() {
+  return "Esses horarios ja consideram a duracao do servico e a agenda ocupada ou bloqueada.";
+}
+
 async function slotOptionsForBooking({ serviceId, date, preferredTime = "", period = "" }) {
   return transaction(async (client) => {
     const { slots } = await availableBookingSlots(client, {
@@ -2408,6 +2412,7 @@ export async function handleLocalAgendaAvailabilityIntent({
     const responseText = [
       naturalConversationPrefix(text),
       `${header} Encontrei ${slotOptions.length} horarios disponiveis${periodText}.`,
+      slotAvailabilityContextLine(),
       "Pode escolher pelo numero ou me dizer o horario que prefere:",
       slotPageLines(slotOptions, 0),
     ].filter(Boolean).join("\n\n");
@@ -2874,6 +2879,7 @@ export async function handleStructuredBookingFlow({
             preferredTime
               ? `Nao encontrei ${preferredTime} disponivel para ${formatDateLabel(unavailableDate)}, mas mantive essa data e achei estas opcoes:`
               : `Nao encontrei horario nesse periodo para ${formatDateLabel(unavailableDate)}, mas mantive essa data e achei estas opcoes:`,
+            slotAvailabilityContextLine(),
             slotPageLines(fallbackSlots, 0),
             "Pode escolher pelo numero ou me dizer outro horario.",
           ].join("\n\n");
@@ -2938,6 +2944,7 @@ export async function handleStructuredBookingFlow({
       const periodText = state.period ? ` no período da ${periodLabel(state.period)}` : "";
       const responseText = [
         `Encontrei ${slotOptions.length} horários disponíveis${periodText}. Pode escolher pelo número ou me dizer o horário que prefere:`,
+        slotAvailabilityContextLine(),
         slotPageLines(slotOptions, 0),
       ].join("\n\n");
       await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_slot_options" });
