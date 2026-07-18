@@ -19,8 +19,10 @@ import {
   Search,
   Sparkles,
   Star,
+  Trash2,
   TrendingUp,
   UserCheck,
+  UserMinus,
   Users,
   X,
 } from "lucide-react";
@@ -61,6 +63,19 @@ const professionalAppointmentLabel: Record<string, string> = {
 
 const professionalAppointmentTone = (status: string): "green" | "amber" | "rose" | "gold" | "neutral" =>
   status === "confirmed" ? "green" : ["awaiting_payment", "pending_deposit", "requested"].includes(status) ? "amber" : "gold";
+
+// Returns a CSS class for row background based on appointment status
+const appointmentRowColor = (status: string): string => {
+  if (["confirmed", "completed", "paid", "approved"].includes(status))
+    return "border-l-4 border-l-emerald-400 bg-emerald-50/40";
+  if (["cancelled", "no_show", "failed"].includes(status))
+    return "border-l-4 border-l-rose-400 bg-rose-50/40";
+  if (["rescheduled", "reschedule_requested"].includes(status))
+    return "border-l-4 border-l-blue-400 bg-blue-50/40";
+  if (["in_service"].includes(status))
+    return "border-l-4 border-l-amber-500 bg-amber-50/40";
+  return "border-l-4 border-l-amber-300 bg-amber-50/20";
+};
 
 const professionalDateTime = (value: unknown) =>
   value ? new Date(String(value)).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "-";
@@ -747,16 +762,17 @@ function ProfessionalAgenda() {
         ) : agendaItems.length ? (
           agendaItems.map((a, i) => {
             const statusKey = String(a.id || i);
+            const rawStatus = a.rawStatus || a.status;
             const s = a.status;
             return (
               <div
                 key={statusKey}
-                className="grid grid-cols-[64px_1fr] border-b border-black/[.05] last:border-0"
+                className={`grid grid-cols-[64px_1fr] border-b border-black/[.05] last:border-0 ${appointmentRowColor(rawStatus)}`}
               >
                 <div className="border-r border-black/[.05] p-4 text-xs font-bold">
                   {a.time}
                 </div>
-                <div className="m-2 flex flex-col gap-3 rounded-2xl bg-warm/60 p-4 sm:flex-row sm:items-center">
+                <div className="m-2 flex flex-col gap-3 rounded-2xl bg-white/70 p-4 sm:flex-row sm:items-center">
                   <Avatar src={a.photo} name={a.client} />
                   <div className="min-w-0 flex-1">
                     <a
@@ -840,6 +856,34 @@ function ProfessionalAgenda() {
                     <option>Faltou</option>
                     <option>Reagendado</option>
                   </select>
+                  <button
+                    type="button"
+                    title="Remover agendamento"
+                    disabled={updating[statusKey]}
+                    onClick={async () => {
+                      if (!a.id) return;
+                      if (!confirm(`Remover agendamento de ${a.client}? O agendamento será cancelado.`)) return;
+                      setUpdating((c) => ({ ...c, [statusKey]: true }));
+                      try {
+                        await apiFetch("/api/data?resource=appointments", {
+                          method: "DELETE",
+                          body: JSON.stringify({ id: a.id }),
+                        });
+                        setRemote((c) => c.filter((item) => item.id !== a.id));
+                        setToastMessage("Agendamento removido.");
+                      } catch (err) {
+                        console.error("Delete appointment error", err);
+                        setToastMessage(err instanceof Error ? err.message : "Não foi possível remover.");
+                      } finally {
+                        setUpdating((c) => ({ ...c, [statusKey]: false }));
+                        setToast(true);
+                        setTimeout(() => setToast(false), 2400);
+                      }
+                    }}
+                    className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-rose-500 hover:bg-rose-100 disabled:opacity-40 transition"
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               </div>
             );
@@ -1008,9 +1052,31 @@ function ProfessionalClients() {
     password: "",
   });
 
+  const [confirmRemoveClientId, setConfirmRemoveClientId] = useState<string | null>(null);
+  const [removingClient, setRemovingClient] = useState(false);
+
+  const removeClient = async (clientId: string) => {
+    setRemovingClient(true);
+    try {
+      await apiFetch("/api/portal?resource=admin-client-removal", {
+        method: "DELETE",
+        body: JSON.stringify({ clientId }),
+      });
+      setRemote((c) => c.filter((x) => x.id !== clientId));
+      setToast("Cliente removida com sucesso.");
+    } catch (err) {
+      console.error("Remove client error", err);
+      setToast(err instanceof Error ? err.message : "Não foi possível remover a cliente.");
+    } finally {
+      setRemovingClient(false);
+      setConfirmRemoveClientId(null);
+      setTimeout(() => setToast(""), 2600);
+    }
+  };
+
   useEffect(() => {
     apiFetch<{ clients: Array<Record<string, any>> }>(
-      "/api/data?resource=clients",
+      "/api/data?resource=clients&professionalOnly=true",
     )
       .then((data) => setRemote(data.clients))
       .catch((error) => console.error("Professional clients error", error))
@@ -1090,66 +1156,74 @@ function ProfessionalClients() {
       ) : filtered.length ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {filtered.map((c) => (
-            <button
-              key={c.id || c.name}
-              onClick={() => navigate(`/profissional/clientes/${c.id}`)}
-              className="surface p-5 text-left transition hover:-translate-y-1"
-            >
-              <div className="flex items-center gap-3">
-                <Avatar src={c.avatar_url} name={c.name} size="lg" />
-                <div className="min-w-0 flex-1">
-                  <h3 className="truncate font-display text-2xl font-semibold">
-                    {c.name}
-                  </h3>
-                  <p className="text-[10px] text-stone-400">
-                    {c.phone || "Telefone não informado"}
-                  </p>
+            <div key={c.id || c.name} className="surface p-5 relative">
+              <button
+                onClick={() => navigate(`/profissional/clientes/${c.id}`)}
+                className="w-full text-left"
+              >
+                <div className="flex items-center gap-3">
+                  <Avatar src={c.avatar_url} name={c.name} size="lg" />
+                  <div className="min-w-0 flex-1">
+                    <h3 className="truncate font-display text-2xl font-semibold">
+                      {c.name}
+                    </h3>
+                    <p className="text-[10px] text-stone-400">
+                      {c.phone || "Telefone não informado"}
+                    </p>
+                  </div>
+                  <Badge
+                    tone={c.account_status === "active" ? "green" : "neutral"}
+                  >
+                    {c.account_status === "active" ? "Ativa" : "Inativa"}
+                  </Badge>
                 </div>
-                <Badge
-                  tone={c.account_status === "active" ? "green" : "neutral"}
-                >
-                  {c.account_status === "active" ? "Ativa" : "Inativa"}
-                </Badge>
-              </div>
-              <div className="mt-5 grid grid-cols-3 rounded-2xl bg-warm p-4 text-center">
-                <div>
-                  <b className="text-xs">
-                    {c.last_appointment
-                      ? new Date(c.last_appointment).toLocaleDateString("pt-BR")
+                <div className="mt-5 grid grid-cols-3 rounded-2xl bg-warm p-4 text-center">
+                  <div>
+                    <b className="text-xs">
+                      {c.last_appointment
+                        ? new Date(c.last_appointment).toLocaleDateString("pt-BR")
+                        : "—"}
+                    </b>
+                    <span className="mt-1 block text-[8px] text-stone-400">
+                      Última visita
+                    </span>
+                  </div>
+                  <div className="border-x border-black/[.06]">
+                    <b className="text-xs">
+                      {Number(c.lifetime_value || 0).toLocaleString("pt-BR", {
+                        style: "currency",
+                        currency: "BRL",
+                      })}
+                    </b>
+                    <span className="mt-1 block text-[8px] text-stone-400">
+                      Valor acumulado
+                    </span>
+                  </div>
+                  <div>
+                    <b className="text-xs">{c.points || 0}</b>
+                    <span className="mt-1 block text-[8px] text-stone-400">
+                      Pontos
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center justify-between text-[10px] text-stone-400">
+                  <span>
+                    Próxima:{" "}
+                    {c.next_appointment
+                      ? new Date(c.next_appointment).toLocaleDateString("pt-BR")
                       : "—"}
-                  </b>
-                  <span className="mt-1 block text-[8px] text-stone-400">
-                    Última visita
                   </span>
+                  <span className="font-bold text-champagne">Ver ficha →</span>
                 </div>
-                <div className="border-x border-black/[.06]">
-                  <b className="text-xs">
-                    {Number(c.lifetime_value || 0).toLocaleString("pt-BR", {
-                      style: "currency",
-                      currency: "BRL",
-                    })}
-                  </b>
-                  <span className="mt-1 block text-[8px] text-stone-400">
-                    Valor acumulado
-                  </span>
-                </div>
-                <div>
-                  <b className="text-xs">{c.points || 0}</b>
-                  <span className="mt-1 block text-[8px] text-stone-400">
-                    Pontos
-                  </span>
-                </div>
-              </div>
-              <div className="mt-4 flex items-center justify-between text-[10px] text-stone-400">
-                <span>
-                  Próxima:{" "}
-                  {c.next_appointment
-                    ? new Date(c.next_appointment).toLocaleDateString("pt-BR")
-                    : "—"}
-                </span>
-                <span className="font-bold text-champagne">Ver ficha →</span>
-              </div>
-            </button>
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmRemoveClientId(c.id)}
+                className="mt-3 flex items-center gap-1 text-[10px] font-semibold text-rose-500 hover:text-rose-700 transition"
+              >
+                <UserMinus size={12} /> Remover cliente
+              </button>
+            </div>
           ))}
         </div>
       ) : (
@@ -1160,6 +1234,37 @@ function ProfessionalClients() {
           </p>
         </div>
       )}
+
+      {/* Confirm remove client modal */}
+      <Modal
+        open={!!confirmRemoveClientId}
+        onClose={() => !removingClient && setConfirmRemoveClientId(null)}
+        title="Remover cliente"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-stone-600">
+            Tem certeza que deseja remover esta cliente? Esta ação é irreversível e removerá todos os dados vinculados.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={removingClient}
+              onClick={() => setConfirmRemoveClientId(null)}
+              className="btn-secondary flex-1"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={removingClient}
+              onClick={() => confirmRemoveClientId && removeClient(confirmRemoveClientId)}
+              className="btn-primary flex-1 bg-rose-600 hover:bg-rose-700 border-transparent"
+            >
+              {removingClient ? "Removendo..." : "Confirmar remoção"}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={open}

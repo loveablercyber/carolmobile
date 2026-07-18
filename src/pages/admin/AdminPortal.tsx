@@ -3548,7 +3548,9 @@ export function AdminProfessionalsPage() {
     commissionRate: "30",
     password: "",
     active: true,
+    avatarUrl: "",
   });
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [scheduleProfessionalId, setScheduleProfessionalId] = useState("");
@@ -3566,6 +3568,7 @@ export function AdminProfessionalsPage() {
       commissionRate: "30",
       password: "",
       active: true,
+      avatarUrl: "",
     });
     setProfileModalOpen(true);
   };
@@ -3583,6 +3586,7 @@ export function AdminProfessionalsPage() {
       commissionRate: String(professional.commission_rate),
       password: "",
       active: professional.active !== false,
+      avatarUrl: professional.avatar_url || "",
     });
     setProfileModalOpen(true);
   };
@@ -3658,6 +3662,7 @@ export function AdminProfessionalsPage() {
           commissionRate: Number(profileForm.commissionRate),
           password: profileForm.password || undefined,
           active: profileForm.active,
+          avatarUrl: profileForm.avatarUrl || undefined,
         }),
       });
       await p.reload();
@@ -3791,6 +3796,35 @@ export function AdminProfessionalsPage() {
 
       <Modal open={profileModalOpen} onClose={() => setProfileModalOpen(false)} title={editing ? "Editar profissional" : "Cadastrar profissional"}>
         <form onSubmit={saveProfile} className="space-y-4">
+          {/* Photo upload */}
+          <div className="flex flex-col items-center gap-3">
+            <Avatar src={profileForm.avatarUrl} name={profileForm.fullName || "Profissional"} size="lg" />
+            <label className="btn-secondary cursor-pointer !min-h-8 !px-3 text-xs">
+              {uploadingPhoto ? "Enviando..." : "Trocar foto"}
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={uploadingPhoto}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  setUploadingPhoto(true);
+                  try {
+                    const { uploadImage } = await import("../../lib/api");
+                    const uploaded = await uploadImage(file, "profile-photo");
+                    setProfileForm((f) => ({ ...f, avatarUrl: uploaded.url }));
+                    setToast("Foto atualizada.");
+                  } catch (err) {
+                    setToast(err instanceof Error ? err.message : "Não foi possível enviar a foto.");
+                  } finally {
+                    setUploadingPhoto(false);
+                    setTimeout(() => setToast(""), 2200);
+                  }
+                }}
+              />
+            </label>
+          </div>
           <Input
             label="Nome Completo"
             value={profileForm.fullName}

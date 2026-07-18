@@ -17,8 +17,8 @@ import {
   Scissors,
   Sparkles,
   Trash2,
-  UserPlus,
   Upload,
+  UserPlus,
   WalletCards,
 } from "lucide-react";
 import {
@@ -210,6 +210,7 @@ export function ClientHomePage() {
     ? `carolsol:first-access:${prompt.id}:${prompt.payment_id || "no-payment"}`
     : "";
   const [firstAccessOpen, setFirstAccessOpen] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
 
   useEffect(() => {
     if (!promptKey) return;
@@ -218,10 +219,75 @@ export function ClientHomePage() {
     }
   }, [promptKey]);
 
+  // Show alerts modal on load if there are pending payments or upcoming maintenance
+  useEffect(() => {
+    if (!overview.data) return;
+    const d = overview.data;
+    const hasPending = d.pendingPayments?.count > 0;
+    const alertKey = `carolsol:alerts:${new Date().toDateString()}`;
+    if (hasPending && window.localStorage.getItem(alertKey) !== "seen") {
+      window.localStorage.setItem(alertKey, "seen");
+      // Small delay so it doesn't show at exact same time as first-access modal
+      setTimeout(() => setAlertsOpen(true), 800);
+    }
+  }, [overview.data]);
+
   const closeFirstAccess = () => {
     if (promptKey) window.localStorage.setItem(promptKey, "dismissed");
     setFirstAccessOpen(false);
   };
+
+  // Generate smart recommendations based on service history
+  const smartTips = useMemo(() => {
+    if (!overview.data) return [];
+    const d = overview.data;
+    const tips: { icon: string; title: string; text: string; color: string }[] = [];
+
+    if (d.pendingPayments?.count > 0) {
+      tips.push({
+        icon: "💳",
+        title: "Pagamento pendente",
+        text: `Você possui ${d.pendingPayments.count} pagamento(s) em aberto totalizando ${brl(d.pendingPayments.amount)}.`,
+        color: "bg-amber-50 border-amber-200 text-amber-800",
+      });
+    }
+
+    const nextAppt = d.nextAppointment;
+    if (nextAppt) {
+      const daysUntil = Math.ceil((new Date(nextAppt.starts_at).getTime() - Date.now()) / 86400000);
+      if (daysUntil <= 7 && daysUntil > 0) {
+        tips.push({
+          icon: "📅",
+          title: "Seu atendimento está chegando!",
+          text: `${nextAppt.service} em ${daysUntil} dia(s) com ${nextAppt.professional}.`,
+          color: "bg-emerald-50 border-emerald-200 text-emerald-800",
+        });
+      }
+    }
+
+    // Maintenance reminder based on lastAppointment
+    const lastAppt = d.lastCompletedAppointment;
+    if (lastAppt) {
+      const daysSince = Math.ceil((Date.now() - new Date(lastAppt.starts_at).getTime()) / 86400000);
+      if (daysSince >= 60) {
+        tips.push({
+          icon: "✨",
+          title: "Hora da manutenção!",
+          text: `Faz ${daysSince} dias desde seu último atendimento. Que tal agendar uma manutenção ou cronograma capilar?`,
+          color: "bg-purple-50 border-purple-200 text-purple-800",
+        });
+      } else if (daysSince >= 30) {
+        tips.push({
+          icon: "💆‍♀️",
+          title: "Cronograma capilar recomendado",
+          text: `Manter um cronograma capilar regular preserva a saúde dos seus fios e do investimento.`,
+          color: "bg-blue-50 border-blue-200 text-blue-800",
+        });
+      }
+    }
+
+    return tips;
+  }, [overview.data]);
 
   if (overview.loading || bootstrap.loading) return <LoadingState />;
   if (!overview.data) return <Notice message={overview.error} />;
@@ -234,6 +300,61 @@ export function ClientHomePage() {
         title={`Olá, ${firstName}.`}
         subtitle="Seus próximos cuidados e benefícios atualizados em tempo real."
       />
+
+      {/* Smart Alerts Modal — shown once/day when there are pending payments */}
+      <Modal
+        open={alertsOpen}
+        onClose={() => setAlertsOpen(false)}
+        title="🔔 Atenção"
+      >
+        <div className="space-y-4">
+          {d.pendingPayments?.count > 0 && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <div className="flex items-start gap-3">
+                <span className="text-2xl">💳</span>
+                <div>
+                  <b className="block text-sm text-amber-900">Cobrança em aberto</b>
+                  <p className="mt-1 text-xs text-amber-700">
+                    Você possui {d.pendingPayments.count} pagamento(s) pendente(s)
+                    totalizando {brl(d.pendingPayments.amount)}.
+                  </p>
+                  <button
+                    onClick={() => { setAlertsOpen(false); nav("/cliente/pagamentos"); }}
+                    className="btn-primary mt-3 !min-h-8 !px-3 text-xs"
+                  >
+                    Ver pagamentos
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          {d.nextAppointment && (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+              <div className="flex items-start gap-3">
+                <span className="text-2xl">📅</span>
+                <div>
+                  <b className="block text-sm text-emerald-900">Agendamento confirmado</b>
+                  <p className="mt-1 text-xs text-emerald-700">
+                    {d.nextAppointment.service} • {dateTime(d.nextAppointment.starts_at)}
+                  </p>
+                  <button
+                    onClick={() => { setAlertsOpen(false); nav("/cliente/agendamentos"); }}
+                    className="mt-3 text-xs font-bold text-emerald-700 hover:underline"
+                  >
+                    Ver detalhes →
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          <button
+            onClick={() => setAlertsOpen(false)}
+            className="btn-secondary w-full"
+          >
+            Fechar
+          </button>
+        </div>
+      </Modal>
       <Modal
         open={firstAccessOpen && Boolean(prompt)}
         onClose={closeFirstAccess}
@@ -401,7 +522,7 @@ export function ClientHomePage() {
                   <b>{servicePriceLabel(s, bootstrap.data?.inventoryItems || [])}</b>
                 </div>
                 <button
-                  onClick={() => nav("/cliente/agendamentos")}
+                  onClick={() => nav("/cliente/agendamentos", { state: { openBooking: true, serviceName: s.name } })}
                   className="btn-primary mt-5 w-full"
                 >
                   Agendar
@@ -416,6 +537,37 @@ export function ClientHomePage() {
           )}
         </div>
       </section>
+
+      {/* Smart Tips / AI Personalized Alerts */}
+      {smartTips.length > 0 && (
+        <section className="mt-8">
+          <SectionHeading title="✨ Recomendações para você" />
+          <div className="grid gap-3 sm:grid-cols-2">
+            {smartTips.map((tip, idx) => (
+              <div
+                key={idx}
+                className={`rounded-2xl border p-4 ${tip.color}`}
+              >
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl">{tip.icon}</span>
+                  <div>
+                    <b className="block text-sm">{tip.title}</b>
+                    <p className="mt-1 text-xs opacity-80">{tip.text}</p>
+                    {tip.title.includes("manuç") || tip.title.includes("cronograma") || tip.title.includes("Manu") ? (
+                      <button
+                        onClick={() => nav("/cliente/agendamentos", { state: { openBooking: true } })}
+                        className="mt-3 text-xs font-bold underline opacity-90 hover:opacity-100"
+                      >
+                        Agendar agora →
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

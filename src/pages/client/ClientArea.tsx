@@ -29,6 +29,7 @@ import {
   ShieldCheck,
   Sparkles,
   Star,
+  Trash2,
   Upload,
   UserRound,
   Users,
@@ -914,6 +915,7 @@ const nextBookingDates = () => {
 };
 
 function ClientAgenda() {
+  const location = useLocation();
   const dates = useMemo(nextBookingDates, []);
   const discoveryDraft = useMemo(() => {
     try {
@@ -932,7 +934,9 @@ function ClientAgenda() {
   const discoveryRecommendationNote = discoveryDraft?.recommendation?.service?.name
     ? `Recomendação da descoberta: ${discoveryDraft.recommendation.service.name}`
     : "";
-  const [booking, setBooking] = useState(Boolean(discoveryDraft));
+  // Check if we were navigated here with openBooking state (e.g. from home services)
+  const locationState = location.state as { openBooking?: boolean; serviceName?: string } | null;
+  const [booking, setBooking] = useState(Boolean(discoveryDraft) || Boolean(locationState?.openBooking));
   const [step, setStep] = useState(discoveryDraft ? 2 : 0);
   const mappedMethod = useMemo(() => {
     const draftMethod = discoveryDraft?.answers?.method;
@@ -943,7 +947,7 @@ function ClientAgenda() {
     return draftMethod;
   }, [discoveryDraft]);
   const [selected, setSelected] = useState<Record<string, string>>({
-    service: "",
+    service: locationState?.serviceName || "",
     method: mappedMethod,
     professional: "Primeira disponível",
     date: dates[0] || "",
@@ -953,6 +957,9 @@ function ClientAgenda() {
     couponCode: "",
     inventoryItemId: "",
   });
+  // State for removing appointments
+  const [removingApptId, setRemovingApptId] = useState<string | null>(null);
+  const [confirmRemoveApptId, setConfirmRemoveApptId] = useState<string | null>(null);
   const [validatingCoupon, setValidatingCoupon] = useState(false);
   const [couponInfo, setCouponInfo] = useState<{ code: string; discount: number; total: number; error?: string } | null>(null);
   const [success, setSuccess] = useState(false);
@@ -1565,6 +1572,7 @@ function ClientAgenda() {
           </section>
         )}
       </div>
+      {/* History + Sidebar */}
       <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_340px]">
         <section className="surface p-6">
           <SectionHeading title="Histórico" />
@@ -1573,7 +1581,13 @@ function ClientAgenda() {
               {history.map((item) => (
                 <div
                   key={item.id}
-                  className="flex items-center gap-4 rounded-2xl border border-black/[.05] p-4"
+                  className={`flex items-center gap-4 rounded-2xl border p-4 ${
+                    item.status === "completed"
+                      ? "border-emerald-100 bg-emerald-50/30"
+                      : item.status === "no_show"
+                        ? "border-amber-100 bg-amber-50/30"
+                        : "border-rose-100 bg-rose-50/20"
+                  }`}
                 >
                   <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-warm text-champagne">
                     <CalendarDays size={18} />
@@ -1594,6 +1608,15 @@ function ClientAgenda() {
                         ? "Faltou"
                         : "Cancelado"}
                   </Badge>
+                  <button
+                    type="button"
+                    title="Remover agendamento"
+                    disabled={removingApptId === item.id}
+                    onClick={() => setConfirmRemoveApptId(item.id)}
+                    className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-rose-400 hover:bg-rose-100 transition disabled:opacity-40"
+                  >
+                    <Trash2 size={13} />
+                  </button>
                 </div>
               ))}
             </div>
@@ -1603,19 +1626,96 @@ function ClientAgenda() {
             </div>
           )}
         </section>
-        <aside className="surface p-6">
-          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-50 text-amber-700">
-            <Info />
+        {/* Smart Alerts Sidebar */}
+        <aside className="space-y-4">
+          <div className="surface p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-xl">✨</span>
+              <h3 className="font-display text-xl font-semibold">Dicas para você</h3>
+            </div>
+            <div className="space-y-3 text-xs text-stone-600">
+              <div className="rounded-2xl bg-purple-50 border border-purple-100 p-3">
+                <p className="font-bold text-purple-800">💆‍♀️ Cronograma capilar</p>
+                <p className="mt-1 text-purple-700">Manutenção regular preserva o investimento e a saúde dos seus fios.</p>
+              </div>
+              <div className="rounded-2xl bg-amber-50 border border-amber-100 p-3">
+                <p className="font-bold text-amber-800">💧 Hidratação profunda</p>
+                <p className="mt-1 text-amber-700">Recomendamos hidratação semanal para cabelos com extensões.</p>
+              </div>
+              <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-3">
+                <p className="font-bold text-emerald-800">✅ Nova manutenção</p>
+                <p className="mt-1 text-emerald-700">Extensões precisam de manutenção a cada 45–60 dias para manter o resultado perfeito.</p>
+                <button
+                  onClick={() => { setBooking(true); setStep(0); }}
+                  className="mt-3 text-[11px] font-bold text-emerald-700 hover:underline"
+                >
+                  Agendar manutenção →
+                </button>
+              </div>
+            </div>
           </div>
-          <h3 className="mt-4 font-display text-2xl font-semibold">
-            Política tranquila
-          </h3>
-          <p className="muted mt-2">
-            Remarque sem custo até 24 horas antes. Cancelamentos após esse prazo
-            podem reter 50% do sinal.
-          </p>
+          <div className="surface p-6">
+            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-amber-50 text-amber-700 mb-3">
+              <Info size={18} />
+            </div>
+            <h3 className="font-display text-xl font-semibold">Política tranquila</h3>
+            <p className="muted mt-2 text-xs">
+              Remarque sem custo até 24 horas antes. Cancelamentos após esse prazo
+              podem reter 50% do sinal.
+            </p>
+          </div>
         </aside>
       </div>
+      {/* Confirm remove appointment modal */}
+      <Modal
+        open={!!confirmRemoveApptId}
+        onClose={() => !removingApptId && setConfirmRemoveApptId(null)}
+        title="Remover agendamento"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-stone-600">
+            Tem certeza que deseja remover este agendamento do seu histórico?
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={!!removingApptId}
+              onClick={() => setConfirmRemoveApptId(null)}
+              className="btn-secondary flex-1"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={!!removingApptId}
+              onClick={async () => {
+                if (!confirmRemoveApptId) return;
+                setRemovingApptId(confirmRemoveApptId);
+                try {
+                  await apiFetch("/api/data?resource=appointments", {
+                    method: "DELETE",
+                    body: JSON.stringify({ id: confirmRemoveApptId }),
+                  });
+                  await refreshAppointments();
+                  setToastMessage("Agendamento removido.");
+                  setToast(true);
+                } catch (err) {
+                  console.error("Remove appointment error", err);
+                  setToastMessage(err instanceof Error ? err.message : "Não foi possível remover.");
+                  setToast(true);
+                } finally {
+                  setRemovingApptId(null);
+                  setConfirmRemoveApptId(null);
+                  setTimeout(() => setToast(false), 2400);
+                }
+              }}
+              className="btn-primary flex-1 bg-rose-600 hover:bg-rose-700 border-transparent"
+            >
+              {removingApptId ? "Removendo..." : "Confirmar"}
+            </button>
+          </div>
+        </div>
+      </Modal>
       <Modal
         open={booking}
         onClose={() => setBooking(false)}

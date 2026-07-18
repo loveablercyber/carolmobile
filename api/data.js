@@ -2128,6 +2128,21 @@ export default async function handler(req, res) {
       return await updateAppointmentV2(req, res, user, body);
     if (req.method === "PATCH" && resource === "reschedule-requests")
       return await respondReschedule(res, user, body);
+    if (req.method === "DELETE" && resource === "appointments") {
+      const id = body.id || req.query?.id;
+      if (!id) throw appError("ID do agendamento é obrigatório.");
+      const { rows: apptRows } = await query(
+        `select id, client_id, professional_id, status from public.appointments where id=$1`,
+        [id]
+      );
+      if (!apptRows.length) throw appError("Agendamento não encontrado.", 404);
+      // Soft-delete to preserve financial records
+      await query(
+        `update public.appointments set status='cancelled', notes=coalesce(notes,'') || ' [Removido]', updated_at=now() where id=$1`,
+        [id]
+      );
+      return send(res, 200, { success: true, id });
+    }
     if (req.method === "POST" && resource === "admin-color") {
       await requireUser(req, ["admin"]);
       const name = clean(body.name);
