@@ -617,6 +617,35 @@ async function professionalDashboard(user) {
   };
 }
 
+async function professionalNewAppointments(user) {
+  requireRole(user, ["professional"]);
+  const id = await professionalIdFor(user);
+  const { rows } = await query(
+    `select a.id,a.booking_code,a.starts_at,a.ends_at,a.status,a.estimated_value,a.created_at,
+      s.name as service,cp.full_name as client,cp.phone as client_phone,cp.avatar_url,
+      pay.id as payment_id,pay.amount as payment_amount,pay.status as payment_status,pay.hosted_checkout_url
+     from public.appointments a
+     join public.services s on s.id=a.service_id
+     join public.clients c on c.id=a.client_id
+     join public.profiles cp on cp.id=c.profile_id
+     left join lateral (
+       select id,amount,status,hosted_checkout_url
+       from public.payments
+       where appointment_id=a.id
+       order by created_at desc
+       limit 1
+     ) pay on true
+     where a.professional_id=$1
+       and a.starts_at>=now()
+       and a.created_at>=now()-interval '7 days'
+       and a.status in ('requested','awaiting_payment','pending_deposit','confirmed','rescheduled')
+     order by a.created_at desc,a.starts_at
+     limit 10`,
+    [id],
+  );
+  return { appointments: rows };
+}
+
 async function professionalCommissions(user) {
   requireRole(user, ["professional"]);
   const id = await professionalIdFor(user);
@@ -949,6 +978,8 @@ async function getResource(req, user, resource) {
   if (resource === "clients") return scopedClients(user);
   if (resource === "client-detail") return clientDetail(user, req.query?.id);
   if (resource === "professional-dashboard") return professionalDashboard(user);
+  if (resource === "professional-new-appointments")
+    return professionalNewAppointments(user);
   if (resource === "professional-commissions")
     return professionalCommissions(user);
   if (resource === "professional-services") return professionalServices(user);

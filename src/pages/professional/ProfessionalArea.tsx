@@ -51,6 +51,23 @@ import {
   ProfessionalAppointmentDetailPage,
 } from "./ProfessionalPortal";
 
+const professionalAppointmentLabel: Record<string, string> = {
+  requested: "Solicitado",
+  awaiting_payment: "Aguardando pagamento",
+  pending_deposit: "Aguardando sinal",
+  confirmed: "Confirmado",
+  rescheduled: "Reagendado",
+};
+
+const professionalAppointmentTone = (status: string): "green" | "amber" | "rose" | "gold" | "neutral" =>
+  status === "confirmed" ? "green" : ["awaiting_payment", "pending_deposit", "requested"].includes(status) ? "amber" : "gold";
+
+const professionalDateTime = (value: unknown) =>
+  value ? new Date(String(value)).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "-";
+
+const professionalMoney = (value: unknown) =>
+  Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
 export function ProfessionalArea() {
   const path = useLocation().pathname;
   const navigate = useNavigate();
@@ -89,7 +106,83 @@ export function ProfessionalArea() {
         }
       />
     );
-  return <AppShell role="profissional">{page}</AppShell>;
+  return (
+    <AppShell role="profissional">
+      <ProfessionalNewAppointmentsModal />
+      {page}
+    </AppShell>
+  );
+}
+
+function ProfessionalNewAppointmentsModal() {
+  const navigate = useNavigate();
+  const [items, setItems] = useState<Array<Record<string, any>>>([]);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    apiFetch<{ data?: { appointments?: Array<Record<string, any>> }; appointments?: Array<Record<string, any>> }>(
+      "/api/portal?resource=professional-new-appointments",
+    )
+      .then((result) => {
+        if (!alive) return;
+        const appointments = result.data?.appointments || result.appointments || [];
+        setItems(appointments);
+        if (!appointments.length) return;
+        const signature = appointments.map((item) => item.id).sort().join("|");
+        const storageKey = "professional-new-appointments-modal";
+        if (sessionStorage.getItem(storageKey) !== signature) {
+          sessionStorage.setItem(storageKey, signature);
+          setOpen(true);
+        }
+      })
+      .catch((error) => console.error("Professional new appointments modal error", error));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (!items.length) return null;
+
+  const openAppointment = (id: string) => {
+    setOpen(false);
+    navigate(`/profissional/agenda/${id}`);
+  };
+
+  return (
+    <Modal open={open} onClose={() => setOpen(false)} title="Novos agendamentos">
+      <div className="space-y-3">
+        <p className="muted text-sm">
+          Confira os agendamentos recebidos recentemente e acompanhe os detalhes pelo painel.
+        </p>
+        {items.map((item) => (
+          <div key={item.id} className="rounded-2xl border border-black/5 bg-white p-4">
+            <div className="flex items-start gap-3">
+              <Avatar src={item.avatar_url} name={item.client} />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <b className="text-sm">{item.client || "Cliente"}</b>
+                  <Badge tone={professionalAppointmentTone(item.status)}>
+                    {professionalAppointmentLabel[item.status] || item.status}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-xs text-stone-500">{item.service || "Serviço"} • {professionalDateTime(item.starts_at)}</p>
+                <div className="mt-3 grid gap-2 text-xs text-stone-600 sm:grid-cols-2">
+                  <span>Valor: <b className="text-ink">{professionalMoney(item.estimated_value)}</b></span>
+                  {item.payment_amount ? <span>Sinal: <b className="text-ink">{professionalMoney(item.payment_amount)}</b></span> : null}
+                  {item.client_phone ? <span>Telefone: <b className="text-ink">{item.client_phone}</b></span> : null}
+                  {item.booking_code ? <span>Protocolo: <b className="text-ink">{item.booking_code}</b></span> : null}
+                </div>
+              </div>
+            </div>
+            <button type="button" className="btn-primary mt-4 w-full justify-center" onClick={() => openAppointment(item.id)}>
+              Abrir agendamento
+            </button>
+          </div>
+        ))}
+      </div>
+    </Modal>
+  );
 }
 
 function Status({ value }: { value: string }) {
