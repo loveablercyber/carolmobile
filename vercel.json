@@ -1,6 +1,19 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "carolsol.vercel.app"
+        }
+      ],
+      "destination": "https://carolsol.com.br/:path*",
+      "permanent": true
+    }
+  ],
   "installCommand": "npm install",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
