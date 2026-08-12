@@ -1541,7 +1541,7 @@ export async function getAiCommercialBase() {
   if (baseCache && (now - baseCacheTime < 60000)) {
     return baseCache;
   }
-  const [services, plans, coupons, promotions, flows, knowledgeArticles, inventory, products, categories, methods] = await Promise.all([
+  const [services, plans, coupons, promotions, flows, knowledgeArticles, inventory, products, categories, methods, serviceVariants, serviceAddons] = await Promise.all([
     query(
       `select s.id,s.category_id,s.hair_method_id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
         coalesce(s.is_free,false) as is_free,
@@ -1600,7 +1600,9 @@ export async function getAiCommercialBase() {
     ),
     query(
       `select id, name, active, category_id, parent_id from public.hair_methods order by name`
-    )
+    ),
+    query(`select * from public.service_variants where active and allow_whatsapp_booking order by service_id,sort_order,label`).catch(() => ({ rows: [] })),
+    query(`select a.*,va.service_variant_id from public.service_addons a join public.service_variant_addons va on va.addon_id=a.id where a.active and a.allow_whatsapp_booking order by a.sort_order,a.name`).catch(() => ({ rows: [] }))
   ]);
   const base = {
     services: services.rows,
@@ -1613,6 +1615,8 @@ export async function getAiCommercialBase() {
     products: products.rows,
     categories: categories.rows,
     methods: methods.rows,
+    serviceVariants: serviceVariants.rows,
+    serviceAddons: serviceAddons.rows,
   };
   baseCache = base;
   baseCacheTime = now;

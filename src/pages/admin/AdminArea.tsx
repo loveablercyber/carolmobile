@@ -14,6 +14,7 @@ import {
   AdminPromotionsPage,
   AdminProfessionalsPage,
   AdminReportsPage,
+  AdminProfilePage,
   AdminServicesPage,
   AdminSettingsPage,
   AdminSumupPage,
@@ -47,8 +48,8 @@ export function AdminArea() {
   else if (path.includes("/notificacoes")) page = <ClientNotificationsPage />;
   else if (path.includes("/comissoes")) page = <AdminCommissionsPage />;
   else if (path.includes("/relatorios")) page = <AdminReportsPage />;
-  else if (path.includes("/configuracoes") || path.includes("/perfil"))
-    page = <AdminSettingsPage />;
+  else if (path.includes("/perfil")) page = <AdminProfilePage />;
+  else if (path.includes("/configuracoes")) page = <AdminSettingsPage />;
   else
     page = (
       <EmptyState

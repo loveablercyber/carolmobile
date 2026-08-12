@@ -840,7 +840,7 @@ async function adminServices(user) {
   requireRole(user, ["admin"]);
   await ensureMarketingSchema();
   await query("alter table public.services add column if not exists offer_inventory_items boolean default false");
-  const [services, links, categories, methods, professionals, inventory] = await Promise.all([
+  const [services, links, categories, methods, professionals, inventory, variants, addons] = await Promise.all([
     query(`select s.id,s.category_id,s.hair_method_id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
       coalesce(s.show_online_booking,true) as show_online_booking,
       coalesce(s.is_free,false) as is_free,
@@ -864,6 +864,10 @@ async function adminServices(user) {
     query(`select id, code, category as name, category, color, shade, length_cm, texture, weight_grams, quantity, suggested_price, category_id, hair_method_id, active
       from public.hair_inventory
       where archived = false and active = true and quantity > 0`),
+    query(`select * from public.service_variants order by service_id,sort_order,label`).catch(() => ({ rows: [] })),
+    query(`select a.*,coalesce(array_agg(va.service_variant_id) filter(where va.service_variant_id is not null),'{}') as variant_ids
+      from public.service_addons a left join public.service_variant_addons va on va.addon_id=a.id
+      group by a.id order by a.sort_order,a.name`).catch(() => ({ rows: [] })),
   ]);
   const linksByService = new Map();
   for (const link of links.rows) {
@@ -880,7 +884,45 @@ async function adminServices(user) {
     methods: methods.rows,
     professionals: professionals.rows,
     inventory: inventory.rows,
+    variants: variants.rows,
+    addons: addons.rows,
   };
+}
+
+async function saveAdminServiceVariant(user, body) {
+  requireRole(user, ["admin"]);
+  const id = body.id ? validUuid(body.id, "Variação") : null;
+  const serviceId = validUuid(body.serviceId ?? body.service_id, "Serviço");
+  const code = clean(body.code).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "");
+  const label = clean(body.label);
+  const price = money(body.price);
+  const duration = Number.parseInt(body.durationMinutes ?? body.duration_minutes, 10);
+  const depositType = clean(body.depositType ?? body.deposit_type) || "none";
+  const depositValue = money(body.depositValue ?? body.deposit_value ?? 0);
+  if (!code || !label) throw appError("Informe código e nome da variação.");
+  if (!Number.isFinite(price) || price < 0) throw appError("Preço inválido.");
+  if (!Number.isInteger(duration) || duration < 15 || duration > 1440) throw appError("Duração deve ficar entre 15 e 1440 minutos.");
+  if (!["none","fixed","percentage","full","material_cost"].includes(depositType)) throw appError("Tipo de sinal inválido.");
+  if (depositType === "percentage" && depositValue > 100) throw appError("Percentual do sinal deve ficar entre 0 e 100.");
+  const fields = [
+    serviceId,code,label,clean(body.purpose)||"general",clean(body.operation)||"application",
+    clean(body.materialMode ?? body.material_mode)||"not_applicable",clean(body.lengthLabel ?? body.length_label)||null,
+    body.weightGrams ?? body.weight_grams ?? null,clean(body.weightMode ?? body.weight_mode)||null,
+    clean(body.unitType ?? body.unit_type)||"flat",body.unitCount ?? body.unit_count ?? null,
+    clean(body.unitMode ?? body.unit_mode)||null,price,duration,depositType,depositValue,
+    body.depositNonRefundable === undefined ? body.deposit_non_refundable === true : body.depositNonRefundable === true,
+    body.requiresAssessment === undefined ? body.requires_assessment !== false : body.requiresAssessment !== false,
+    body.requiresHumanConfirmation === undefined ? body.requires_human_confirmation === true : body.requiresHumanConfirmation === true,
+    body.showOnlineBooking === undefined ? body.show_online_booking !== false : body.showOnlineBooking !== false,
+    body.allowWhatsappBooking === undefined ? body.allow_whatsapp_booking !== false : body.allowWhatsappBooking !== false,
+    body.active !== false,Number.parseInt(body.sortOrder ?? body.sort_order ?? 0,10)||0,
+    clean(body.notes)||null,
+  ];
+  const result = id
+    ? await query(`update public.service_variants set service_id=$1,code=$2,label=$3,purpose=$4,operation=$5,material_mode=$6,length_label=$7,weight_grams=$8,weight_mode=$9,unit_type=$10,unit_count=$11,unit_mode=$12,price=$13,duration_minutes=$14,deposit_type=$15,deposit_value=$16,deposit_non_refundable=$17,requires_assessment=$18,requires_human_confirmation=$19,show_online_booking=$20,allow_whatsapp_booking=$21,active=$22,sort_order=$23,notes=$24,updated_at=now() where id=$25 returning *`,[...fields,id])
+    : await query(`insert into public.service_variants(service_id,code,label,purpose,operation,material_mode,length_label,weight_grams,weight_mode,unit_type,unit_count,unit_mode,price,duration_minutes,deposit_type,deposit_value,deposit_non_refundable,requires_assessment,requires_human_confirmation,show_online_booking,allow_whatsapp_booking,active,sort_order,notes) values(${fields.map((_,i)=>`$${i+1}`).join(",")}) returning *`,fields);
+  if (!result.rows[0]) throw appError("Variação não encontrada.",404);
+  return result.rows[0];
 }
 
 async function adminPromotions(user) {
@@ -3865,6 +3907,7 @@ async function mutate(user, resource, body, method = "POST") {
   if (resource === "admin-service" && method === "DELETE")
     return deleteAdminService(user, body);
   if (resource === "admin-service") return saveAdminService(user, body);
+  if (resource === "admin-service-variant") return saveAdminServiceVariant(user, body);
   if (resource === "admin-category" && method === "DELETE")
     return deleteAdminCategory(user, body);
   if (resource === "admin-category") return saveAdminCategory(user, body);

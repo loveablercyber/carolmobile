@@ -20,6 +20,7 @@ import { generateGeminiText, geminiPublicStatus } from "./gemini-client.js";
 import { generateGroqText, groqPublicStatus } from "./groq-client.js";
 import { sendBaileysTextMessage, sendBaileysPresence } from "./baileys-client.js";
 import { sendEmail } from "./integrations.js";
+import { catalogSnapshot, variantDepositAmount } from "./service-catalog.js";
 
 // Módulos refatorados na Fase 3
 import {
@@ -621,7 +622,7 @@ function buildMethodOptions(base = {}, categoryId) {
     }
   }
   return (base.methods || [])
-    .filter(m => methodsMap.has(m.id) && m.category_id === categoryId)
+    .filter(m => methodsMap.has(m.id) && m.active !== false)
     .map((m, index) => ({
       id: index + 1,
       methodId: m.id,
@@ -629,25 +630,61 @@ function buildMethodOptions(base = {}, categoryId) {
     }));
 }
 
+function buildAddonOptions(base = {}, serviceVariantId) {
+  const addons = (base.serviceAddons || []).filter((addon) => addon.service_variant_id === serviceVariantId);
+  return [
+    { id: 1, addonId: "", addonName: "Continuar sem adicional", addonValue: 0, addonDurationMinutes: 0 },
+    ...addons.map((addon, index) => ({
+      id: index + 2,
+      addonId: addon.id,
+      addonName: addon.name,
+      addonValue: Number(addon.price || 0),
+      addonDurationMinutes: Number(addon.duration_minutes || 0),
+    })),
+  ];
+}
+
 function buildServiceOptions(base = {}, categoryId, methodId) {
   let services = structuredCatalogServices(base);
   if (categoryId) services = services.filter(s => s.category_id === categoryId);
   if (methodId) services = services.filter(s => s.hair_method_id === methodId);
 
-  return services.map((service, index) => ({
-    id: index + 1,
-    serviceId: service.id,
-    serviceName: service.commercial_name || service.name,
-    requestedServiceName: service.commercial_name || service.name,
-    serviceValue: serviceValue(service),
-    serviceIsFree: isFreeService(service),
-    offerInventoryItems: service.offer_inventory_items === true,
-    categoryId: service.category_id,
-    methodId: service.hair_method_id,
-    categoryName: (base.categories || []).find((item) => item.id === service.category_id)?.name || "",
-    methodName: (base.methods || []).find((item) => item.id === service.hair_method_id)?.name || "",
-    ...bookingServiceDetails(service),
-  }));
+  const options = [];
+  for (const service of services) {
+    const variants = (base.serviceVariants || []).filter((variant) => variant.service_id === service.id);
+    const source = variants.length ? variants : [null];
+    for (const variant of source) {
+      options.push({
+        id: options.length + 1,
+        serviceId: service.id,
+        serviceVariantId: variant?.id || "",
+        serviceVariantCode: variant?.code || "",
+        serviceName: variant ? `${service.commercial_name || service.name} — ${variant.label}` : service.commercial_name || service.name,
+        baseServiceName: service.commercial_name || service.name,
+        requestedServiceName: service.commercial_name || service.name,
+        serviceValue: variant ? Number(variant.price || 0) : serviceValue(service),
+        serviceIsFree: variant ? Number(variant.price || 0) === 0 : isFreeService(service),
+        offerInventoryItems: variant ? false : service.offer_inventory_items === true,
+        categoryId: service.category_id,
+        methodId: service.hair_method_id,
+        categoryName: (base.categories || []).find((item) => item.id === service.category_id)?.name || "",
+        methodName: (base.methods || []).find((item) => item.id === service.hair_method_id)?.name || "",
+        ...bookingServiceDetails(service),
+        ...(variant ? {
+          serviceDurationMinutes: Number(variant.duration_minutes || 0),
+          serviceDepositType: variant.deposit_type,
+          serviceDepositAmount: Number(variant.deposit_value || 0),
+          serviceRequiresAssessment: variant.requires_assessment === true,
+          serviceRequiresDeposit: !["none","material_cost"].includes(variant.deposit_type),
+          serviceRequiresHumanConfirmation: variant.requires_human_confirmation === true,
+          serviceDepositNonRefundable: variant.deposit_non_refundable === true,
+          serviceMaterialMode: variant.material_mode,
+          serviceNote: variant.notes || "",
+        } : {}),
+      });
+    }
+  }
+  return options;
 }
 
 export function buildInitialServiceCatalogOptions(base = {}) {
@@ -692,8 +729,10 @@ export function buildInventoryOptions(base = {}, serviceChoice) {
 function applyServiceChoiceToState(state, selected) {
   Object.assign(state, {
     serviceId: selected.serviceId,
+    serviceVariantId: selected.serviceVariantId || "",
+    serviceVariantCode: selected.serviceVariantCode || "",
     serviceName: selected.serviceName,
-    baseServiceName: selected.serviceName,
+    baseServiceName: selected.baseServiceName || selected.serviceName,
     requestedServiceName: selected.requestedServiceName || selected.serviceName,
     serviceValue: selected.serviceValue || 0,
     serviceIsFree: selected.serviceIsFree === true,
@@ -703,6 +742,10 @@ function applyServiceChoiceToState(state, selected) {
     ...serviceDetailsState(selected),
     serviceDetailsAccepted: false,
     serviceNote: selected.note || "",
+    addonOptions: [],
+    addonIds: [],
+    addons: [],
+    addonDecisionMade: false,
   });
 }
 
@@ -733,7 +776,11 @@ async function processServiceHierarchySelection(text, base, state, conversationI
   }
   if (state.status === "awaiting_method" && choice && Array.isArray(state.methodOptions)) {
     const selected = state.methodOptions.find(item => Number(item.id) === choice);
-    if (selected) state.methodId = selected.methodId;
+    if (selected) {
+      state.methodId = selected.methodId;
+      state.methodName = selected.methodName;
+      state.status = "collecting";
+    }
   }
   if (state.status === "awaiting_service" && choice && Array.isArray(state.serviceOptions)) {
     const selected = state.serviceOptions.find(item => Number(item.id) === choice);
@@ -760,6 +807,25 @@ async function processServiceHierarchySelection(text, base, state, conversationI
     state.inventoryName = selected.inventoryName;
     if (selected.inventoryValue > 0) state.serviceValue = selected.inventoryValue;
     state.serviceName = `${state.baseServiceName || state.requestedServiceName || state.serviceName} - ${state.inventoryName}`;
+    state.status = "collecting";
+  }
+
+  if (state.status === "awaiting_addon" && Array.isArray(state.addonOptions)) {
+    const selected = choice ? state.addonOptions.find(item => Number(item.id) === choice) : null;
+    if (!selected) {
+      await saveBookingState(conversationId, state);
+      const responseText = [
+        "Escolha um adicional respondendo com o número:",
+        optionLines(state.addonOptions, (item) => item.addonValue > 0
+          ? `${item.addonName} — ${formatBookingCurrency(item.addonValue)}`
+          : item.addonName),
+      ].join("\n\n");
+      await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_addon_invalid_choice" });
+      return { ok: true, replied: true, reason: "booking_addon_invalid_choice", conversationId };
+    }
+    state.addonIds = selected.addonId ? [selected.addonId] : [];
+    state.addons = selected.addonId ? [selected] : [];
+    state.addonDecisionMade = true;
     state.status = "collecting";
   }
 
@@ -791,7 +857,24 @@ async function processServiceHierarchySelection(text, base, state, conversationI
   }
 
   if (!state.serviceId) {
-    const serviceOptions = buildServiceOptions(base, state.categoryId, "");
+    if (state.categoryId && !state.methodId) {
+      const methodOptions = buildMethodOptions(base, state.categoryId);
+      if (methodOptions.length === 1) {
+        state.methodId = methodOptions[0].methodId;
+        state.methodName = methodOptions[0].methodName;
+      } else if (methodOptions.length > 1) {
+        state.methodOptions = methodOptions;
+        state.status = "awaiting_method";
+        await saveBookingState(conversationId, state);
+        const responseText = [
+          `Escolha o método em ${state.categoryName || "esta categoria"}:`,
+          optionLines(methodOptions, (item) => item.methodName),
+        ].join("\n\n");
+        await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_method_options" });
+        return { ok: true, replied: true, reason: "booking_method_options", conversationId };
+      }
+    }
+    const serviceOptions = buildServiceOptions(base, state.categoryId, state.methodId || "");
     if (serviceOptions.length === 1) {
       const selected = serviceOptions[0];
       applyServiceChoiceToState(state, selected);
@@ -918,6 +1001,8 @@ async function openInitialServiceCatalog({
 function clearSelectedService(state) {
   Object.assign(state, {
     serviceId: "",
+    serviceVariantId: "",
+    serviceVariantCode: "",
     serviceName: "",
     baseServiceName: "",
     requestedServiceName: "",
@@ -937,6 +1022,10 @@ function clearSelectedService(state) {
     inventoryId: "",
     inventoryName: "",
     inventoryOptions: [],
+    addonOptions: [],
+    addonIds: [],
+    addons: [],
+    addonDecisionMade: false,
     date: "",
     dateOptions: [],
     time: "",
@@ -1861,12 +1950,30 @@ async function ensureClientForBooking(client, {
   };
 }
 
-async function availableBookingSlots(client, { serviceId, date, preferredTime = "", period = "" }) {
+async function availableBookingSlots(client, { serviceId, serviceVariantId = "", date, preferredTime = "", period = "" }) {
   const service = await client.query(
     "select id,name,duration_minutes,base_price,deposit_amount,active,coalesce(is_free,false) as is_free from public.services where id=$1 and active limit 1",
     [serviceId],
   );
   if (!service.rows[0]) return { service: null, slots: [] };
+  let durationMinutes = Number(service.rows[0].duration_minutes || 60);
+  if (serviceVariantId) {
+    const variant = await client.query(
+      `select duration_minutes,requires_assessment from public.service_variants
+       where id=$1 and service_id=$2 and active and allow_whatsapp_booking limit 1`,
+      [serviceVariantId, serviceId],
+    );
+    if (!variant.rows[0]) return { service: null, slots: [] };
+    if (variant.rows[0].requires_assessment) {
+      const assessment = await client.query(
+        `select duration_minutes from public.services
+         where catalog_code='assessment-extensions' and active limit 1`,
+      );
+      durationMinutes = Number(assessment.rows[0]?.duration_minutes || 60);
+    } else {
+      durationMinutes = Number(variant.rows[0].duration_minutes || durationMinutes);
+    }
+  }
 
   const professionals = await client.query(
     `select p.id,pp.full_name
@@ -1903,8 +2010,8 @@ async function availableBookingSlots(client, { serviceId, date, preferredTime = 
         [professional.id, date],
       ),
     ]);
-    const times = scheduleSlots(availability.rows, service.rows[0].duration_minutes);
-    const available = slotsWithConflicts(date, times, service.rows[0].duration_minutes, conflicts.rows)
+    const times = scheduleSlots(availability.rows, durationMinutes);
+    const available = slotsWithConflicts(date, times, durationMinutes, conflicts.rows)
       .filter((slot) => slot.available)
       .filter((slot) => !preferredTime || slot.time === preferredTime)
       .filter((slot) => periodMatches(slot.time, period));
@@ -1917,7 +2024,7 @@ async function availableBookingSlots(client, { serviceId, date, preferredTime = 
         serviceName: service.rows[0].name,
         professionalId: professional.id,
         professionalName: professional.full_name,
-        durationMinutes: service.rows[0].duration_minutes,
+        durationMinutes,
       });
     }
   }
@@ -1950,6 +2057,25 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       [state.serviceId],
     );
     if (!service.rows[0]) throw new Error("Serviço indisponível para agendamento.");
+    const variant = state.serviceVariantId
+      ? await client.query(
+          `select * from public.service_variants
+           where id=$1 and service_id=$2 and active and allow_whatsapp_booking limit 1`,
+          [state.serviceVariantId, state.serviceId],
+        )
+      : { rows: [] };
+    if (state.serviceVariantId && !variant.rows[0])
+      throw new Error("Variação indisponível para agendamento.");
+    const addonIds = Array.isArray(state.addonIds) ? [...new Set(state.addonIds.map(String))] : [];
+    const addons = addonIds.length && variant.rows[0]
+      ? await client.query(
+          `select a.* from public.service_addons a
+           join public.service_variant_addons va on va.addon_id=a.id
+           where va.service_variant_id=$1 and a.id=any($2::uuid[]) and a.active and a.allow_whatsapp_booking`,
+          [variant.rows[0].id, addonIds],
+        )
+      : { rows: [] };
+    if (addons.rows.length !== addonIds.length) throw new Error("Adicional indisponível para esta opção.");
     const professional = await client.query(
       `select p.id,p.profile_id,pp.full_name
          from public.professionals p
@@ -1964,7 +2090,12 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [professional.rows[0].id]);
 
     const startsAt = new Date(`${state.date}T${state.time}:00-03:00`);
-    const endsAt = new Date(startsAt.getTime() + Number(service.rows[0].duration_minutes || 60) * 60_000);
+    const assessment = variant.rows[0]?.requires_assessment
+      ? await client.query(`select duration_minutes from public.services where catalog_code='assessment-extensions' and active limit 1`)
+      : { rows: [] };
+    const addonDuration = addons.rows.reduce((sum, addon) => sum + Number(addon.duration_minutes || 0), 0);
+    const durationMinutes = Number(assessment.rows[0]?.duration_minutes || (Number(variant.rows[0]?.duration_minutes || service.rows[0].duration_minutes || 60) + addonDuration));
+    const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000);
     const { period, error: periodError } = schedulePeriod(startsAt, endsAt);
     if (periodError) throw new Error(periodError);
     const schedule = await client.query(
@@ -1996,8 +2127,14 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
     );
     const appointmentId = (await client.query("select uuid_generate_v4() as id")).rows[0].id;
     const bookingCode = `CS-${String(appointmentId).replace(/-/g, "").slice(-12).toUpperCase()}`;
-    const paymentInfo = whatsappBookingPaymentInfo(service.rows[0], state);
-    const shouldCreatePayment = paymentInfo.amount > 0;
+    const selectedValue = Number(variant.rows[0]?.price || state.serviceValue || service.rows[0].base_price || 0) +
+      addons.rows.reduce((sum, addon) => sum + Number(addon.price || 0), 0);
+    const variantDeposit = variant.rows[0] ? variantDepositAmount(variant.rows[0], selectedValue) : null;
+    const paymentInfo = variant.rows[0]
+      ? { amount: variantDeposit, originalAmount: variantDeposit, notes: "Sinal da variação selecionada", billingReason: "appointment_deposit" }
+      : whatsappBookingPaymentInfo(service.rows[0], state);
+    const needsReview = variant.rows[0]?.requires_assessment || variant.rows[0]?.requires_human_confirmation;
+    const shouldCreatePayment = paymentInfo.amount > 0 && !needsReview;
     const initialStatus = shouldCreatePayment ? "awaiting_payment" : "requested";
     const intake = {
       origin: "whatsapp_ai",
@@ -2013,6 +2150,9 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       },
       selected_by_ai: true,
       requires_human_confirmation: true,
+      service_variant_id: variant.rows[0]?.id || null,
+      service_variant_code: variant.rows[0]?.code || null,
+      requires_assessment: variant.rows[0]?.requires_assessment === true,
     };
     const notes = [
       "Pré-agendamento criado pela IA do WhatsApp.",
@@ -2030,27 +2170,37 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       "Confirmar disponibilidade e detalhes com a cliente antes do atendimento.",
     ].filter(Boolean).join(" ");
 
-    await client.query(
-      `insert into public.appointments(
-        id,booking_code,client_id,professional_id,service_id,location_id,starts_at,ends_at,
-        status,notes,estimated_value,original_value,discount_amount,intake_data,created_by
-      ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,0,$12,$13)`,
-      [
-        appointmentId,
-        bookingCode,
-        bookingClient.client_id,
-        professional.rows[0].id,
-        service.rows[0].id,
-        location.rows[0]?.id || null,
-        startsAt.toISOString(),
-        endsAt.toISOString(),
-        initialStatus,
-        notes,
-        state.serviceValue || service.rows[0].base_price || 0,
-        JSON.stringify(intake),
-        bookingClient.profile_id || null,
-      ],
-    );
+    if (variant.rows[0]) {
+      await client.query(
+        `insert into public.appointments(
+          id,booking_code,client_id,professional_id,service_id,service_variant_id,location_id,starts_at,ends_at,
+          status,notes,estimated_value,original_value,discount_amount,intake_data,catalog_snapshot,created_by
+        ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,0,$13,$14,$15)`,
+        [appointmentId,bookingCode,bookingClient.client_id,professional.rows[0].id,service.rows[0].id,
+          variant.rows[0].id,location.rows[0]?.id || null,startsAt.toISOString(),endsAt.toISOString(),
+          initialStatus,notes,selectedValue,JSON.stringify(intake),
+          JSON.stringify(catalogSnapshot({ service: service.rows[0], variant: variant.rows[0], addons: addons.rows, total: selectedValue, deposit: paymentInfo.amount })),
+          bookingClient.profile_id || null],
+      );
+      for (const addon of addons.rows) {
+        await client.query(
+          `insert into public.appointment_addons(appointment_id,addon_id,addon_code,addon_name,price,duration_minutes)
+           values($1,$2,$3,$4,$5,$6)`,
+          [appointmentId, addon.id, addon.code, addon.name, addon.price, addon.duration_minutes],
+        );
+      }
+    } else {
+      // Keep the legacy statement stable for services that do not use the 2026 catalog.
+      await client.query(
+        `insert into public.appointments(
+          id,booking_code,client_id,professional_id,service_id,location_id,starts_at,ends_at,
+          status,notes,estimated_value,original_value,discount_amount,intake_data,created_by
+        ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,0,$12,$13)`,
+        [appointmentId,bookingCode,bookingClient.client_id,professional.rows[0].id,service.rows[0].id,
+          location.rows[0]?.id || null,startsAt.toISOString(),endsAt.toISOString(),initialStatus,notes,
+          selectedValue,JSON.stringify(intake),bookingClient.profile_id || null],
+      );
+    }
     let paymentId = null;
     let paymentUrl = null;
     if (shouldCreatePayment) {
@@ -2359,10 +2509,11 @@ function slotAvailabilityContextLine() {
   return "Esses horarios ja consideram a duracao do servico e a agenda ocupada ou bloqueada.";
 }
 
-async function slotOptionsForBooking({ serviceId, date, preferredTime = "", period = "" }) {
+async function slotOptionsForBooking({ serviceId, serviceVariantId = "", date, preferredTime = "", period = "" }) {
   return transaction(async (client) => {
     const { slots } = await availableBookingSlots(client, {
       serviceId,
+      serviceVariantId,
       date,
       preferredTime,
       period,
@@ -2371,11 +2522,11 @@ async function slotOptionsForBooking({ serviceId, date, preferredTime = "", peri
   });
 }
 
-async function nextAvailableSlotOptions({ serviceId, fromDate, period = "" }) {
+async function nextAvailableSlotOptions({ serviceId, serviceVariantId = "", fromDate, period = "" }) {
   const options = [];
   for (let offset = 0; offset <= 10; offset++) {
     const date = addLocalDays(fromDate, offset);
-    const slots = await slotOptionsForBooking({ serviceId, date, period });
+    const slots = await slotOptionsForBooking({ serviceId, serviceVariantId, date, period });
     for (const slot of slots) {
       options.push({ ...slot, id: options.length + 1 });
     }
@@ -2482,6 +2633,7 @@ export async function handleLocalAgendaAvailabilityIntent({
 
     let slotOptions = await slotOptionsForBooking({
       serviceId: state.serviceId,
+      serviceVariantId: state.serviceVariantId,
       date: state.date,
       preferredTime,
       period: requestedPeriod,
@@ -2492,6 +2644,7 @@ export async function handleLocalAgendaAvailabilityIntent({
     if (!slotOptions.length) {
       const nextOptions = await nextAvailableSlotOptions({
         serviceId: state.serviceId,
+        serviceVariantId: state.serviceVariantId,
         fromDate: addLocalDays(state.date, 1),
         period: requestedPeriod,
       });
@@ -2854,6 +3007,24 @@ export async function handleStructuredBookingFlow({
     if (inventoryResult) return inventoryResult;
   }
 
+  if (state.serviceVariantId && state.serviceDetailsAccepted && !state.addonDecisionMade) {
+    const addonOptions = buildAddonOptions(base, state.serviceVariantId);
+    if (addonOptions.length > 1) {
+      state.addonOptions = addonOptions;
+      state.status = "awaiting_addon";
+      await saveBookingState(conversationId, state);
+      const responseText = [
+        "Deseja acrescentar algum adicional?",
+        optionLines(addonOptions, (item) => item.addonValue > 0
+          ? `${item.addonName} — ${formatBookingCurrency(item.addonValue)}`
+          : item.addonName),
+      ].join("\n\n");
+      await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_addon_options" });
+      return { ok: true, replied: true, reason: "booking_addon_options", conversationId };
+    }
+    state.addonDecisionMade = true;
+  }
+
   const hasDateOrTimeInText = parseBookingDateFromText(text, state) || parseFlexibleBookingTimeFromText(text).time || parseFlexibleBookingTimeFromText(text).period;
   if (hasDateOrTimeInText && state.serviceId) {
     state.serviceDetailsAccepted = true;
@@ -2988,6 +3159,7 @@ export async function handleStructuredBookingFlow({
       if (period) state.period = period;
       const slotOptions = await slotOptionsForBooking({
         serviceId: state.serviceId,
+        serviceVariantId: state.serviceVariantId,
         date: state.date,
         preferredTime,
         period,
@@ -2997,6 +3169,7 @@ export async function handleStructuredBookingFlow({
         const fallbackSlots = (preferredTime || period)
           ? await slotOptionsForBooking({
               serviceId: state.serviceId,
+              serviceVariantId: state.serviceVariantId,
               date: state.date,
             })
           : [];

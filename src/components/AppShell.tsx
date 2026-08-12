@@ -89,6 +89,7 @@ const roleNav = {
     { label: "WhatsApp", path: "/admin/integracoes/whatsapp", icon: Bell },
     { label: "SumUp", path: "/admin/integracoes/sumup", icon: CreditCard },
     { label: "Relatórios", path: "/admin/relatorios", icon: BarChart3 },
+    { label: "Perfil", path: "/admin/perfil", icon: CircleUserRound },
     { label: "Configurações", path: "/admin/configuracoes", icon: Settings },
   ],
 };

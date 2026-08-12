@@ -92,6 +92,21 @@ export default async function handler(req, res) {
       return send(res, 200, { ok: true })
     }
 
+    if (action === 'change_password') {
+      const session = await readSession(req)
+      if (!session) throw appError('Não autenticado.', 401)
+      const currentPassword = String(body.currentPassword || '')
+      const newPassword = String(body.newPassword || '')
+      if (newPassword.length < 8) throw appError('A nova senha precisa ter pelo menos 8 caracteres.')
+      const { rows } = await query('select encrypted_password from auth.users where id=$1', [session.id])
+      if (!rows[0] || !(await bcrypt.compare(currentPassword, rows[0].encrypted_password))) {
+        throw appError('Senha atual incorreta.', 400)
+      }
+      const newHash = await bcrypt.hash(newPassword, 12)
+      await query('update auth.users set encrypted_password=$1, updated_at=now() where id=$2', [newHash, session.id])
+      return send(res, 200, { ok: true, message: 'Senha alterada com sucesso.' })
+    }
+
     if (action === 'request_reset') {
       const email = String(body.email || body.identifier || '').trim().toLowerCase()
       const { rows } = await query('select id,email from auth.users where lower(email)=lower($1) limit 1', [email])

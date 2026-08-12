@@ -75,6 +75,15 @@ const bookingDepositAmount = (
   const payablePrice = Math.max(0, Number(finalPrice || 0));
   return Math.min(configuredDeposit, payablePrice);
 };
+const variantDepositAmount = (variant: Record<string, any> | undefined, finalPrice: number) => {
+  if (!variant) return 0;
+  const value = Math.max(0, Number(variant.deposit_value || 0));
+  const total = Math.max(0, Number(finalPrice || 0));
+  if (variant.deposit_type === "fixed") return Math.min(value, total);
+  if (variant.deposit_type === "percentage") return Math.min(total, total * value / 100);
+  if (variant.deposit_type === "full") return total;
+  return 0;
+};
 const servicePriceLabel = (service: Record<string, any>, inventoryItems: Array<Record<string, any>> = []) => {
   if (service?.offer_inventory_items) {
     const matching = (inventoryItems || []).filter(
@@ -956,6 +965,8 @@ function ClientAgenda() {
     notes: [discoveryRecommendationNote, discoveryNotes].filter(Boolean).join("\n"),
     couponCode: "",
     inventoryItemId: "",
+    serviceVariantId: "",
+    addonIds: "",
   });
   // State for removing appointments
   const [removingApptId, setRemovingApptId] = useState<string | null>(null);
@@ -1007,7 +1018,9 @@ function ClientAgenda() {
     services: Array<Record<string, any>>;
     professionals: Array<Record<string, any>>;
     inventoryItems?: Array<Record<string, any>>;
-  }>({ services: [], professionals: [], inventoryItems: [] });
+    serviceVariants?: Array<Record<string, any>>;
+    serviceAddons?: Array<Record<string, any>>;
+  }>({ services: [], professionals: [], inventoryItems: [], serviceVariants: [], serviceAddons: [] });
   const [reschedule, setReschedule] = useState<Record<string, any> | null>(
     null,
   );
@@ -1051,12 +1064,16 @@ function ClientAgenda() {
       services: Array<Record<string, any>>;
       professionals: Array<Record<string, any>>;
       inventoryItems?: Array<Record<string, any>>;
+      serviceVariants?: Array<Record<string, any>>;
+      serviceAddons?: Array<Record<string, any>>;
     }>("/api/data?resource=bootstrap")
       .then((data) => {
         setCatalog({
           services: data.services || [],
           professionals: data.professionals || [],
           inventoryItems: data.inventoryItems || [],
+          serviceVariants: data.serviceVariants || [],
+          serviceAddons: data.serviceAddons || [],
         });
         const recommendedServiceId = String(
           discoveryDraft?.recommendedServiceId || discoveryDraft?.recommendation?.service?.id || "",
@@ -1093,6 +1110,7 @@ function ClientAgenda() {
     const professional = catalog.professionals.find(
       (item) => item.name === selected.professional,
     );
+    const variant = catalog.serviceVariants?.find((item) => item.id === selected.serviceVariantId);
     if (!year || !service?.id || !selected.professional) {
       setAvailability({});
       setResolvedProfessionalId("");
@@ -1107,6 +1125,8 @@ function ClientAgenda() {
       date: `${year}-${month}-${day}`,
       serviceId: String(service.id),
     });
+    if (variant?.id) queryString.set("serviceVariantId", String(variant.id));
+    if (selected.addonIds) queryString.set("addonIds", selected.addonIds);
     if (professional?.id)
       queryString.set("professionalId", String(professional.id));
     else queryString.set("firstAvailable", "true");
@@ -1146,6 +1166,8 @@ function ClientAgenda() {
     selected.date,
     selected.professional,
     selected.service,
+    selected.serviceVariantId,
+    selected.addonIds,
   ]);
   useEffect(() => {
     if (!reschedule || !rescheduleDate) {
@@ -1195,6 +1217,11 @@ function ClientAgenda() {
       const service = catalog.services.find(
         (item) => item.name === selected.service,
       );
+      const selectedVariant = catalog.serviceVariants?.find(
+        (item) => item.id === selected.serviceVariantId && item.service_id === service?.id,
+      );
+      if ((catalog.serviceVariants || []).some((item) => item.service_id === service?.id) && !selectedVariant)
+        throw new Error("Selecione uma opção do serviço.");
       const selectedInventoryItem = service?.offer_inventory_items
         ? catalog.inventoryItems?.find((x) => x.id === selected.inventoryItemId)
         : null;
@@ -1232,6 +1259,8 @@ function ClientAgenda() {
           method: "POST",
           body: JSON.stringify({
             serviceId: service.id,
+            serviceVariantId: selected.serviceVariantId || null,
+            addonIds: selected.addonIds ? selected.addonIds.split(",").filter(Boolean) : [],
             professionalId,
             startsAt: `${year}-${month}-${day}T${selected.time}:00-03:00`,
             notes: finalNotes,
@@ -1763,6 +1792,7 @@ function ClientAgenda() {
             disabled={
               saving ||
               (step === 1 && catalog.services.find((s) => s.name === selected.service)?.offer_inventory_items && !selected.inventoryItemId) ||
+              (step === 1 && (catalog.serviceVariants || []).some((v) => v.service_id === catalog.services.find((s) => s.name === selected.service)?.id) && !selected.serviceVariantId) ||
               (step === 4 && checkingAvailability) ||
               (step === 4 && availability[selected.time] === false) ||
               !selected.service ||
@@ -1961,6 +1991,8 @@ function BookingStep({
     services: Array<Record<string, any>>;
     professionals: Array<Record<string, any>>;
     inventoryItems?: Array<Record<string, any>>;
+    serviceVariants?: Array<Record<string, any>>;
+    serviceAddons?: Array<Record<string, any>>;
   };
   dateOptions: string[];
   couponInfo: { code: string; discount: number; total: number; error?: string } | null;
@@ -1968,8 +2000,13 @@ function BookingStep({
   validatingCoupon: boolean;
   setValidatingCoupon: (x: boolean) => void;
 }) {
-  const choose = (k: string, v: string) => setSelected({ ...selected, [k]: v });
+  const choose = (k: string, v: string) => setSelected(k === "service"
+    ? { ...selected, service: v, serviceVariantId: "", addonIds: "", inventoryItemId: "" }
+    : { ...selected, [k]: v });
   const service = catalog.services.find((s) => s.name === selected.service);
+  const serviceVariants = (catalog.serviceVariants || []).filter((v) => v.service_id === service?.id);
+  const selectedVariant = serviceVariants.find((v) => v.id === selected.serviceVariantId);
+  const availableAddons = (catalog.serviceAddons || []).filter((a) => a.service_variant_id === selectedVariant?.id);
   const slots = Object.keys(availability);
   const matchingItems = (catalog.inventoryItems || []).filter(
     (item) => item.category_id === service?.category_id && 
@@ -1982,9 +2019,11 @@ function BookingStep({
       options: catalog.services.map((s) => String(s.name)),
     },
     {
-      title: service?.offer_inventory_items ? "Selecione o tipo de cabelo" : "Qual método deseja avaliar?",
-      key: service?.offer_inventory_items ? "inventoryItemId" : "method",
-      options: service?.offer_inventory_items 
+      title: serviceVariants.length ? "Escolha a opção do serviço" : service?.offer_inventory_items ? "Selecione o tipo de cabelo" : "Qual método deseja avaliar?",
+      key: serviceVariants.length ? "serviceVariantId" : service?.offer_inventory_items ? "inventoryItemId" : "method",
+      options: serviceVariants.length
+        ? serviceVariants.map((variant) => variant.id)
+        : service?.offer_inventory_items
         ? matchingItems.map((item) => item.id) 
         : ["Quero recomendação", "Fita Adesiva", "Microlink", "Queratina"],
     },
@@ -2018,6 +2057,7 @@ function BookingStep({
         ) : (
           <div className="mt-4 grid grid-cols-2 gap-2">
             {c.options.map((o) => {
+              const variant = step === 1 ? serviceVariants.find((x) => x.id === o) : null;
               const item = service?.offer_inventory_items && step === 1 
                 ? catalog.inventoryItems?.find((x) => x.id === o) 
                 : null;
@@ -2055,6 +2095,30 @@ function BookingStep({
                   </button>
                 );
               }
+              if (variant) {
+                const signal = variant.deposit_type === "percentage"
+                  ? `${Number(variant.deposit_value)}%`
+                  : variant.deposit_type === "fixed"
+                    ? money(Number(variant.deposit_value || 0))
+                    : variant.deposit_type === "material_cost"
+                      ? "valor da fibra após avaliação"
+                      : "sem sinal definido";
+                return (
+                  <button
+                    key={variant.id}
+                    onClick={() => setSelected({ ...selected, serviceVariantId: variant.id, addonIds: "" })}
+                    className={`col-span-2 rounded-2xl border p-4 text-left transition ${selected.serviceVariantId === variant.id ? "border-champagne bg-champagne/10" : "border-black/[.07] bg-white"}`}
+                  >
+                    <span className="block text-xs font-bold">{variant.label}</span>
+                    <span className="mt-1 block text-[10px] text-stone-500">
+                      {money(Number(variant.price))} • {Number(variant.duration_minutes) / 60}h • sinal: {signal}
+                    </span>
+                    <span className="mt-1 block text-[10px] font-semibold text-amber-700">
+                      Avaliação obrigatória{variant.requires_human_confirmation ? " • material sob confirmação" : ""}
+                    </span>
+                  </button>
+                );
+              }
               const unavailable = step === 4 && availability[o] === false;
               return (
                 <button
@@ -2089,18 +2153,45 @@ function BookingStep({
           className="field mt-4 min-h-32 py-4"
           placeholder="Conte sobre sensibilidade, química recente ou preferência de resultado…"
         />
+        {availableAddons.length > 0 && (
+          <div className="mt-4 rounded-2xl border border-black/[.07] p-4">
+            <p className="text-xs font-bold">Adicionais opcionais</p>
+            {availableAddons.map((addon) => {
+              const ids = selected.addonIds ? selected.addonIds.split(",").filter(Boolean) : [];
+              const checked = ids.includes(addon.id);
+              return (
+                <label key={addon.id} className="mt-3 flex cursor-pointer items-center justify-between gap-3 text-xs">
+                  <span>{addon.name} — {money(Number(addon.price))}</span>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => choose("addonIds", checked ? ids.filter((id) => id !== addon.id).join(",") : [...ids, addon.id].join(","))}
+                  />
+                </label>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   if (step === 6) {
     const selectedInventoryItem = service?.offer_inventory_items
       ? catalog.inventoryItems?.find((x) => x.id === selected.inventoryItemId)
       : null;
-    const servicePrice = selectedInventoryItem
+    const selectedAddons = availableAddons.filter((a) => selected.addonIds?.split(",").includes(a.id));
+    const variantPrice = selectedVariant
+      ? Number(selectedVariant.price || 0) + selectedAddons.reduce((sum, addon) => sum + Number(addon.price || 0), 0)
+      : null;
+    const servicePrice = variantPrice != null
+      ? variantPrice
+      : selectedInventoryItem
       ? Number(selectedInventoryItem.suggested_price || 0)
       : (service ? Number(service.base_price || 0) : 0);
     const discount = couponInfo?.code === selected.couponCode ? couponInfo.discount : 0;
     const finalPrice = Math.max(0, servicePrice - discount);
-    const finalDeposit = bookingDepositAmount(service, finalPrice);
+    const finalDeposit = selectedVariant
+      ? variantDepositAmount(selectedVariant, finalPrice)
+      : bookingDepositAmount(service, finalPrice);
 
     return (
       <div className="mt-5">
@@ -2110,6 +2201,8 @@ function BookingStep({
         <div className="mt-4 space-y-3 rounded-2xl bg-warm p-5 text-xs">
           {[
             ["Serviço", selected.service],
+            selectedVariant ? ["Opção", selectedVariant.label] : null,
+            selectedAddons.length ? ["Adicionais", selectedAddons.map((a) => a.name).join(", ")] : null,
             service?.offer_inventory_items && selectedInventoryItem ? [
               "Cabelo/Mecha",
               `${selectedInventoryItem.color} ${selectedInventoryItem.shade ? `/ ${selectedInventoryItem.shade}` : ""} - ${selectedInventoryItem.length_cm ? (String(selectedInventoryItem.length_cm).toLowerCase().includes('cm') ? selectedInventoryItem.length_cm : `${selectedInventoryItem.length_cm}cm`) : "—"} - ${selectedInventoryItem.weight_grams ? `${selectedInventoryItem.weight_grams}g` : "—"}`
@@ -2128,7 +2221,9 @@ function BookingStep({
             ],
             [
               "Sinal",
-              service ? money(finalDeposit) : "A confirmar",
+              selectedVariant?.deposit_type === "material_cost"
+                ? "valor integral da fibra, definido após avaliação"
+                : service ? money(finalDeposit) : "A confirmar",
             ],
           ].filter(Boolean).map((x) => (
             <div key={x![0]} className="flex justify-between gap-4">
@@ -2152,7 +2247,7 @@ function BookingStep({
               setValidatingCoupon(true);
               try {
                 const res = await apiFetch<{ valid: boolean; discount: number; total: number; error?: string }>(
-                  `/api/data?resource=validate-coupon&code=${encodeURIComponent(selected.couponCode)}&serviceId=${service?.id}&amount=${service?.base_price}`
+                  `/api/data?resource=validate-coupon&code=${encodeURIComponent(selected.couponCode)}&serviceId=${service?.id}&amount=${servicePrice}`
                 );
                 if (res.valid) {
                   setCouponInfo({ code: selected.couponCode, discount: res.discount, total: res.total });
@@ -2203,12 +2298,17 @@ function BookingStep({
   const selectedInventoryItem = service?.offer_inventory_items
     ? catalog.inventoryItems?.find((x) => x.id === selected.inventoryItemId)
     : null;
-  const servicePrice = selectedInventoryItem
+  const selectedAddons = availableAddons.filter((a) => selected.addonIds?.split(",").includes(a.id));
+  const servicePrice = selectedVariant
+    ? Number(selectedVariant.price || 0) + selectedAddons.reduce((sum, addon) => sum + Number(addon.price || 0), 0)
+    : selectedInventoryItem
     ? Number(selectedInventoryItem.suggested_price || 0)
     : (service ? Number(service.base_price || 0) : 0);
   const discount = couponInfo?.code === selected.couponCode ? couponInfo.discount : 0;
   const finalPrice = Math.max(0, servicePrice - discount);
-  const finalDeposit = bookingDepositAmount(service, finalPrice);
+  const finalDeposit = selectedVariant
+    ? variantDepositAmount(selectedVariant, finalPrice)
+    : bookingDepositAmount(service, finalPrice);
 
   const paymentOptions: Array<{
     name: string;
@@ -2218,6 +2318,19 @@ function BookingStep({
     { name: "Cartão de crédito", icon: CreditCard },
     { name: "Pagar no local", icon: WalletIcon },
   ];
+  if (selectedVariant?.requires_assessment || selectedVariant?.requires_human_confirmation) {
+    return (
+      <div className="mt-5">
+        <h3 className="font-display text-2xl font-semibold">Avaliação e confirmação</h3>
+        <div className="mt-4 rounded-2xl bg-amber-50 p-5 text-xs leading-relaxed text-amber-900">
+          Sua solicitação será enviada para avaliação. A profissional confirmará as características do cabelo e, quando houver fibra inclusa, a disponibilidade do material antes de solicitar o sinal.
+          {selectedVariant.deposit_type === "percentage" && ` O sinal previsto é de ${Number(selectedVariant.deposit_value)}% após a confirmação.`}
+          {selectedVariant.deposit_type === "fixed" && ` O sinal previsto é de ${money(Number(selectedVariant.deposit_value))} após a confirmação.`}
+          {selectedVariant.deposit_type === "material_cost" && " Para Fita Adesiva, o sinal corresponde ao valor integral da fibra confirmado na avaliação."}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="mt-5">
       <h3 className="font-display text-2xl font-semibold">

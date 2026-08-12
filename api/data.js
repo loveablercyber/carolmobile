@@ -1,4 +1,10 @@
 import { query, transaction } from "../server/lib/db.js";
+import {
+  catalogSnapshot,
+  totalCatalogDuration,
+  totalCatalogPrice,
+  variantDepositAmount,
+} from "../server/lib/service-catalog.js";
 import { requireUser } from "../server/lib/auth.js";
 import {
   appointmentRange,
@@ -236,7 +242,7 @@ async function createDiscoveryRecommendation(res, user, body) {
 async function getResource(req, res, user, resource) {
   if (resource === "bootstrap") {
     await ensureServicesVisibilityColumn();
-    const [services, professionals, locations, points, inventory] = await Promise.all([
+    const [services, professionals, locations, points, inventory, variants, addons] = await Promise.all([
       query(
         `select id, name, description, duration_minutes, base_price, deposit_amount,
           coalesce(is_free,false) as is_free,
@@ -266,6 +272,19 @@ async function getResource(req, res, user, resource) {
          from public.hair_inventory
          where archived = false and active = true and quantity > 0`
       ),
+      query(
+        `select v.* from public.service_variants v
+         join public.services s on s.id=v.service_id
+         where v.active and v.show_online_booking and s.active
+         order by v.service_id,v.sort_order,v.label`,
+      ).catch(() => ({ rows: [] })),
+      query(
+        `select a.*,va.service_variant_id
+         from public.service_addons a
+         join public.service_variant_addons va on va.addon_id=a.id
+         where a.active and a.show_online_booking
+         order by a.sort_order,a.name`,
+      ).catch(() => ({ rows: [] })),
     ]);
     return send(res, 200, {
       services: services.rows,
@@ -273,6 +292,8 @@ async function getResource(req, res, user, resource) {
       locations: locations.rows,
       points: points.rows[0].points,
       inventoryItems: inventory.rows,
+      serviceVariants: variants.rows,
+      serviceAddons: addons.rows,
     });
   }
 
@@ -393,11 +414,15 @@ async function getResource(req, res, user, resource) {
     const date = String(req.query?.date || "");
     const serviceId = String(req.query?.serviceId || "");
     const professionalId = String(req.query?.professionalId || "");
+    const variantId = String(req.query?.serviceVariantId || "");
+    const addonIds = String(req.query?.addonIds || "").split(",").filter(Boolean);
     const firstAvailable = String(req.query?.firstAvailable || "") === "true";
     if (!isAvailabilityDate(date)) throw appError("Data inválida.");
     if (!uuidPattern.test(serviceId)) throw appError("Serviço inválido.");
     if (professionalId && !uuidPattern.test(professionalId))
       throw appError("Profissional inválida.");
+    if (variantId && !uuidPattern.test(variantId)) throw appError("Variação inválida.");
+    if (addonIds.some((id) => !uuidPattern.test(id))) throw appError("Adicional inválido.");
     if ((!professionalId && !firstAvailable) || (professionalId && firstAvailable))
       throw appError("Informe uma profissional ou solicite a primeira disponível.");
     const { rows: services } = await query(
@@ -405,6 +430,31 @@ async function getResource(req, res, user, resource) {
       [serviceId, user.role],
     );
     if (!services[0]) throw appError("Serviço não encontrado.");
+    let bookingDuration = Number(services[0].duration_minutes);
+    if (variantId) {
+      const variant = await query(
+        `select id,duration_minutes,requires_assessment from public.service_variants
+         where id=$1 and service_id=$2 and active and show_online_booking`,
+        [variantId, serviceId],
+      );
+      if (!variant.rows[0]) throw appError("Variação não encontrada.", 404);
+      const addonDuration = addonIds.length ? await query(
+        `select coalesce(sum(a.duration_minutes),0)::int as duration
+         from public.service_addons a
+         join public.service_variant_addons va on va.addon_id=a.id
+         where va.service_variant_id=$1 and a.id=any($2::uuid[]) and a.active`,
+        [variantId, addonIds],
+      ) : { rows: [{ duration: 0 }] };
+      if (variant.rows[0].requires_assessment) {
+        const assessment = await query(
+          `select duration_minutes from public.services
+           where catalog_code='assessment-extensions' and active limit 1`,
+        );
+        bookingDuration = Number(assessment.rows[0]?.duration_minutes || 60);
+      } else {
+        bookingDuration = Number(variant.rows[0].duration_minutes) + Number(addonDuration.rows[0].duration || 0);
+      }
+    }
     const { rows: professionals } = await query(
       `select p.id,pp.full_name
        from public.professionals p
@@ -441,12 +491,12 @@ async function getResource(req, res, user, resource) {
       ]);
       const times = scheduleSlots(
         availability.rows,
-        services[0].duration_minutes,
+        bookingDuration,
       );
       const slots = slotsWithConflicts(
         date,
         times,
-        services[0].duration_minutes,
+        bookingDuration,
         conflicts.rows,
       );
       const candidate = { professional, slots };
@@ -793,6 +843,37 @@ async function createAppointment(req, res, user, body) {
     if (!service) throw appError("Serviço não encontrado.");
     if (user.role === "client" && service.show_online_booking === false)
       throw appError("Este serviço não está disponível para agendamento online.");
+    const availableVariants = await client.query(
+      `select * from public.service_variants
+       where service_id=$1 and active and ($2::text <> 'client' or show_online_booking)
+       order by sort_order,label`,
+      [service.id, user.role],
+    ).catch(() => ({ rows: [] }));
+    let variant = null;
+    if (availableVariants.rows.length) {
+      if (!uuidPattern.test(String(body.serviceVariantId || "")))
+        throw appError("Selecione uma variação do serviço.");
+      variant = availableVariants.rows.find((item) => item.id === body.serviceVariantId) || null;
+      if (!variant) throw appError("Variação indisponível para este serviço.", 409);
+    } else if (body.serviceVariantId) {
+      throw appError("Este serviço não possui variações disponíveis.");
+    }
+    const addonIds = Array.isArray(body.addonIds) ? [...new Set(body.addonIds.map(String))] : [];
+    if (addonIds.some((id) => !uuidPattern.test(id))) throw appError("Adicional inválido.");
+    let addons = [];
+    if (addonIds.length) {
+      if (!variant) throw appError("Adicionais exigem uma variação de serviço.");
+      const addonResult = await client.query(
+        `select a.* from public.service_addons a
+         join public.service_variant_addons va on va.addon_id=a.id
+         where va.service_variant_id=$1 and a.id=any($2::uuid[]) and a.active
+           and ($3::text <> 'client' or a.show_online_booking)`,
+        [variant.id, addonIds, user.role],
+      );
+      if (addonResult.rowCount !== addonIds.length)
+        throw appError("Um dos adicionais está indisponível para esta variação.", 409);
+      addons = addonResult.rows;
+    }
     const professionalSelect = `select p.id,p.profile_id,pp.full_name,pp.phone,u.email from public.professionals p join public.profiles pp on pp.id=p.profile_id left join auth.users u on u.id=pp.id`;
     const {
       rows: [professional],
@@ -806,9 +887,12 @@ async function createAppointment(req, res, user, body) {
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [
       professional.id,
     ]);
-    const endsAt = new Date(
-      startsAt.getTime() + service.duration_minutes * 60_000,
-    );
+    const bookingDuration = variant?.requires_assessment
+      ? Number((await client.query(`select duration_minutes from public.services where catalog_code='assessment-extensions' and active limit 1`)).rows[0]?.duration_minutes || 60)
+      : variant
+      ? totalCatalogDuration(variant, addons)
+      : Number(service.duration_minutes);
+    const endsAt = new Date(startsAt.getTime() + bookingDuration * 60_000);
     const { period, error: periodError } = schedulePeriod(startsAt, endsAt);
     if (periodError) throw appError(periodError);
     const schedule = await client.query(
@@ -831,7 +915,9 @@ async function createAppointment(req, res, user, body) {
         "Este horário acabou de ficar indisponível. Escolha outro.",
         409,
       );
-    let basePrice = Number(service.base_price || 0);
+    let basePrice = variant
+      ? totalCatalogPrice(variant, addons)
+      : Number(service.base_price || 0);
     if (service.offer_inventory_items && user.role === "client" && !body.inventoryItemId)
       throw appError("Selecione uma opcao de cabelo/mecha para este servico.");
     if (!service.offer_inventory_items && body.inventoryItemId)
@@ -868,22 +954,34 @@ async function createAppointment(req, res, user, body) {
       await client.query("select uuid_generate_v4() as id")
     ).rows[0].id;
     const bookingCode = `CS-${String(appointmentId).replace(/-/g, "").slice(-12).toUpperCase()}`;
-    const deposit = appointmentDepositAmount(service, couponResult.total);
+    const deposit = variant
+      ? variantDepositAmount(variant, couponResult.total)
+      : appointmentDepositAmount(service, couponResult.total);
     const requiresDeposit = deposit > 0;
     const requestedStatus =
       (user.role === "admin" || user.role === "professional") && appointmentStatuses.includes(body.status)
         ? body.status
         : "";
-    const initialStatus =
-      requestedStatus || (requiresDeposit ? "awaiting_payment" : "requested");
+    const initialStatus = requestedStatus ||
+      (variant?.requires_assessment || variant?.requires_human_confirmation
+        ? "requested"
+        : requiresDeposit ? "awaiting_payment" : "requested");
+    const snapshot = catalogSnapshot({
+      service,
+      variant,
+      addons,
+      total: couponResult.total,
+      deposit,
+    });
     const { rows } = await client.query(
-      `insert into public.appointments(id,booking_code,client_id,professional_id,service_id,location_id,starts_at,ends_at,status,notes,estimated_value,original_value,discount_amount,coupon_id,intake_data,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) returning id`,
+      `insert into public.appointments(id,booking_code,client_id,professional_id,service_id,service_variant_id,location_id,starts_at,ends_at,status,notes,estimated_value,original_value,discount_amount,coupon_id,intake_data,catalog_snapshot,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) returning id`,
       [
         appointmentId,
         bookingCode,
         clientId,
         professional.id,
         service.id,
+        variant?.id || null,
         location.rows[0]?.id || null,
         startsAt.toISOString(),
         endsAt.toISOString(),
@@ -893,10 +991,18 @@ async function createAppointment(req, res, user, body) {
         basePrice,
         couponResult.discount,
         couponResult.coupon?.id || null,
-        JSON.stringify(body.intakeData || {}),
+        JSON.stringify({ ...(body.intakeData || {}), requiresAssessment: variant?.requires_assessment === true }),
+        JSON.stringify(snapshot),
         user.id,
       ],
     );
+    for (const addon of addons) {
+      await client.query(
+        `insert into public.appointment_addons(appointment_id,addon_id,addon_code,addon_name,price,duration_minutes)
+         values($1,$2,$3,$4,$5,$6)`,
+        [rows[0].id, addon.id, addon.code, addon.name, addon.price, addon.duration_minutes],
+      );
+    }
     let discoveryPhotos = [];
     if (discoveryPhotoIds.length) {
       const attachedPhotos = await client.query(
@@ -913,6 +1019,8 @@ async function createAppointment(req, res, user, body) {
     let paymentId = null;
     if (
       requiresDeposit &&
+      !variant?.requires_assessment &&
+      !variant?.requires_human_confirmation &&
       !["confirmed", "in_service", "completed"].includes(initialStatus)
     ) {
       const provider =
@@ -927,8 +1035,8 @@ async function createAppointment(req, res, user, body) {
           rows[0].id,
           clientId,
           deposit,
-          Number(service.deposit_amount || 0),
-          Math.min(couponResult.discount, Number(service.deposit_amount || 0)),
+          deposit,
+          Math.min(couponResult.discount, deposit),
           couponResult.coupon?.id || null,
           body.paymentMethod || "pix",
           provider,
