@@ -13,6 +13,10 @@ import {
   applyLegacyImport,
   legacyImportStatus,
 } from "../server/lib/legacy-import.js";
+import {
+  applyServiceCatalogMigration,
+  serviceCatalogMigrationStatus,
+} from "../server/lib/service-catalog-migration.js";
 
 function authorized(req) {
   const expected = process.env.CRON_SECRET;
@@ -28,9 +32,20 @@ export default async function handler(req, res) {
       req.query?.resource !== "recurring-billing" &&
       req.query?.resource !== "card-tokenization" &&
       req.query?.resource !== "ai-whatsapp" &&
+      req.query?.resource !== "service-catalog-2026" &&
       req.query?.resource !== "legacy-import"
     )
       return send(res, 404, { error: "Migração não encontrada." });
+    if (req.query?.resource === "service-catalog-2026") {
+      if (req.method === "GET")
+        return send(res, 200, { ok: true, migration: await serviceCatalogMigrationStatus() });
+      const result = await applyServiceCatalogMigration();
+      return send(res, 200, {
+        ok: true,
+        ...result,
+        migration: await serviceCatalogMigrationStatus(),
+      });
+    }
     if (req.query?.resource === "legacy-import") {
       if (req.method === "GET")
         return send(res, 200, {

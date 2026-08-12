@@ -157,6 +157,10 @@ async function setup() {
     resolve("database/neon-ai-whatsapp.sql"),
     "utf8",
   );
+  const serviceCatalogMigration = await readFile(
+    resolve("database/neon-service-catalog-2026.sql"),
+    "utf8",
+  );
 
   await client.query("begin");
   try {
@@ -278,6 +282,15 @@ async function setup() {
       await client.query(aiWhatsappMigration);
       await client.query(
         "insert into public._luxe_migrations(version, description) values ('011_ai_whatsapp', 'Atendimento IA WhatsApp Gemini')",
+      );
+    }
+    const { rowCount: serviceCatalogApplied } = await client.query(
+      "select 1 from public._luxe_migrations where version = '012_service_catalog_2026'",
+    );
+    if (!serviceCatalogApplied) {
+      await client.query(serviceCatalogMigration);
+      await client.query(
+        "insert into public._luxe_migrations(version, description) values ('012_service_catalog_2026', 'Catálogo de serviços e variações Carol Sol 2026')",
       );
     }
     await client.query("commit");
