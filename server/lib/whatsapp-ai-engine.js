@@ -130,6 +130,12 @@ function withBookingFlowHelp(text, reason) {
   return [body, BOOKING_FLOW_HELP_TEXT].filter(Boolean).join("\n\n");
 }
 
+export function isBookingFlowInterruptionQuestion(text, history = []) {
+  return isClientAskingQuestion(text) ||
+    isReplyingToExplanationOffer(text, history) ||
+    isClientChangingSubjectOrNegating(text);
+}
+
 function prunePayload(value, depth = 0) {
   if (depth > 4) return "[truncated]";
   if (value === null || value === undefined) return value;
@@ -1151,6 +1157,97 @@ function slotPageLines(options = [], start = 0) {
     lines.push(`Digite ${nextCommand} para ver mais horários.`);
   }
   return lines.filter(Boolean).join("\n");
+}
+
+export function buildBookingResumePrompt(state = {}) {
+  const status = String(state.status || "");
+  const prefix = "Agora podemos continuar seu agendamento de onde paramos:";
+
+  if (status === "awaiting_category" && Array.isArray(state.categoryOptions)) {
+    return [
+      prefix,
+      "Escolha a categoria respondendo com o número:",
+      optionLines(state.categoryOptions, (item) => item.categoryName),
+    ].filter(Boolean).join("\n\n");
+  }
+
+  if (status === "awaiting_method" && Array.isArray(state.methodOptions)) {
+    return [
+      prefix,
+      "Escolha o método respondendo com o número:",
+      optionLines(state.methodOptions, (item) => item.methodName),
+    ].filter(Boolean).join("\n\n");
+  }
+
+  if (status === "awaiting_service" && Array.isArray(state.serviceOptions)) {
+    return [
+      prefix,
+      "Escolha o serviço respondendo com o número:",
+      optionLines(state.serviceOptions, (item) => item.serviceName),
+    ].filter(Boolean).join("\n\n");
+  }
+
+  if (status === "awaiting_inventory" && Array.isArray(state.inventoryOptions)) {
+    return [
+      prefix,
+      "Escolha o item de estoque respondendo com o número:",
+      optionLines(state.inventoryOptions, (item) => item.inventoryValue
+        ? `${item.inventoryName} - ${formatBookingCurrency(item.inventoryValue)}`
+        : item.inventoryName),
+    ].filter(Boolean).join("\n\n");
+  }
+
+  if (status === "awaiting_service_details") {
+    return [
+      prefix,
+      buildServiceDetailsResponse(state),
+      "Responda 1 para verificar horários ou 2 para escolher outro serviço.",
+    ].filter(Boolean).join("\n\n");
+  }
+
+  if (status === "awaiting_date") {
+    const options = Array.isArray(state.dateOptions) && state.dateOptions.length
+      ? state.dateOptions
+      : dateOptionsFrom();
+    return [
+      prefix,
+      "Escolha a data respondendo com o número:",
+      optionLines(options, (item) => item.label),
+      "Se preferir outro dia, envie no formato 10/07.",
+    ].filter(Boolean).join("\n\n");
+  }
+
+  if (status === "awaiting_slot" && Array.isArray(state.slotOptions) && state.slotOptions.length) {
+    return [
+      prefix,
+      state.date ? `Escolha o horário para ${formatDateLabel(state.date)}:` : "Escolha o horário:",
+      slotPageLines(state.slotOptions, Number(state.slotPageStart || 0)),
+    ].filter(Boolean).join("\n\n");
+  }
+
+  if (status === "awaiting_contact") {
+    const missingContact = missingBookingContactFields(state);
+    if (missingContact.length) {
+      return [prefix, bookingContactPrompt(state, missingContact)].join("\n\n");
+    }
+  }
+
+  if (status === "awaiting_confirmation") {
+    return [
+      prefix,
+      "📝 *Resumo do seu Agendamento:*",
+      buildBookingSummary(state),
+      "👍 *Confirmar agendamento?*",
+      "1️⃣ Confirmar",
+      "2️⃣ Alterar",
+    ].filter(Boolean).join("\n\n");
+  }
+
+  if (state.serviceId && !state.date) {
+    return `${prefix}\n\nQual data você prefere?`;
+  }
+
+  return `${prefix}\n\nResponda à última pergunta do atendimento quando estiver pronta.`;
 }
 
 function extractClientName(text) {
@@ -3292,7 +3389,7 @@ export function buildBookingGuidance({
   const hasQuestion = isClientAskingQuestion(incomingText) ||
                       isReplyingToExplanationOffer(incomingText, history);
 
-  if (hasQuestion && currentState && currentState.serviceId) {
+  if (hasQuestion && currentState && isActiveBookingState(currentState)) {
     const serviceName = currentState.serviceName || "Mega Hair";
     const dateText = currentState.date ? `para o dia ${formatDateLabel(currentState.date)}` : "";
     const savedFields = [
@@ -3312,7 +3409,8 @@ export function buildBookingGuidance({
     return {
       active: true,
       shouldRegister: false,
-      text: `Existe um fluxo de pre-agendamento em andamento. Servico selecionado: ${serviceName} ${dateText}. Campos ja salvos: ${savedFields || "nenhum"}. Proximo campo faltante: ${nextStep}. Responda a pergunta da cliente primeiro, mantenha todos os campos salvos, nunca pergunte novamente campo preenchido e retome exatamente do proximo campo faltante.`,
+      text: `Existe um fluxo de pre-agendamento em andamento. Servico selecionado: ${serviceName} ${dateText}. Campos ja salvos: ${savedFields || "nenhum"}. Proximo campo faltante: ${nextStep}. Responda somente a pergunta atual da cliente, mantenha todos os campos salvos e nunca pergunte novamente campo preenchido. Nao repita o menu nem a pergunta pendente: o backend retomara a etapa automaticamente depois da sua resposta.`,
+      resumeText: buildBookingResumePrompt(currentState),
     };
   }
 
@@ -4246,6 +4344,8 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     }
   }
   const hasActiveBookingState = isActiveBookingState(currentStateForRouting);
+  const bookingInterruptionQuestion = hasActiveBookingState &&
+    isBookingFlowInterruptionQuestion(concatenatedText, history);
   console.log("whatsapp-ai-engine execution log:", {
     phone: normalized.phoneNumber,
     lastIntent: recorded.conversation.last_intent || null,
@@ -4257,10 +4357,10 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     history: history.map(h => ({ sender: h.sender_type, body: h.body ? h.body.slice(0, 50) : "" })),
   });
 
-  // PRIORIDADE 1: Estado ativo de agendamento é verificado ANTES de qualquer análise
-  // de palavras-chave. Se há contexto ativo, a resposta do usuário é sempre tratada
-  // como continuação do fluxo — nunca como mensagem fora do escopo.
-  if (hasActiveBookingState) {
+  // O estado ativo continua tendo prioridade para respostas da etapa. Perguntas
+  // paralelas, porém, pausam o fluxo sem apagar o estado, seguem para a IA/base de
+  // conhecimento e recebem a retomada determinística da etapa depois da resposta.
+  if (hasActiveBookingState && !bookingInterruptionQuestion) {
     const structuredBooking = await handleStructuredBookingFlow({
       normalized,
       conversationId,
@@ -4326,23 +4426,23 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     if (structuredBooking) return structuredBooking;
   }
 
-  const localAgendaAvailability = await handleLocalAgendaAvailabilityIntent({
-    normalized,
-    conversationId,
-    inboundMessageId,
-    text: concatenatedText,
-    settings,
-    base,
-    recorded,
-    queueLatencyMs,
-    receivedAt,
-    history,
-  });
+  const localAgendaAvailability = bookingInterruptionQuestion
+    ? null
+    : await handleLocalAgendaAvailabilityIntent({
+        normalized,
+        conversationId,
+        inboundMessageId,
+        text: concatenatedText,
+        settings,
+        base,
+        recorded,
+        queueLatencyMs,
+        receivedAt,
+        history,
+      });
   if (localAgendaAvailability) return localAgendaAvailability;
 
-  const hasQuestion = isClientAskingQuestion(concatenatedText) ||
-                      isReplyingToExplanationOffer(concatenatedText, history) ||
-                      isClientChangingSubjectOrNegating(concatenatedText);
+  const hasQuestion = isBookingFlowInterruptionQuestion(concatenatedText, history);
 
   if (!hasQuestion && !prioritizeBookingState) {
     const structuredBooking = await handleStructuredBookingFlow({
@@ -4362,11 +4462,17 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
 
   const localIntentResponse = buildLocalIntentResponse(concatenatedText, base);
   if (localIntentResponse) {
+    const responseText = bookingInterruptionQuestion
+      ? [localIntentResponse, buildBookingResumePrompt(currentStateForRouting)].join("\n\n")
+      : localIntentResponse;
+    const responseReason = bookingInterruptionQuestion
+      ? "booking_question_local_reply"
+      : "local_intent_reply";
     await sendTextAndRecord({
       normalized,
       conversationId,
-      text: localIntentResponse,
-      reason: "local_intent_reply",
+      text: responseText,
+      reason: responseReason,
     });
     await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
 
@@ -4382,10 +4488,10 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       providerLatencyMs: 0,
       totalLatencyMs: Date.now() - receivedAt.getTime(),
       inputTokens: Math.round(concatenatedText.length / 4),
-      outputTokens: Math.round(localIntentResponse.length / 4),
+      outputTokens: Math.round(responseText.length / 4),
     });
 
-    return { ok: true, replied: true, reason: "local_intent_reply", conversationId };
+    return { ok: true, replied: true, reason: responseReason, conversationId };
   }
 
   const outOfScopeResponse = buildOutOfScopeResponse(concatenatedText);
@@ -4650,6 +4756,13 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       : 0;
 
   if (finalResponse) {
+    if (
+      bookingInterruptionQuestion &&
+      booking.resumeText &&
+      !finalResponse.includes(booking.resumeText)
+    ) {
+      finalResponse = [finalResponse.trim(), booking.resumeText].join("\n\n");
+    }
     if (booking.shouldRegister) {
       await requestHumanAttention({
         conversationId,
@@ -4660,11 +4773,14 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     }
 
     // Send response
+    const responseReason = bookingInterruptionQuestion
+      ? `booking_question_${finalProvider}_reply`
+      : `${finalProvider}_reply`;
     await sendTextAndRecord({
       normalized,
       conversationId,
       text: finalResponse,
-      reason: `${finalProvider}_reply`,
+      reason: responseReason,
     });
 
     // Log metric in ai_request_logs
@@ -4699,7 +4815,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     return {
       ok: true,
       replied: true,
-      reason: `${finalProvider}_reply`,
+      reason: responseReason,
       conversationId,
       model: finalModel,
     };
@@ -4708,13 +4824,17 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
 
     let contingencyReplied = false;
     if (settings.contingencyEnabled) {
-      const contingencyText =
-        "Olá! Recebi sua mensagem, mas nosso atendimento automático está com uma instabilidade momentânea. Pode tentar me enviar de novo em instantes, por favor?";
+      const contingencyText = [
+        "Olá! Recebi sua mensagem, mas nosso atendimento automático está com uma instabilidade momentânea. Pode tentar me enviar de novo em instantes, por favor?",
+        bookingInterruptionQuestion ? buildBookingResumePrompt(currentState) : "",
+      ].filter(Boolean).join("\n\n");
       await sendTextAndRecord({
         normalized,
         conversationId,
         text: contingencyText,
-        reason: "contingency_reply",
+        reason: bookingInterruptionQuestion
+          ? "booking_question_contingency_reply"
+          : "contingency_reply",
       });
       contingencyReplied = true;
     }

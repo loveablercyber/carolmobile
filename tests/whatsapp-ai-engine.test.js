@@ -34,6 +34,8 @@ import {
   buildInitialServiceCatalogOptions,
   buildInitialCategoryCatalogOptions,
   detectBookingGlobalCommand,
+  buildBookingResumePrompt,
+  isBookingFlowInterruptionQuestion,
 } from "../server/lib/whatsapp-ai-engine.js";
 
 const originalQuery = pool.query;
@@ -630,7 +632,31 @@ test("routes fibra russa questions to the AI provider instead of a fixed local r
 test("isClientAskingQuestion classifies questions correctly", () => {
   assert.equal(isClientAskingQuestion("Qual o valor do mega?"), true);
   assert.equal(isClientAskingQuestion("Como funciona o microlink"), true);
+  assert.equal(isClientAskingQuestion("Posso pintar"), true);
+  assert.equal(isClientAskingQuestion("Pode registrar"), false);
+  assert.equal(isClientAskingQuestion("Pode ser"), false);
   assert.equal(isClientAskingQuestion("Quero agendar por favor"), false);
+});
+
+test("questions interrupt an active booking step without becoming invalid menu choices", () => {
+  assert.equal(isBookingFlowInterruptionQuestion("Como cuidar?", []), true);
+  assert.equal(isBookingFlowInterruptionQuestion("Posso pintar", []), true);
+  assert.equal(isBookingFlowInterruptionQuestion("Tem horário?", []), true);
+  assert.equal(isBookingFlowInterruptionQuestion("1", []), false);
+});
+
+test("buildBookingResumePrompt restores the inventory menu after answering a question", () => {
+  const resume = buildBookingResumePrompt({
+    status: "awaiting_inventory",
+    inventoryOptions: [
+      { id: 1, inventoryName: "Castanho Médio - 60/65/70cm - 150 g", inventoryValue: 410 },
+    ],
+  });
+
+  assert.match(resume, /continuar seu agendamento de onde paramos/i);
+  assert.match(resume, /Escolha o item de estoque/i);
+  assert.match(resume, /Castanho Médio/);
+  assert.match(resume, /R\$\s*410,00/);
 });
 
 test("isClientChangingSubjectOrNegating classifies negations correctly", () => {
@@ -724,6 +750,29 @@ test("buildBookingGuidance handles paused booking flow when has question", () =>
   assert.match(booking.text, /Campos ja salvos/i);
   assert.match(booking.text, /Proximo campo faltante: horario/i);
   assert.match(booking.text, /nunca pergunte novamente campo preenchido/i);
+});
+
+test("buildBookingGuidance pauses and resumes an inventory step for a care question", () => {
+  const booking = buildBookingGuidance({
+    incomingText: "Como cuidar?",
+    history: [],
+    knownClient: true,
+    settings: {},
+    currentState: {
+      status: "awaiting_inventory",
+      serviceId: "s1",
+      serviceName: "Ponto Americano Invisível",
+      inventoryOptions: [
+        { id: 1, inventoryName: "Castanho Médio", inventoryValue: 410 },
+      ],
+    },
+  });
+
+  assert.equal(booking.active, true);
+  assert.equal(booking.shouldRegister, false);
+  assert.match(booking.text, /Responda somente a pergunta atual/i);
+  assert.match(booking.text, /backend retomara a etapa automaticamente/i);
+  assert.match(booking.resumeText, /Castanho Médio/);
 });
 
 test("handleStructuredBookingFlow shows service details after service selection", async () => {

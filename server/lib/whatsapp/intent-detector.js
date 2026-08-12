@@ -517,6 +517,10 @@ export function isSimpleGreeting(text) {
 export function isClientAskingQuestion(text) {
   const normalized = normalizeText(text);
   if (text.includes("?")) return true;
+  const affirmativeActionAtStart = /^(?:sim[\s,]+)?pode\s+(?:registrar|confirmar|agendar|marcar|colocar|anotar|ser)\b/;
+  if (affirmativeActionAtStart.test(normalized)) return false;
+  const modalQuestionAtStart = /^(?:eu\s+)?(?:posso|devo|podem?|tem como|da para|e permitido|e seguro)\b/;
+  if (modalQuestionAtStart.test(normalized)) return true;
   const questionWords = [
     "como", "qual", "quais", "oque", "o que", "por que", "porque", "quanto", "quando", "onde", "quem", "cuja", "cujo",
     "dura", "durabilidade", "estraga", "doi", "vende", "valor", "preco", "cust", "orcamento",
