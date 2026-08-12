@@ -305,6 +305,7 @@ export const aiWhatsappTables = [
   "ai_request_logs",
   "knowledge_articles",
   "marketing_promotions",
+  "whatsapp_outbox_ids",
 ];
 
 const schemaSql = `
@@ -1119,8 +1120,16 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS gemini_enabled boolean not null default false;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS groq_enabled boolean not null default false;
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS booking_state jsonb not null default '{}';
+    ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS session_started_at timestamptz;
+    ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS conversation_attempt_id uuid;
     ALTER TABLE public.services ADD COLUMN IF NOT EXISTS show_online_booking boolean not null default true;
     ALTER TABLE public.services ADD COLUMN IF NOT EXISTS is_free boolean not null default false;
+    CREATE TABLE IF NOT EXISTS public.whatsapp_outbox_ids (
+      id uuid primary key default uuid_generate_v4(),
+      conversation_id uuid references public.whatsapp_conversations(id) on delete cascade,
+      provider_message_id text not null unique,
+      sent_at timestamptz not null default now()
+    );
   `).catch(err => console.error("Failed to alter public.ai_settings table", err));
 
   // Fase 2: Atualização de constraints e índices de performance

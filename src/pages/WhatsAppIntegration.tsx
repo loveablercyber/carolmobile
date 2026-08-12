@@ -651,7 +651,10 @@ function AiAdminPanel({
   if (activeTab === "scope") return <ScopeGuardTab />;
   if (activeTab === "flows")
     return <FlowsTab panel={panel} onPanel={applyPanel} notify={notify} />;
-  if (activeTab === "conversations") return <ConversationsTab panel={panel} />;
+  if (activeTab === "conversations")
+    return (
+      <ConversationsTab panel={panel} onPanel={applyPanel} notify={notify} />
+    );
   if (activeTab === "performance_settings")
     return (
       <PerformanceSettingsTab
@@ -1601,33 +1604,97 @@ function FlowSettingsCard({
   );
 }
 
-function ConversationsTab({ panel }: { panel: AiPanelData }) {
+function ConversationsTab({
+  panel,
+  onPanel,
+  notify,
+}: {
+  panel: AiPanelData;
+  onPanel: (next: AiPanelData) => void;
+  notify: (msg: string) => void;
+}) {
+  const [actingId, setActingId] = useState("");
+
+  const handleAction = async (conversationId: string, action: "pause_ai" | "resume_ai") => {
+    setActingId(conversationId);
+    try {
+      await apiFetch<{ data: any }>("/api/ai-whatsapp?resource=conversation-action", {
+        method: "POST",
+        body: JSON.stringify({ conversationId, action }),
+      });
+      const refreshResult = await apiFetch<AiPanelResponse>("/api/ai-whatsapp?resource=panel");
+      onPanel(refreshResult.data);
+      notify(
+        action === "pause_ai"
+          ? "Atendimento humano assumido. IA pausada para esta conversa."
+          : "Conversa devolvida para a IA com sucesso.",
+      );
+    } catch (error) {
+      console.error("Conversation action error", error);
+      notify(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível alterar o estado da conversa.",
+      );
+    } finally {
+      setActingId("");
+    }
+  };
+
   return (
     <section className="surface p-6">
       <SectionHeading title="Conversas" />
       {panel.base.conversations.length ? (
         <div className="space-y-3">
-          {panel.base.conversations.map((conversation) => (
-            <div
-              key={conversation.id}
-              className="flex flex-col gap-3 rounded-2xl bg-warm p-4 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div>
-                <b className="text-sm">
-                  {conversation.client || conversation.phone_number}
-                </b>
-                <p className="mt-1 text-xs text-stone-500">
-                  {conversation.last_message_preview || "Sem mensagens registradas."}
-                </p>
-                <p className="mt-1 text-[11px] text-stone-400">
-                  {formatDate(conversation.last_message_at)}
-                </p>
+          {panel.base.conversations.map((conversation) => {
+            const isHuman = conversation.status === "human" || !conversation.ai_enabled;
+            const isBusy = actingId === conversation.id;
+
+            return (
+              <div
+                key={conversation.id}
+                className="flex flex-col gap-3 rounded-2xl bg-warm p-4 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div>
+                  <div className="flex items-center gap-2">
+                    <b className="text-sm">
+                      {conversation.client || conversation.phone_number}
+                    </b>
+                    <Badge tone={isHuman ? "amber" : "green"}>
+                      {isHuman ? "Humano atendendo" : "IA Ativa"}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-xs text-stone-500">
+                    {conversation.last_message_preview || "Sem mensagens registradas."}
+                  </p>
+                  <p className="mt-1 text-[11px] text-stone-400">
+                    {formatDate(conversation.last_message_at)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isHuman ? (
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => handleAction(conversation.id, "resume_ai")}
+                      className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                    >
+                      {isBusy ? "Processando..." : "Devolver para IA"}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => handleAction(conversation.id, "pause_ai")}
+                      className="rounded-xl bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                    >
+                      {isBusy ? "Processando..." : "Assumir conversa"}
+                    </button>
+                  )}
+                </div>
               </div>
-              <Badge tone={conversation.ai_enabled ? "green" : "amber"}>
-                {conversation.status}
-              </Badge>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <EmptyState

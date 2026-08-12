@@ -448,6 +448,17 @@ function buildPriceIntentResponse(text, base = {}) {
   return lines.join("\n\n");
 }
 
+export function findEvaluationService(servicesList = []) {
+  const EVALUATION_ALIASES = ["avaliacao", "avaliação", "avaliar", "assessment", "diagnostico", "diagnóstico"];
+  return (servicesList || []).find((service) => {
+    if (!service || service.active === false) return false;
+    const nameOnly = normalizeText(
+      [service.name, service.commercial_name].filter(Boolean).join(" ")
+    );
+    return EVALUATION_ALIASES.some((alias) => nameOnly.includes(alias));
+  }) || null;
+}
+
 export function selectBookingService(text, base = {}, state = {}) {
   const choice = numericChoice(text);
   if (state.status === "awaiting_service" && Array.isArray(state.serviceOptions)) {
@@ -472,7 +483,7 @@ export function selectBookingService(text, base = {}, state = {}) {
   const normalized = normalizeText(text);
   const services = (base.services || []).filter((service) => service.active !== false && service.ai_active);
   const bookable = bookableAiServices(base);
-  const evaluation = bookable.find((service) => serviceSearchText(service).includes("avaliacao")) || bookable[0] || null;
+  const evaluation = findEvaluationService(bookable);
   const matched = services.find((service) => {
     const nameStr = normalizeText(service.commercial_name || service.name || "");
     if (!nameStr) return false;
@@ -1056,6 +1067,11 @@ async function handleBookingGlobalCommand({
 
   if (command === "cancel") {
     await saveBookingState(conversationId, {});
+    await query(
+      `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+       values($1,$2,'booking_flow_cancelled','info',$3)`,
+      [conversationId, inboundMessageId, JSON.stringify({ action: "cancel_transient_flow" })],
+    ).catch(() => null);
     const responseText = "Tudo bem. O fluxo atual foi cancelado. Quando quiser recomeçar, envie menu.";
     await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_global_cancel" });
     await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
@@ -1070,6 +1086,7 @@ async function handleBookingGlobalCommand({
       messageId: inboundMessageId,
       reason: "booking_global_handoff",
       responseText,
+      pauseAi: true,
     });
     await performSendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_global_handoff" });
     await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
@@ -3594,7 +3611,7 @@ async function recordInboundMessage(normalized) {
     );
     await logMessage(client, {
       conversationId: conversation.id,
-      messageId: messageRows[0].id,
+      messageId: messageRows?.[0]?.id || null,
       eventType: "inbound_received",
       status: "success",
       details: { from: normalized.from, hasText: Boolean(normalized.text) },
@@ -3616,6 +3633,13 @@ async function recordOutboundAiMessage({ conversationId, providerMessageId, text
       returning *`,
       [conversationId, providerMessageId || null, text, JSON.stringify(prunePayload(payload))],
     );
+    if (providerMessageId) {
+      await client.query(
+        `insert into public.whatsapp_outbox_ids(conversation_id, provider_message_id)
+         values($1, $2) on conflict do nothing`,
+        [conversationId, providerMessageId],
+      ).catch(() => null);
+    }
     await client.query(
       `update public.whatsapp_conversations
           set last_message_at=now(),last_message_preview=$2,updated_at=now()
@@ -3671,8 +3695,16 @@ export async function sendTextAndRecord(args) {
   return performSendTextAndRecord(args);
 }
 
-async function requestHumanAttention({ conversationId, messageId, reason, responseText }) {
+async function requestHumanAttention({ conversationId, messageId, reason, responseText, pauseAi = false }) {
   await transaction(async (client) => {
+    if (pauseAi) {
+      await client.query(
+        `update public.whatsapp_conversations
+            set status='human', ai_enabled=false, updated_at=now()
+          where id=$1`,
+        [conversationId],
+      );
+    }
     await client.query(
       `insert into public.human_handoff_tickets(conversation_id,reason,status,created_by)
        select $1,$2,'pending',null
@@ -3688,9 +3720,9 @@ async function requestHumanAttention({ conversationId, messageId, reason, respon
     await logMessage(client, {
       conversationId,
       messageId,
-      eventType: "human_attention_requested",
+      eventType: pauseAi ? "conversation_paused_for_human" : "human_attention_requested",
       status: "warning",
-      details: { reason, responseText, action: "keep_ai_enabled" },
+      details: { reason, responseText, action: pauseAi ? "pause_ai" : "keep_ai_enabled" },
     });
   });
 }
@@ -3705,7 +3737,7 @@ export async function getAgendaAvailabilityContext(client, text, base, state) {
   let serviceId = state.serviceId;
   if (!serviceId) {
     const bookable = bookableAiServices(base);
-    const evaluation = bookable.find((service) => serviceSearchText(service).includes("avaliacao")) || bookable[0];
+    const evaluation = findEvaluationService(bookable);
     if (evaluation) serviceId = evaluation.id;
   }
   if (!serviceId) return "";
@@ -3949,6 +3981,42 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     return { ignored: true, reason: "unsupported_chat" };
   }
   if (normalized.isFromMe) {
+    await ensureAiWhatsappSchema();
+    let isBotEcho = false;
+    if (normalized.messageId && !normalized.messageId.startsWith("tmp-")) {
+      const echoCheck = await query(
+        `select 1 from public.whatsapp_outbox_ids where provider_message_id = $1 limit 1`,
+        [normalized.messageId],
+      );
+      if (echoCheck.rowCount > 0) {
+        isBotEcho = true;
+      }
+    }
+    if (isBotEcho) {
+      await recordIgnoredWebhook(normalized, "bot_outbound_echo_ignored");
+      return { ignored: true, reason: "bot_outbound_echo_ignored" };
+    }
+
+    if (normalized.phoneNumber && /^55\d{10,11}$/.test(normalized.phoneNumber)) {
+      const recordedHuman = await recordInboundMessage(normalized);
+      await query(
+        `update public.whatsapp_conversations
+            set status='human', ai_enabled=false, updated_at=now()
+          where phone_number=$1`,
+        [normalized.phoneNumber],
+      );
+      await query(
+        `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+         values($1,$2,'human_message_recorded','info',$3)`,
+        [
+          recordedHuman.conversation.id,
+          recordedHuman.message.id,
+          JSON.stringify({ reason: "human_takeover_from_me", text: normalized.text }),
+        ],
+      ).catch(() => null);
+      return { ok: true, ignored: true, reason: "human_message_recorded", conversationId: recordedHuman.conversation.id };
+    }
+
     await recordIgnoredWebhook(normalized, "from_me");
     return { ignored: true, reason: "from_me" };
   }
@@ -4126,33 +4194,14 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     return { ok: true, replied: false, reason: "settings_disabled", conversationId };
   }
 
-  if (recorded.conversation.ai_enabled === false) {
-    const status = String(recorded.conversation.status || "").toLowerCase();
-    if (status && status !== "human") {
-      await query(
-        `update public.whatsapp_conversations
-            set status='ai', ai_enabled=true, updated_at=now()
-          where id=$1`,
-        [conversationId],
-      );
-      await query(
-        `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
-         values($1,$2,'conversation_auto_resumed','info',$3)`,
-        [
-          conversationId,
-          inboundMessageId,
-          JSON.stringify({ reason: "stale_ai_disabled", previousStatus: status }),
-        ],
-      );
-    } else {
-      await query(
-        `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
-         values($1,$2,'ai_skipped','info',$3)`,
-        [conversationId, inboundMessageId, JSON.stringify({ reason: "conversation_paused" })],
-      );
-      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
-      return { ok: true, replied: false, reason: "conversation_paused", conversationId };
-    }
+  if (recorded.conversation.ai_enabled === false || String(recorded.conversation.status || "").toLowerCase() === "human") {
+    await query(
+      `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+       values($1,$2,'ai_skipped','info',$3)`,
+      [conversationId, inboundMessageId, JSON.stringify({ reason: "conversation_paused" })],
+    );
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    return { ok: true, replied: false, reason: "conversation_paused", conversationId };
   }
 
   if (!settings.allowNewContacts && !recorded.client) {
@@ -4175,37 +4224,60 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     return { ok: true, replied: false, reason: "existing_clients_disabled", conversationId };
   }
 
+  const maxIdleMinutes = settings.maxIdleMinutes || 30;
+  let initialBookingState = parseJsonObject(recorded.conversation.booking_state);
+  const lastMsgAt = recorded.conversation.last_message_at
+    ? new Date(recorded.conversation.last_message_at)
+    : (initialBookingState.updatedAt ? new Date(initialBookingState.updatedAt) : null);
+  let isIdleExpired = false;
+  if (lastMsgAt) {
+    const idleDiffMinutes = (processingStartedAt.getTime() - lastMsgAt.getTime()) / (1000 * 60);
+    if (idleDiffMinutes > maxIdleMinutes) {
+      isIdleExpired = true;
+      await saveBookingState(conversationId, {});
+      recorded.conversation.booking_state = {};
+      initialBookingState = {};
+      await query(
+        `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+         values($1,$2,'conversation_idle_expired','info',$3)`,
+        [conversationId, inboundMessageId, JSON.stringify({ idleDiffMinutes, maxIdleMinutes })],
+      ).catch(() => null);
+    }
+  }
+
   const localGreetingResponse = buildLocalGreetingResponse(concatenatedText, {
     date: processingStartedAt,
     timezone: settings.timezone,
     salonName: settings.salonName,
   });
-  const initialBookingState = parseJsonObject(recorded.conversation.booking_state);
   const hasActiveInitialBookingState = isActiveBookingState(initialBookingState);
   const shouldResetBooking = Boolean(localGreetingResponse) &&
     !hasActiveInitialBookingState &&
     shouldResetBookingStateOnGreeting(concatenatedText, initialBookingState);
   const hasPersistedBookingProgress = Boolean(
     initialBookingState.status ||
-    initialBookingState.serviceId ||
-    initialBookingState.appointmentId ||
-    recorded.conversation.appointment_id,
+    initialBookingState.serviceId,
   );
   if (shouldResetBooking) await saveBookingState(conversationId, {});
 
-  if ((localGreetingResponse && !hasActiveInitialBookingState) || !hasPersistedBookingProgress) {
-    const greetingText = localGreetingResponse || buildLocalGreetingResponse("oi", {
-      date: processingStartedAt,
-      timezone: settings.timezone,
-      salonName: settings.salonName,
-    });
-    return openInitialServiceCatalog({
-      normalized,
-      conversationId,
-      base,
-      recorded,
-      greetingText,
-    });
+  if ((localGreetingResponse && !hasActiveInitialBookingState) || !hasPersistedBookingProgress || isIdleExpired) {
+    const isExplicitQuestionOrIntent = isClientAskingQuestion(concatenatedText) ||
+      Boolean(selectBookingService(concatenatedText, base, initialBookingState));
+
+    if (!isExplicitQuestionOrIntent || isSimpleGreeting(concatenatedText) || localGreetingResponse) {
+      const greetingText = localGreetingResponse || buildLocalGreetingResponse("oi", {
+        date: processingStartedAt,
+        timezone: settings.timezone,
+        salonName: settings.salonName,
+      });
+      return openInitialServiceCatalog({
+        normalized,
+        conversationId,
+        base,
+        recorded,
+        greetingText,
+      });
+    }
   }
 
   if (!isWithinAiHours(settings)) {
