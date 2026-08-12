@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
 import {
   AlertTriangle,
   Archive,
@@ -6617,5 +6618,415 @@ function Input({
         placeholder={placeholder}
       />
     </label>
+  );
+}
+
+export function AdminProfilePage() {
+  const { user, refresh } = useAuth();
+  const profileLoad = useLoad<any>("/api/portal?resource=profile");
+  const dashboardLoad = useLoad<any>("/api/portal?resource=admin-dashboard");
+
+  const [activeTab, setActiveTab] = useState<"dados" | "seguranca" | "notificacoes" | "permissoes">("dados");
+  const [form, setForm] = useState<any>({});
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [changingPassword, setChangingPassword] = useState(false);
+
+  const [notifPrefs, setNotifPrefs] = useState({
+    email: true,
+    whatsapp: true,
+    push: true,
+    newAppointments: true,
+    cancellations: true,
+    financialAlerts: true,
+    botSystemAlerts: true,
+  });
+  const [savingNotifs, setSavingNotifs] = useState(false);
+
+  useEffect(() => {
+    if (profileLoad.data) {
+      setForm({
+        fullName: profileLoad.data.full_name || "",
+        email: profileLoad.data.email || "",
+        phone: profileLoad.data.phone || "",
+        cpf: profileLoad.data.cpf || "",
+        birthDate: profileLoad.data.birth_date?.slice(0, 10) || "",
+        instagram: profileLoad.data.instagram || "",
+        address: typeof profileLoad.data.address === "string" ? profileLoad.data.address : profileLoad.data.address?.street || "",
+        avatarUrl: profileLoad.data.avatar_url || "",
+      });
+      if (profileLoad.data.notification_preferences) {
+        try {
+          const parsed = typeof profileLoad.data.notification_preferences === "string"
+            ? JSON.parse(profileLoad.data.notification_preferences)
+            : profileLoad.data.notification_preferences;
+          setNotifPrefs((prev) => ({ ...prev, ...parsed }));
+        } catch (_) {}
+      }
+    }
+  }, [profileLoad.data]);
+
+  if (profileLoad.loading) return <LoadingState />;
+
+  const saveProfile = async (e: FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await apiFetch("/api/portal?resource=profile", {
+        method: "POST",
+        body: JSON.stringify(form),
+      });
+      await Promise.all([profileLoad.reload(), refresh()]);
+      setToast("Perfil atualizado com sucesso!");
+    } catch (err) {
+      console.error("Admin profile save error", err);
+      setToast(err instanceof Error ? err.message : "Erro ao salvar perfil.");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2500);
+    }
+  };
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingPhoto(true);
+    try {
+      const { uploadImage } = await import("../../lib/api");
+      const uploaded = await uploadImage(file, "profile-photo");
+      setForm((f: any) => ({ ...f, avatarUrl: uploaded.url }));
+      await apiFetch("/api/portal?resource=profile", {
+        method: "POST",
+        body: JSON.stringify({ ...form, avatarUrl: uploaded.url }),
+      });
+      await Promise.all([profileLoad.reload(), refresh()]);
+      setToast("Foto de perfil atualizada!");
+    } catch (err) {
+      console.error("Photo upload error", err);
+      setToast(err instanceof Error ? err.message : "Falha ao enviar foto.");
+    } finally {
+      setUploadingPhoto(false);
+      setTimeout(() => setToast(""), 2500);
+    }
+  };
+
+  const changePassword = async (e: FormEvent) => {
+    e.preventDefault();
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setToast("A nova senha e a confirmação não conferem.");
+      setTimeout(() => setToast(""), 2500);
+      return;
+    }
+    if (passwordForm.newPassword.length < 8) {
+      setToast("A nova senha precisa ter pelo menos 8 caracteres.");
+      setTimeout(() => setToast(""), 2500);
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      const res = await apiFetch<any>("/api/auth", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "change_password",
+          currentPassword: passwordForm.currentPassword,
+          newPassword: passwordForm.newPassword,
+        }),
+      });
+      setToast(res.message || "Senha alterada com sucesso!");
+      setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+    } catch (err) {
+      console.error("Password change error", err);
+      setToast(err instanceof Error ? err.message : "Erro ao alterar a senha.");
+    } finally {
+      setChangingPassword(false);
+      setTimeout(() => setToast(""), 2500);
+    }
+  };
+
+  const saveNotifications = async (e: FormEvent) => {
+    e.preventDefault();
+    setSavingNotifs(true);
+    try {
+      await apiFetch("/api/portal?resource=notification-preferences", {
+        method: "POST",
+        body: JSON.stringify(notifPrefs),
+      });
+      setToast("Preferências de notificação salvas!");
+    } catch (err) {
+      console.error("Notif prefs save error", err);
+      setToast("Erro ao salvar preferências.");
+    } finally {
+      setSavingNotifs(false);
+      setTimeout(() => setToast(""), 2500);
+    }
+  };
+
+  const stats = dashboardLoad.data;
+
+  return (
+    <div>
+      <Toast show={!!toast} message={toast} />
+      <PageHeader
+        eyebrow="MINHA CONTA"
+        title={form.fullName || "Perfil do Administrador"}
+        subtitle="Gerenciamento de credenciais, segurança, preferências e escopo de acesso ao sistema."
+      />
+
+      <div className="surface mb-6 p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6">
+          <div className="flex items-center gap-5">
+            <div className="relative">
+              <Avatar src={form.avatarUrl} name={form.fullName || "Admin"} size="lg" />
+              <label className="absolute -bottom-1 -right-1 grid h-8 w-8 cursor-pointer place-items-center rounded-full bg-champagne text-white shadow-md hover:scale-105 transition-all">
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={uploadingPhoto}
+                  onChange={handlePhotoUpload}
+                />
+                <Pencil size={14} />
+              </label>
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="font-display text-2xl font-semibold">{form.fullName || "Carolina Alves"}</h2>
+                <Badge tone="gold">Super Admin</Badge>
+              </div>
+              <p className="muted text-xs mt-1">{form.email || (user as any)?.email}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-stone-400">
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 font-bold text-emerald-700">
+                  <Check size={12} /> Conta Ativa & Auditada
+                </span>
+                <span>• LGPD OK</span>
+                <span>• Membro desde {dt(profileLoad.data?.created_at)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 border-t border-black/5 pt-4 sm:border-t-0 sm:pt-0">
+            <Mini label="Clientes Ativos" value={stats?.totalClients ? String(stats.totalClients) : "—"} />
+            <Mini label="Equipe" value={stats?.totalProfessionals ? `${stats.totalProfessionals} profissionais` : "—"} />
+            <Mini label="Infraestrutura" value="Neon Postgres" />
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-6 flex overflow-x-auto border-b border-black/10 pb-3 gap-2">
+        {(
+          [
+            { id: "dados", label: "Dados do Perfil" },
+            { id: "seguranca", label: "Segurança & Senha" },
+            { id: "notificacoes", label: "Notificações & Alertas" },
+            { id: "permissoes", label: "Escopo de Acesso" },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveTab(tab.id)}
+            className={`whitespace-nowrap px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all duration-200 border-b-2 ${
+              activeTab === tab.id
+                ? "border-champagne text-champagne"
+                : "border-transparent text-stone-400 hover:text-stone-600"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "dados" && (
+        <form onSubmit={saveProfile} className="surface grid gap-4 p-6 sm:grid-cols-2">
+          <Input label="Nome completo" value={form.fullName} set={(v) => setForm({ ...form, fullName: v })} />
+          <Input label="E-mail principal" type="email" value={form.email} set={(v) => setForm({ ...form, email: v })} />
+          <Input label="Telefone / WhatsApp" value={form.phone} set={(v) => setForm({ ...form, phone: v })} />
+          <Input label="CPF" value={form.cpf} set={(v) => setForm({ ...form, cpf: v })} placeholder="000.000.000-00" />
+          <Input label="Data de nascimento" type="date" value={form.birthDate} set={(v) => setForm({ ...form, birthDate: v })} />
+          <Input label="Instagram corporativo" value={form.instagram} set={(v) => setForm({ ...form, instagram: v })} placeholder="@carolsolhair" />
+          <div className="sm:col-span-2">
+            <Input label="Endereço de atuação" value={form.address} set={(v) => setForm({ ...form, address: v })} />
+          </div>
+          <div className="sm:col-span-2 flex justify-end">
+            <button disabled={saving} className="btn-primary min-w-[180px]">
+              <Save size={15} />
+              {saving ? "Salvando…" : "Salvar Perfil"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {activeTab === "seguranca" && (
+        <div className="grid gap-6 md:grid-cols-2">
+          <form onSubmit={changePassword} className="surface p-6 space-y-4">
+            <SectionHeading title="Alterar Senha de Acesso" />
+            <p className="muted text-xs">
+              Sua nova senha deve possuir pelo menos 8 caracteres e incluir combinações de letras e números para maior segurança.
+            </p>
+            <Input
+              label="Senha Atual"
+              type="password"
+              value={passwordForm.currentPassword}
+              set={(v) => setPasswordForm({ ...passwordForm, currentPassword: v })}
+              placeholder="Digite sua senha atual"
+            />
+            <Input
+              label="Nova Senha"
+              type="password"
+              value={passwordForm.newPassword}
+              set={(v) => setPasswordForm({ ...passwordForm, newPassword: v })}
+              placeholder="No mínimo 8 caracteres"
+            />
+            <Input
+              label="Confirmar Nova Senha"
+              type="password"
+              value={passwordForm.confirmPassword}
+              set={(v) => setPasswordForm({ ...passwordForm, confirmPassword: v })}
+              placeholder="Repita a nova senha"
+            />
+            <button disabled={changingPassword} className="btn-primary w-full">
+              <Save size={15} />
+              {changingPassword ? "Atualizando..." : "Atualizar Senha"}
+            </button>
+          </form>
+
+          <div className="surface p-6 space-y-4">
+            <SectionHeading title="Segurança da Conta & Sessão" />
+            <div className="rounded-2xl bg-warm p-4 space-y-3 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold">Criptografia de Senha</span>
+                <span className="text-emerald-700 font-semibold">Bcrypt 12-rounds (Ativo)</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-bold">Autenticação JWT</span>
+                <span className="text-emerald-700 font-semibold">HTTP-Only Cookie (Seguro)</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-bold">Protocolo de Comunicação</span>
+                <span className="text-emerald-700 font-semibold">HTTPS / TLS 1.3 Encrypted</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-bold">Proteção LGPD</span>
+                <span className="text-emerald-700 font-semibold">Termos & Consentimento OK</span>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <b className="block text-xs mb-2">Sessão Atual</b>
+              <div className="rounded-xl border border-black/5 p-3 text-xs">
+                <div className="font-semibold">{form.email || (user as any)?.email}</div>
+                <div className="text-stone-400 text-[11px] mt-0.5">Endereço IP autenticado via backend seguro.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "notificacoes" && (
+        <form onSubmit={saveNotifications} className="surface p-6 space-y-6">
+          <SectionHeading title="Preferências de Alertas Administrativos" />
+          <p className="muted text-xs">
+            Escolha os canais e tipos de eventos que você deseja acompanhar em tempo real.
+          </p>
+
+          <div className="space-y-4 border-t border-black/5 pt-4">
+            <b className="block text-xs font-bold uppercase tracking-wider text-stone-400">Alertas por E-mail</b>
+            <label className="flex items-center justify-between py-2 border-b border-black/5">
+              <span className="text-xs font-semibold">Notificações de novos agendamentos e solicitações</span>
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-black/15 accent-champagne"
+                checked={notifPrefs.newAppointments}
+                onChange={(e) => setNotifPrefs({ ...notifPrefs, newAppointments: e.target.checked })}
+              />
+            </label>
+            <label className="flex items-center justify-between py-2 border-b border-black/5">
+              <span className="text-xs font-semibold">Alertas de cancelamento ou reagendamento de clientes</span>
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-black/15 accent-champagne"
+                checked={notifPrefs.cancellations}
+                onChange={(e) => setNotifPrefs({ ...notifPrefs, cancellations: e.target.checked })}
+              />
+            </label>
+            <label className="flex items-center justify-between py-2 border-b border-black/5">
+              <span className="text-xs font-semibold">Relatório financeiro e confirmações de recebimentos SumUp</span>
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-black/15 accent-champagne"
+                checked={notifPrefs.financialAlerts}
+                onChange={(e) => setNotifPrefs({ ...notifPrefs, financialAlerts: e.target.checked })}
+              />
+            </label>
+          </div>
+
+          <div className="space-y-4 border-t border-black/5 pt-4">
+            <b className="block text-xs font-bold uppercase tracking-wider text-stone-400">Alertas de Sistema & WhatsApp IA</b>
+            <label className="flex items-center justify-between py-2 border-b border-black/5">
+              <span className="text-xs font-semibold">Solicitações de atendimento humano enviadas pelo bot</span>
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-black/15 accent-champagne"
+                checked={notifPrefs.whatsapp}
+                onChange={(e) => setNotifPrefs({ ...notifPrefs, whatsapp: e.target.checked })}
+              />
+            </label>
+            <label className="flex items-center justify-between py-2 border-b border-black/5">
+              <span className="text-xs font-semibold">Alertas críticos de saúde e conexões do motor de IA</span>
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-black/15 accent-champagne"
+                checked={notifPrefs.botSystemAlerts}
+                onChange={(e) => setNotifPrefs({ ...notifPrefs, botSystemAlerts: e.target.checked })}
+              />
+            </label>
+          </div>
+
+          <div className="flex justify-end pt-2">
+            <button disabled={savingNotifs} className="btn-primary min-w-[200px]">
+              <Save size={15} />
+              {savingNotifs ? "Salvando..." : "Salvar Preferências"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {activeTab === "permissoes" && (
+        <div className="surface p-6 space-y-6">
+          <SectionHeading title="Escopo & Nível de Permissões Administrativas" />
+          <p className="muted text-xs">
+            Esta conta possui permissões globais de nível <b>Super Admin</b> com autoridade total sobre todas as operações do portal Carol Sol.
+          </p>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[
+              { title: "Gestão de Agenda & Horários", desc: "Criar, reagendar, cancelar e aprovar agendamentos de todas as profissionais." },
+              { title: "Gestão de Clientes & Fichas", desc: "Acesso a cadastros de clientes, históricos técnicos, fichas e indicações." },
+              { title: "Módulo Financeiro & SumUp", desc: "Visualizar relatórios de faturamento, pagamentos, reembolsos e integração SumUp." },
+              { title: "Catálogo de Serviços & Estoque", desc: "Adicionar/editar serviços, preços, regras de consumo de estoque e categorias." },
+              { title: "Motor de IA WhatsApp", desc: "Configurar respostas de IA, horários, catálogo inteligente e triagem humana." },
+              { title: "Backup & Infraestrutura", desc: "Criar e restaurar backups completos do banco PostgreSQL Neon." },
+            ].map((perm, idx) => (
+              <div key={idx} className="rounded-2xl border border-black/5 p-4 space-y-1">
+                <div className="flex items-center gap-2">
+                  <div className="grid h-6 w-6 place-items-center rounded-full bg-emerald-100 text-emerald-700">
+                    <Check size={14} />
+                  </div>
+                  <b className="text-xs font-semibold">{perm.title}</b>
+                </div>
+                <p className="text-[11px] text-stone-500 pt-1">{perm.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
