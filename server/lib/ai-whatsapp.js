@@ -970,6 +970,27 @@ const initialKnowledgeArticles = [
     medical_safety_level: "normal"
   },
   {
+    title: "O que é Fibra Russa e como funciona?",
+    slug: "o-que-e-fibra-russa-como-funciona",
+    category: "Fibra Russa",
+    question_variations: [
+      "o que e fibra russa",
+      "como funciona a fibra russa",
+      "como funciona o procedimento de fibra russa",
+      "trabalha com fibra russa",
+      "quero saber sobre fibra russa",
+    ],
+    short_answer: "Fibra Russa é o nome comercial de uma fibra sintética usada nos combos de aplicação cadastrados pelo salão.",
+    full_answer: "Fibra Russa é o nome comercial de uma fibra sintética usada para proporcionar volume e/ou comprimento. Antes da aplicação, a profissional avalia o cabelo e o resultado desejado para definir cor, comprimento, gramatura e método de colocação. O salão possui opções cadastradas por Fita Adesiva, Ponto Americano Invisível, Entrelace e Microcápsula de Queratina. Todos os serviços exigem avaliação prévia, e a disponibilidade do material é confirmada pela profissional.",
+    recommended_followup_questions: ["Qual método você quer conhecer melhor?"],
+    recommended_services: [],
+    requires_evaluation: true,
+    requires_human_handoff: false,
+    medical_safety_level: "normal",
+    status: "active",
+    priority: 160,
+  },
+  {
     title: "Mega Hair faz o cabelo cair?",
     slug: "mega-hair-faz-cair-cabelo",
     category: "Mega Hair e queda de cabelo",

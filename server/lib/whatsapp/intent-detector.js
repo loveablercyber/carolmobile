@@ -615,13 +615,57 @@ export function isAgendaAvailabilityIntent(text) {
   ]) || /\b(?:dia\s*)?\d{1,2}[\/.-]\d{1,2}(?:[\/.-]\d{2,4})?\b/.test(normalized);
 }
 
-export function isInAiServiceScope(text) {
+export const AI_SERVICE_SCOPE = Object.freeze({
+  IN_SCOPE: "in_scope",
+  CONTEXTUAL: "contextual_or_ambiguous",
+  OUT_OF_SCOPE: "out_of_scope",
+});
+
+function isRecentScopeHistoryItem(item, maxIdleMinutes, now) {
+  if (!item?.created_at) return true;
+  const createdAt = new Date(item.created_at);
+  if (Number.isNaN(createdAt.getTime())) return true;
+  return now.getTime() - createdAt.getTime() <= maxIdleMinutes * 60 * 1000;
+}
+
+function hasDirectSalonScope(text) {
   const normalized = normalizeText(text);
-  if (!normalized) return true;
-  if (isSimpleGreeting(text)) return true;
-  if (isAffirmativeBookingConfirmation(text)) return true;
+  if (!normalized) return false;
   const hasDomainTerm = includesAny(normalized, aiDomainTerms);
   if (hasDomainTerm) return true;
-  if (includesAny(normalized, clearlyOutOfScopeTerms)) return false;
   return includesAny(normalized, salonOperationalTerms);
+}
+
+export function classifyAiServiceScope(text, {
+  history = [],
+  maxIdleMinutes = 30,
+  now = new Date(),
+} = {}) {
+  const normalized = normalizeText(text);
+  if (!normalized || isSimpleGreeting(text) || isAffirmativeBookingConfirmation(text)) {
+    return AI_SERVICE_SCOPE.IN_SCOPE;
+  }
+  if (hasDirectSalonScope(text)) return AI_SERVICE_SCOPE.IN_SCOPE;
+  if (includesAny(normalized, clearlyOutOfScopeTerms)) {
+    return AI_SERVICE_SCOPE.OUT_OF_SCOPE;
+  }
+
+  const safeIdleMinutes = Number.isFinite(Number(maxIdleMinutes))
+    ? Math.max(1, Number(maxIdleMinutes))
+    : 30;
+  const recentHistory = (history || []).filter((item) =>
+    isRecentScopeHistoryItem(item, safeIdleMinutes, now),
+  );
+  if (recentHistory.some((item) => hasDirectSalonScope(item?.body || ""))) {
+    return AI_SERVICE_SCOPE.CONTEXTUAL;
+  }
+
+  // Mensagens neutras ou incompletas não devem ser recusadas como se fossem
+  // explicitamente externas. A IA pode esclarecer o assunto sem perder a
+  // proteção para temas claramente não relacionados ao salão.
+  return AI_SERVICE_SCOPE.CONTEXTUAL;
+}
+
+export function isInAiServiceScope(text, options = {}) {
+  return classifyAiServiceScope(text, options) !== AI_SERVICE_SCOPE.OUT_OF_SCOPE;
 }

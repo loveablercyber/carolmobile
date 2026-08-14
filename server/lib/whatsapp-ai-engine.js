@@ -75,6 +75,8 @@ import {
   isReplyingToExplanationOffer,
   isAgendaAvailabilityIntent,
   isInAiServiceScope,
+  AI_SERVICE_SCOPE,
+  classifyAiServiceScope,
 } from "./whatsapp/intent-detector.js";
 
 import {
@@ -103,6 +105,8 @@ export {
   isReplyingToExplanationOffer,
   isAgendaAvailabilityIntent,
   isInAiServiceScope,
+  AI_SERVICE_SCOPE,
+  classifyAiServiceScope,
 } from "./whatsapp/intent-detector.js";
 
 export {
@@ -271,6 +275,130 @@ function serviceSearchText(service) {
       .filter(Boolean)
       .join(" "),
   );
+}
+
+const COMMERCIAL_TOPIC_ALIASES = [
+  { key: "fita_adesiva", label: "Fita Adesiva", terms: ["fita adesiva", "metodo fita", "mega hair de fita"] },
+  { key: "ponto_americano", label: "Ponto Americano Invisível", terms: ["ponto americano invisivel", "ponto americano"] },
+  { key: "entrelace", label: "Entrelace", terms: ["entrelace"] },
+  { key: "microcapsula", label: "Microcápsula de Queratina", terms: ["microcapsula de queratina", "micro capsula de queratina", "microcapsula"] },
+];
+
+function recentConversationHistory(history = [], maxIdleMinutes = 30, now = new Date()) {
+  const idleMinutes = Number.isFinite(Number(maxIdleMinutes))
+    ? Math.max(1, Number(maxIdleMinutes))
+    : 30;
+  return (history || []).filter((item) => {
+    if (!item?.created_at) return true;
+    const createdAt = new Date(item.created_at);
+    if (Number.isNaN(createdAt.getTime())) return true;
+    return now.getTime() - createdAt.getTime() <= idleMinutes * 60 * 1000;
+  });
+}
+
+function commercialTopicFromText(text, base = {}) {
+  const normalized = normalizeText(text);
+  if (!normalized) return null;
+  const material = normalized.includes("fibra russa") ? "Fibra Russa" : "";
+  const methodMatches = COMMERCIAL_TOPIC_ALIASES.filter((entry) =>
+    entry.terms.some((term) => normalized.includes(normalizeText(term))),
+  );
+  const method = methodMatches.length === 1 ? methodMatches[0] : null;
+  const exactService = (base.services || []).find((service) => {
+    if (!service || service.active === false) return false;
+    const name = normalizeText(service.commercial_name || service.name);
+    return name.length >= 6 && normalized.includes(name);
+  }) || null;
+  if (!material && !method && !exactService) return null;
+  return {
+    material,
+    methodKey: method?.key || "",
+    method: method?.label || "",
+    serviceId: exactService?.id || "",
+    serviceName: exactService?.commercial_name || exactService?.name || "",
+    topicLabel: exactService?.commercial_name || exactService?.name || method?.label || material,
+  };
+}
+
+function isContextualFollowupText(text) {
+  const normalized = normalizeText(text);
+  if (!normalized) return false;
+  return includesAny(normalized, [
+    "como funciona",
+    "como e o procedimento",
+    "procedimento",
+    "e o valor",
+    "qual o valor",
+    "quanto custa",
+    "quanto fica",
+    "quanto demora",
+    "quanto tempo",
+    "duracao",
+    "como cuidar",
+    "quais cuidados",
+    "manutencao",
+    "posso lavar",
+    "posso pintar",
+    "serve para",
+    "me explica",
+    "explique",
+    "sobre isso",
+    "sobre esse",
+    "sobre essa",
+  ]) || /^(?:e\s+)?(?:como|qual|quanto|quando|posso|pode|tem)\b/.test(normalized);
+}
+
+export function resolveContextualServiceReference({
+  incomingText,
+  history = [],
+  base = {},
+  maxIdleMinutes = 30,
+  now = new Date(),
+} = {}) {
+  const originalText = clean(incomingText);
+  const explicitTopic = commercialTopicFromText(originalText, base);
+  if (explicitTopic) {
+    return {
+      ...explicitTopic,
+      resolvedFromHistory: false,
+      confidence: "high",
+      effectiveText: originalText,
+    };
+  }
+  if (!isContextualFollowupText(originalText)) {
+    return {
+      resolvedFromHistory: false,
+      confidence: "none",
+      topicLabel: "",
+      effectiveText: originalText,
+    };
+  }
+
+  const recentHistory = recentConversationHistory(history, maxIdleMinutes, now);
+  const newestFirst = [...recentHistory].reverse();
+  const topic = [
+    ...newestFirst.filter((item) => item?.sender_type === "client"),
+    ...newestFirst.filter((item) => item?.sender_type !== "client"),
+  ].map((item) => commercialTopicFromText(item?.body || "", base)).find(Boolean);
+  if (!topic) {
+    return {
+      resolvedFromHistory: false,
+      confidence: "ambiguous",
+      topicLabel: "",
+      effectiveText: originalText,
+    };
+  }
+  const contextParts = [
+    topic.material ? `material ${topic.material}` : "",
+    topic.method ? `método ${topic.method}` : "",
+    topic.serviceName ? `serviço ${topic.serviceName}` : "",
+  ].filter(Boolean);
+  return {
+    ...topic,
+    resolvedFromHistory: true,
+    confidence: "high",
+    effectiveText: `${originalText}\nAssunto referido no histórico: ${contextParts.join(", ")}.`,
+  };
 }
 
 function arrayFromJsonLike(value) {
@@ -491,6 +619,94 @@ function buildPriceIntentResponse(text, base = {}) {
   }
   lines.push("Quer que eu verifique uma avaliacao ou horario para voce?");
   return lines.join("\n\n");
+}
+
+function activeMethodLabelsForServices(services = []) {
+  return COMMERCIAL_TOPIC_ALIASES
+    .filter((entry) => services.some((service) => {
+      const haystack = serviceSearchText(service);
+      return entry.terms.some((term) => haystack.includes(normalizeText(term)));
+    }))
+    .map((entry) => entry.label);
+}
+
+export function buildServiceAvailabilityIntentResponse(text, base = {}) {
+  const normalized = normalizeText(text);
+  const asksIfOffered = includesAny(normalized, [
+    "trabalha com",
+    "trabalham com",
+    "voces trabalham",
+    "voce trabalha",
+    "voces fazem",
+    "voce faz",
+    "oferece",
+    "oferecem",
+    "tem fibra",
+  ]);
+  if (!asksIfOffered) return null;
+  const matches = matchingServicesForPriceQuestion(text, base);
+  if (!matches.length) return null;
+
+  if (normalized.includes("fibra russa")) {
+    const methods = activeMethodLabelsForServices(matches);
+    const methodClause = methods.length
+      ? `com aplicação por ${methods.join(", ").replace(/, ([^,]*)$/, " e $1")}`
+      : "nos combos ativos do catálogo";
+    return [
+      "Sim, trabalhamos com Fibra Russa 😊",
+      `Ela é uma fibra sintética oferecida ${methodClause}. Todos exigem avaliação prévia, e a disponibilidade do material é confirmada pela profissional.`,
+      "Você quer saber como funciona, consultar os valores ou conhecer as diferenças entre os métodos?",
+    ].join("\n\n");
+  }
+
+  const names = [...new Set(matches.map((service) => service.commercial_name || service.name))]
+    .filter(Boolean)
+    .slice(0, 5);
+  return [
+    `Sim, trabalhamos com ${names.join(", ").replace(/, ([^,]*)$/, " e $1")}.`,
+    "A indicação e as opções disponíveis são confirmadas na avaliação prévia.",
+    "Você quer saber como funciona ou consultar os valores?",
+  ].join("\n\n");
+}
+
+export function buildContextualProcedureResponse(text, base = {}, context = {}) {
+  const normalized = normalizeText(text);
+  const asksHowItWorks = includesAny(normalized, [
+    "como funciona",
+    "como e o procedimento",
+    "explique o procedimento",
+    "me explica o procedimento",
+  ]);
+  if (!asksHowItWorks) return null;
+
+  const isRussianFiber = context.material === "Fibra Russa" || normalized.includes("fibra russa");
+  if (isRussianFiber && !context.method) {
+    const matchingServices = (base.services || []).filter((service) =>
+      service.active !== false && serviceSearchText(service).includes("fibra russa"),
+    );
+    const methods = activeMethodLabelsForServices(matchingServices);
+    const methodText = methods.length
+      ? methods.join(", ").replace(/, ([^,]*)$/, " e $1")
+      : "o método escolhido";
+    return [
+      "Sobre a Fibra Russa: ela é uma fibra sintética usada para proporcionar volume e/ou comprimento.",
+      `Primeiro fazemos uma avaliação do cabelo e do resultado desejado. Depois definimos cor, comprimento, gramatura e a forma de colocação. A aplicação e o tempo mudam conforme o método: ${methodText}.`,
+      "Qual desses métodos você quer conhecer melhor?",
+    ].join("\n\n");
+  }
+
+  const hasSpecificSalonTerm = aiDomainTerms.some((term) => normalized.includes(normalizeText(term)));
+  if (context.topicLabel || hasSpecificSalonTerm) return null;
+  const activeServices = (base.services || []).filter((service) => service.active !== false);
+  const methods = activeMethodLabelsForServices(activeServices);
+  const methodText = methods.length
+    ? methods.join(", ").replace(/, ([^,]*)$/, " e $1")
+    : "o método adequado";
+  return [
+    "Em geral, o atendimento começa com uma avaliação do cabelo e do resultado que você deseja.",
+    `Depois definimos o material, a quantidade, o comprimento e o método de aplicação. Trabalhamos com opções como ${methodText}, conforme os serviços ativos.`,
+    "Sobre qual método você quer saber?",
+  ].join("\n\n");
 }
 
 export function findEvaluationService(servicesList = []) {
@@ -3773,6 +3989,7 @@ export function buildAiConversationMessage({
   knowledgeContext = "",
   bookingGuidance = "",
   knownClient = false,
+  contextualReference = {},
 }) {
   const historyText = history
     .slice(-6)
@@ -3788,6 +4005,11 @@ export function buildAiConversationMessage({
 
   const requiredContext = [
     `Mensagem atual da cliente:\n${clean(incomingText)}`,
+    contextualReference?.resolvedFromHistory && contextualReference?.topicLabel
+      ? `CONTEXTO RESOLVIDO PELO BACKEND: a mensagem atual se refere a "${contextualReference.topicLabel}". Responda usando esse assunto sem pedir que a cliente o repita.`
+      : contextualReference?.confidence === "ambiguous"
+        ? "MENSAGEM AMBÍGUA: forneça primeiro uma explicação geral útil dentro do contexto do salão e faça somente uma pergunta curta para identificar o procedimento. Não classifique a mensagem como assunto externo."
+        : "",
     bookingGuidance,
     historyBlock,
     history && history.length > 0
@@ -3795,7 +4017,10 @@ export function buildAiConversationMessage({
       : "",
     "REGRA DE CONVERSA NATURAL: durante agendamento, aceite respostas livres como hoje a tarde, depois do almoco, perto das 12, amiga consegue mais tarde, esse horario nao da e pode ser amanha cedo. Converta isso em data/periodo/horario e nao peca novamente dados ja salvos na sessao.",
     "REGRA DE VALORES: preenchimento de pontas, alongamento parcial, volume, correcao de comprimento e reposicao de mechas sao assuntos do salao. Se nao houver preco exato cadastrado, diga que depende da quantidade de cabelo e da tecnica, e ofereca explicacao ou avaliacao.",
-    "A mensagem atual é a prioridade. Use o histórico apenas para continuidade; se a cliente mudar de assunto, responda ao novo assunto sem repetir o serviço anterior. Não presuma que a dúvida é sobre Fibra Russa quando a mensagem atual não mencionar essa técnica nem for uma continuação inequívoca dela.",
+    "A mensagem atual é a prioridade. Use o histórico apenas para continuidade; se a cliente mudar de assunto, responda ao novo assunto sem repetir o serviço anterior. Não presuma que a dúvida é sobre Fibra Russa quando a mensagem atual não mencionar esse material nem for uma continuação inequívoca dele.",
+    "REGRA DE PAPÉIS: você representa o salão e conversa com a cliente. Nunca devolva a pergunta como se a cliente fosse o salão (por exemplo, nunca responda 'Você trabalha com...'). Quando o catálogo confirmar um serviço, responda diretamente 'Sim, trabalhamos com...'.",
+    "REGRA DE TERMINOLOGIA: Fibra Russa é um material sintético, não uma técnica. Os métodos de colocação são Fita Adesiva, Ponto Americano Invisível, Entrelace e Microcápsula de Queratina, conforme opções ativas do catálogo.",
+    "REGRA DE RESPOSTA ÚTIL: responda o que já for possível antes de pedir esclarecimento e faça no máximo uma pergunta por mensagem.",
     "Responda em até 700 caracteres, em português do Brasil, sem inventar dados. Não repita uma pergunta cuja resposta já esteja no histórico. Se a cliente quiser agendar, avance pelo fluxo de pré-agendamento. Nunca diga que um horário foi confirmado sem persistência real no backend.",
   ]
     .filter(Boolean)
@@ -3810,6 +4035,58 @@ export function buildAiConversationMessage({
     .join("\n\n");
   const optionalBudget = Math.max(0, MAX_AI_MESSAGE_CHARS - requiredContext.length - 4);
   return `${optionalContext.slice(0, optionalBudget)}\n\n${requiredContext}`.trim();
+}
+
+export function enforceAiResponseQuality({
+  response,
+  incomingText = "",
+  history = [],
+  base = {},
+  contextualReference = {},
+} = {}) {
+  let result = clean(response);
+  if (!result) return "";
+
+  const hasPriorAiReply = (history || []).some((item) =>
+    item?.sender_type === "ai" && clean(item?.body),
+  );
+  if (hasPriorAiReply) {
+    result = result.replace(
+      /^(?:ol[aá]|oi|bom dia|boa tarde|boa noite)[!,.?:;\s-]*/i,
+      "",
+    ).trim();
+  }
+
+  const normalizedInput = normalizeText(incomingText);
+  const normalizedResponse = normalizeText(result);
+  const asksRussianFiberAvailability = normalizedInput.includes("fibra russa") &&
+    includesAny(normalizedInput, ["trabalha", "trabalham", "oferece", "oferecem", "tem fibra"]);
+  const activeRussianFiberService = (base.services || []).some((service) =>
+    service.active !== false && serviceSearchText(service).includes("fibra russa"),
+  );
+  const invertedRoles = normalizedResponse.includes("voce trabalha com fibra russa") ||
+    (asksRussianFiberAvailability && normalizedResponse.includes("se sim"));
+  const contradictsCatalog = activeRussianFiberService && normalizedInput.includes("fibra russa") &&
+    includesAny(normalizedResponse, [
+      "nao trabalhamos com fibra russa",
+      "nao oferecemos fibra russa",
+      "nao temos fibra russa",
+      "fibra russa nao esta disponivel",
+    ]);
+  if (invertedRoles || contradictsCatalog) {
+    return buildServiceAvailabilityIntentResponse(incomingText, base) || result;
+  }
+
+  if (
+    contextualReference?.material === "Fibra Russa" &&
+    /\b(?:a|essa)\s+t[eé]cnica\s+(?:de|da|chamada)?\s*fibra\s+russa\b/i.test(result)
+  ) {
+    result = result.replace(
+      /\b(?:a|essa)\s+t[eé]cnica\s+(?:de|da|chamada)?\s*fibra\s+russa\b/gi,
+      "o material Fibra Russa",
+    );
+  }
+  return result;
 }
 
 async function recordInboundMessage(normalized) {
@@ -4042,9 +4319,15 @@ export async function getAgendaAvailabilityContext(client, text, base, state) {
   }
 }
 
-export function buildLocalIntentResponse(text, base = {}) {
+export function buildLocalIntentResponse(text, base = {}, context = {}) {
   const normalized = normalizeText(text);
   if (!normalized) return null;
+
+  const availabilityResponse = buildServiceAvailabilityIntentResponse(text, base);
+  if (availabilityResponse) return availabilityResponse;
+
+  const procedureResponse = buildContextualProcedureResponse(text, base, context);
+  if (procedureResponse) return procedureResponse;
 
   const asksPromotion = includesAny(normalized, [
     "promocao",
@@ -4672,6 +4955,47 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   }
 
   const history = await loadRecentHistory(conversationId, inboundMessageId);
+  const contextualReference = resolveContextualServiceReference({
+    incomingText: concatenatedText,
+    history,
+    base,
+    maxIdleMinutes: settings.maxIdleMinutes,
+    now: receivedAt,
+  });
+  const routingText = contextualReference.effectiveText || concatenatedText;
+  const topicArticle = contextualReference.topicLabel
+    ? (base.knowledgeArticles || []).find((article) => {
+        if (article?.status !== "active") return false;
+        const topic = normalizeText(contextualReference.topicLabel);
+        const articleText = normalizeText([
+          article.title,
+          article.category,
+          article.slug,
+        ].filter(Boolean).join(" "));
+        return topic && articleText.includes(topic);
+      }) || null
+    : null;
+  const contextualArticle = matchedArticle || topicArticle || findMatchingArticle(
+    routingText,
+    base.knowledgeArticles || [],
+  );
+  if (contextualReference.resolvedFromHistory || contextualReference.confidence === "ambiguous") {
+    await query(
+      `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+       values($1,$2,'context_resolution','info',$3)`,
+      [
+        conversationId,
+        inboundMessageId,
+        JSON.stringify({
+          topic: contextualReference.topicLabel || null,
+          material: contextualReference.material || null,
+          method: contextualReference.method || null,
+          confidence: contextualReference.confidence,
+          resolvedFromHistory: Boolean(contextualReference.resolvedFromHistory),
+        }),
+      ],
+    ).catch((error) => console.error("Failed to log WhatsApp context resolution", error.message));
+  }
   const parsedState = parseJsonObject(recorded.conversation.booking_state);
   let currentStateForRouting = parsedState;
 
@@ -4696,6 +5020,9 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     hasActiveState: hasActiveBookingState,
     message: concatenatedText,
     historyLength: history.length,
+    contextualTopic: contextualReference.topicLabel || null,
+    contextConfidence: contextualReference.confidence,
+    resolvedFromHistory: contextualReference.resolvedFromHistory,
     history: history.map(h => ({ sender: h.sender_type, body: h.body ? h.body.slice(0, 50) : "" })),
   });
 
@@ -4722,7 +5049,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     isServiceCatalogMenuIntent(concatenatedText) ||
     (
       !isClientAskingQuestion(concatenatedText) &&
-      hasCommercialCatalogReference(concatenatedText, base)
+      hasCommercialCatalogReference(routingText, base)
     );
   if (!hasActiveBookingState && backendCatalogRequest) {
     const structuredCatalog = await handleStructuredBookingFlow({
@@ -4742,7 +5069,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     console.warn("WhatsApp backend catalog flow returned no response", {
       conversationId,
       catalogMenuIntent: isServiceCatalogMenuIntent(concatenatedText),
-      hasCatalogReference: hasCommercialCatalogReference(concatenatedText, base),
+      hasCatalogReference: hasCommercialCatalogReference(routingText, base),
       bookableServices: bookableAiServices(base).length,
     });
   }
@@ -4802,7 +5129,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     if (structuredBooking) return structuredBooking;
   }
 
-  const localIntentResponse = buildLocalIntentResponse(concatenatedText, base);
+  const localIntentResponse = buildLocalIntentResponse(routingText, base, contextualReference);
   if (localIntentResponse) {
     const responseText = bookingInterruptionQuestion
       ? [localIntentResponse, buildBookingResumePrompt(currentStateForRouting)].join("\n\n")
@@ -4836,7 +5163,16 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     return { ok: true, replied: true, reason: responseReason, conversationId };
   }
 
-  const outOfScopeResponse = buildOutOfScopeResponse(concatenatedText);
+  const scopeClassification = classifyAiServiceScope(concatenatedText, {
+    history,
+    maxIdleMinutes: settings.maxIdleMinutes,
+    now: receivedAt,
+  });
+  const outOfScopeResponse = buildOutOfScopeResponse(concatenatedText, {
+    history,
+    maxIdleMinutes: settings.maxIdleMinutes,
+    now: receivedAt,
+  });
   // Quando há estado ativo de agendamento, o guard de fora do escopo é completamente
   // ignorado: o usuário está respondendo a uma pergunta do bot e sua mensagem deve
   // sempre seguir para o fluxo de agendamento ou para a IA — nunca retornar a
@@ -4845,8 +5181,8 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     outOfScopeResponse &&
     !hasActiveBookingState &&
     !(
-      matchedArticle ||
-      hasCommercialCatalogReference(concatenatedText, base)
+      contextualArticle ||
+      hasCommercialCatalogReference(routingText, base)
     )
   ) {
     await sendTextAndRecord({
@@ -4861,7 +5197,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       conversationId,
       messageId: inboundMessageId,
       provider: "local_scope_guard",
-      model: "domain_scope",
+      model: `domain_scope:${scopeClassification}`,
       status: "out_of_scope",
       retryCount: 0,
       fallbackUsed: false,
@@ -4907,7 +5243,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     settings,
     currentState,
   });
-  const commercialContext = summarizeAiCommercialContext(base, settings, concatenatedText);
+  const commercialContext = summarizeAiCommercialContext(base, settings, routingText);
   const systemPrompt = buildRuntimePrompt(settings);
 
   let knowledgeContext = "";
@@ -4915,13 +5251,13 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     knowledgeContext = `${agendaAvailabilityContext}\n\n`;
   }
 
-  if (matchedArticle) {
+  if (contextualArticle) {
     knowledgeContext += [
-      `Base de Conhecimento Aprovada - Artigo: "${matchedArticle.title}" (Nível ${safetyLevel})`,
-      `Resposta Curta: ${matchedArticle.short_answer}`,
-      `Resposta Completa: ${matchedArticle.full_answer}`,
-      matchedArticle.recommended_followup_questions?.length > 0
-        ? `Perguntas sugeridas para triagem: ${JSON.stringify(matchedArticle.recommended_followup_questions)}`
+      `Base de Conhecimento Aprovada - Artigo: "${contextualArticle.title}" (Nível ${safetyLevel})`,
+      `Resposta Curta: ${contextualArticle.short_answer}`,
+      `Resposta Completa: ${contextualArticle.full_answer}`,
+      contextualArticle.recommended_followup_questions?.length > 0
+        ? `Perguntas sugeridas para triagem: ${JSON.stringify(contextualArticle.recommended_followup_questions)}`
         : "",
       `Instruções de nível para este atendimento:`,
       safetyLevel === 3
@@ -4939,6 +5275,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     knowledgeContext,
     bookingGuidance: booking.text,
     knownClient: Boolean(recorded.client),
+    contextualReference,
   });
 
   let finalResponse = null;
@@ -5098,6 +5435,13 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       : 0;
 
   if (finalResponse) {
+    finalResponse = enforceAiResponseQuality({
+      response: finalResponse,
+      incomingText: concatenatedText,
+      history,
+      base,
+      contextualReference,
+    });
     if (
       bookingInterruptionQuestion &&
       booking.resumeText &&

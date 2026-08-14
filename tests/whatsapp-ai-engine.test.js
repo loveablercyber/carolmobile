@@ -10,6 +10,12 @@ import {
   buildAiConversationMessage,
   buildBookingGuidance,
   isInAiServiceScope,
+  AI_SERVICE_SCOPE,
+  classifyAiServiceScope,
+  resolveContextualServiceReference,
+  buildServiceAvailabilityIntentResponse,
+  buildContextualProcedureResponse,
+  enforceAiResponseQuality,
   isMessageWebhookPayload,
   isWithinAiHours,
   keywordInText,
@@ -611,7 +617,7 @@ test("prioritizes pending booking answers written in natural language", () => {
   );
 });
 
-test("routes fibra russa questions to the AI provider instead of a fixed local reply", () => {
+test("answers Fibra Russa availability from the active catalog", () => {
   const response = buildLocalIntentResponse("Você faz aplicação de fibra russa?", {
     services: [
       {
@@ -623,7 +629,9 @@ test("routes fibra russa questions to the AI provider instead of a fixed local r
     ],
   });
 
-  assert.equal(response, null);
+  assert.match(response, /^Sim, trabalhamos com Fibra Russa/i);
+  assert.match(response, /fibra sintética/i);
+  assert.doesNotMatch(response, /Você faz aplicação/i);
 });
 
 test("isClientAskingQuestion classifies questions correctly", () => {
@@ -699,6 +707,115 @@ test("summarizeAiCommercialContext uses service variants and never physical stoc
   assert.doesNotMatch(summary, /Fibra Russa antiga/);
   assert.doesNotMatch(summary, /Cabelo antigo/);
   assert.doesNotMatch(summary, /nenhuma variação disponível em estoque/i);
+});
+
+const contextualFiberBase = {
+  services: [
+    { id: "fiber-tape", name: "Combo Fibra Russa + Fita Adesiva", active: true, description: "Fibra Russa com Fita Adesiva" },
+    { id: "fiber-point", name: "Combo Fibra Russa + Ponto Americano Invisível", active: true, description: "Fibra Russa com Ponto Americano Invisível" },
+    { id: "fiber-weave", name: "Combo Fibra Russa + Entrelace", active: true, description: "Fibra Russa com Entrelace" },
+    { id: "fiber-capsule", name: "Combo Fibra Russa + Microcápsula de Queratina", active: true, description: "Fibra Russa com Microcápsula de Queratina" },
+    { id: "fiber-old", name: "Fibra Russa antiga", active: false, description: "Serviço arquivado" },
+  ],
+};
+
+test("resolves a short procedure question from the recent Fibra Russa context", () => {
+  const now = new Date("2026-08-14T15:06:00.000Z");
+  const history = [
+    { sender_type: "client", body: "Trabalha com fibra russa?", created_at: "2026-08-14T15:05:00.000Z" },
+    { sender_type: "ai", body: "Sim, trabalhamos com Fibra Russa. Temos Fita Adesiva, Ponto Americano Invisível, Entrelace e Microcápsula de Queratina.", created_at: "2026-08-14T15:05:10.000Z" },
+  ];
+  const context = resolveContextualServiceReference({
+    incomingText: "Como funciona o procedimento?",
+    history,
+    base: contextualFiberBase,
+    maxIdleMinutes: 30,
+    now,
+  });
+
+  assert.equal(context.resolvedFromHistory, true);
+  assert.equal(context.material, "Fibra Russa");
+  assert.equal(context.method, "");
+  assert.match(context.effectiveText, /Assunto referido no histórico: material Fibra Russa/i);
+  assert.equal(
+    classifyAiServiceScope("Como funciona o procedimento?", { history, maxIdleMinutes: 30, now }),
+    AI_SERVICE_SCOPE.CONTEXTUAL,
+  );
+  assert.equal(buildOutOfScopeResponse("Como funciona o procedimento?", { history, now }), "");
+
+  const response = buildLocalIntentResponse(context.effectiveText, contextualFiberBase, context);
+  assert.match(response, /fibra sintética/i);
+  assert.match(response, /avaliação/i);
+  assert.match(response, /Fita Adesiva/i);
+  assert.match(response, /Ponto Americano Invisível/i);
+  assert.match(response, /Entrelace/i);
+  assert.match(response, /Microcápsula de Queratina/i);
+  assert.doesNotMatch(response, /fora|apenas com assuntos/i);
+});
+
+test("answers a standalone vague procedure question before asking for one clarification", () => {
+  const context = resolveContextualServiceReference({
+    incomingText: "Como funciona o procedimento?",
+    history: [],
+    base: contextualFiberBase,
+  });
+  const response = buildContextualProcedureResponse(
+    context.effectiveText,
+    contextualFiberBase,
+    context,
+  );
+
+  assert.equal(context.confidence, "ambiguous");
+  assert.match(response, /atendimento começa com uma avaliação/i);
+  assert.match(response, /Sobre qual método você quer saber\?/i);
+  assert.equal((response.match(/\?/g) || []).length, 1);
+});
+
+test("does not reuse an expired commercial topic", () => {
+  const context = resolveContextualServiceReference({
+    incomingText: "Como funciona o procedimento?",
+    history: [{
+      sender_type: "client",
+      body: "Trabalha com fibra russa?",
+      created_at: "2026-08-12T15:00:00.000Z",
+    }],
+    base: contextualFiberBase,
+    maxIdleMinutes: 30,
+    now: new Date("2026-08-14T15:00:00.000Z"),
+  });
+
+  assert.equal(context.resolvedFromHistory, false);
+  assert.equal(context.confidence, "ambiguous");
+  assert.doesNotMatch(context.effectiveText, /Fibra Russa/i);
+});
+
+test("answers catalog availability without reversing salon and client roles", () => {
+  const response = buildServiceAvailabilityIntentResponse(
+    "Trabalha com fibra russa?",
+    contextualFiberBase,
+  );
+  assert.match(response, /^Sim, trabalhamos com Fibra Russa/i);
+  assert.match(response, /fibra sintética/i);
+  assert.doesNotMatch(response, /Você trabalha com Fibra Russa/i);
+  assert.doesNotMatch(response, /Se sim/i);
+});
+
+test("sanitizes repeated greetings and catalog contradictions", () => {
+  const withoutGreeting = enforceAiResponseQuality({
+    response: "Olá! A aplicação depende do método escolhido.",
+    incomingText: "Como funciona?",
+    history: [{ sender_type: "ai", body: "Olá! Como posso ajudar?" }],
+    base: contextualFiberBase,
+  });
+  assert.equal(withoutGreeting, "A aplicação depende do método escolhido.");
+
+  const corrected = enforceAiResponseQuality({
+    response: "Olá! Você trabalha com fibra russa? Se sim, podemos conversar.",
+    incomingText: "Trabalha com fibra russa?",
+    history: [],
+    base: contextualFiberBase,
+  });
+  assert.match(corrected, /^Sim, trabalhamos com Fibra Russa/i);
 });
 
 test("getAgendaAvailabilityContext formats slots when asking for agenda", async () => {

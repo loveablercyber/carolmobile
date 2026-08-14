@@ -2,7 +2,11 @@ import {
   clean,
   normalizeText,
 } from "./utils.js";
-import { isSimpleGreeting, isInAiServiceScope } from "./intent-detector.js";
+import {
+  AI_SERVICE_SCOPE,
+  classifyAiServiceScope,
+  isSimpleGreeting,
+} from "./intent-detector.js";
 
 export function explicitGreetingFromText(text) {
   const normalized = normalizeText(text).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
@@ -47,8 +51,8 @@ export function naturalConversationPrefix(text) {
   return "";
 }
 
-export function buildOutOfScopeResponse(text) {
-  if (isInAiServiceScope(text)) return "";
+export function buildOutOfScopeResponse(text, options = {}) {
+  if (classifyAiServiceScope(text, options) !== AI_SERVICE_SCOPE.OUT_OF_SCOPE) return "";
   return [
     "Consigo te ajudar apenas com assuntos do salão: Mega Hair, cabelos, perucas, apliques, cuidados, valores, horários e agendamentos.",
     "Me manda uma dúvida dentro desses temas que eu sigo daqui.",
