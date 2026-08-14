@@ -3976,6 +3976,7 @@ export function AdminServicesPage() {
   const [methodForm, setMethodForm] = useState({ id: "", name: "", description: "", maintenanceDays: "", active: true, categoryId: "", parentId: "" });
   const [parentMethodForSub, setParentMethodForSub] = useState<any>(null);
   const [filterCategoryId, setFilterCategoryId] = useState("");
+  const [serviceStatusFilter, setServiceStatusFilter] = useState<"active" | "all">("active");
   const [variantOpen, setVariantOpen] = useState(false);
   const [editingVariant, setEditingVariant] = useState<any>(null);
   const [variantForm, setVariantForm] = useState<any>({});
@@ -4214,6 +4215,11 @@ export function AdminServicesPage() {
   const professionals = payload.professionals || [];
   const inventory = payload.inventory || [];
   const variants = payload.variants || [];
+  const filteredVariants = variants.filter((variant: any) => {
+    if (serviceStatusFilter === "all") return true;
+    const parentService = services.find((service: any) => service.id === variant.service_id);
+    return parentService?.active === true;
+  });
   const linksFor = (service?: any) =>
     professionals.map((professional: any) => {
       const existing = service?.professionals?.find(
@@ -4366,7 +4372,7 @@ export function AdminServicesPage() {
         }),
       });
       await p.reload();
-      setToast(service.active ? "Serviço pausado." : "Serviço reativado.");
+      setToast(service.active ? "Serviço arquivado." : "Serviço reativado.");
     } catch (err) {
       console.error("Service status error", err);
       setToast(
@@ -4437,8 +4443,20 @@ export function AdminServicesPage() {
           </div>
         }
       />
-      {/* Filtro por categoria */}
+      {/* Filtros do catálogo */}
       <div className="mb-6 flex flex-wrap items-center gap-3">
+        <label className="text-xs font-bold text-stone-500 shrink-0" htmlFor="service-status-filter">
+          Listar serviços:
+        </label>
+        <select
+          id="service-status-filter"
+          className="field text-xs max-w-xs"
+          value={serviceStatusFilter}
+          onChange={(e) => setServiceStatusFilter(e.target.value as "active" | "all")}
+        >
+          <option value="active">Somente serviços ativos</option>
+          <option value="all">Todos os serviços</option>
+        </select>
         <label className="text-xs font-bold text-stone-500 shrink-0">Filtrar por categoria:</label>
         <select
           className="field text-xs max-w-xs"
@@ -4463,9 +4481,11 @@ export function AdminServicesPage() {
         )}
       </div>
       {(() => {
-        const filteredServices = filterCategoryId
-          ? services.filter((x: any) => x.category_id === filterCategoryId)
-          : services;
+        const filteredServices = services.filter((service: any) => {
+          const matchesStatus = serviceStatusFilter === "all" || service.active === true;
+          const matchesCategory = !filterCategoryId || service.category_id === filterCategoryId;
+          return matchesStatus && matchesCategory;
+        });
         return filteredServices.length ? (
         viewMode === "grid" ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -4474,7 +4494,7 @@ export function AdminServicesPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex flex-wrap gap-2">
                     <Badge tone={x.active ? "green" : "neutral"}>
-                      {x.active ? "ATIVO" : "INATIVO"}
+                      {x.active ? "ATIVO" : "ARQUIVADO"}
                     </Badge>
                     <Badge tone={x.show_online_booking !== false ? "green" : "neutral"}>
                       {x.show_online_booking !== false ? "ONLINE" : "INTERNO"}
@@ -4496,7 +4516,7 @@ export function AdminServicesPage() {
                       disabled={saving}
                       onClick={() => toggleActive(x)}
                       className="rounded-full border border-black/10 p-2 text-stone-500 transition hover:border-champagne hover:text-champagne disabled:opacity-50"
-                      title={x.active ? "Pausar serviço" : "Reativar serviço"}
+                      title={x.active ? "Arquivar serviço" : "Reativar serviço"}
                     >
                       {x.active ? <Pause size={15} /> : <Play size={15} />}
                     </button>
@@ -4559,7 +4579,7 @@ export function AdminServicesPage() {
                       {x.description && <div className="text-stone-450 mt-1 text-[11px] line-clamp-1">{x.description}</div>}
                       <div className="mt-2 flex flex-wrap gap-1">
                         <Badge tone={x.active ? "green" : "neutral"}>
-                          {x.active ? "ATIVO" : "INATIVO"}
+                          {x.active ? "ATIVO" : "ARQUIVADO"}
                         </Badge>
                         <Badge tone={x.show_online_booking !== false ? "green" : "neutral"}>
                           {x.show_online_booking !== false ? "ONLINE" : "INTERNO"}
@@ -4591,7 +4611,7 @@ export function AdminServicesPage() {
                           disabled={saving}
                           onClick={() => toggleActive(x)}
                           className="rounded-full border border-black/10 p-1.5 text-stone-500 transition hover:border-champagne hover:text-champagne disabled:opacity-50"
-                          title={x.active ? "Pausar serviço" : "Reativar serviço"}
+                          title={x.active ? "Arquivar serviço" : "Reativar serviço"}
                         >
                           {x.active ? <Pause size={13} /> : <Play size={13} />}
                         </button>
@@ -4613,10 +4633,19 @@ export function AdminServicesPage() {
           </div>
         )
       ) : (
-        <EmptyState title="Nenhum serviço" text={filterCategoryId ? "Nenhum serviço nesta categoria." : "O catálogo está vazio."} />
+        <EmptyState
+          title="Nenhum serviço"
+          text={
+            serviceStatusFilter === "active"
+              ? "Nenhum serviço ativo corresponde aos filtros selecionados."
+              : filterCategoryId
+                ? "Nenhum serviço nesta categoria."
+                : "O catálogo está vazio."
+          }
+        />
       );
       })()}
-      {variants.length > 0 && (
+      {filteredVariants.length > 0 && (
         <section className="mt-8 surface overflow-hidden">
           <div className="border-b border-black/10 p-5">
             <h2 className="font-display text-2xl">Variações do catálogo 2026</h2>
@@ -4625,7 +4654,7 @@ export function AdminServicesPage() {
           <div className="max-h-[520px] overflow-auto">
             <table className="w-full text-left text-xs">
               <thead className="sticky top-0 bg-white"><tr className="border-b border-black/10"><th className="p-3">Serviço / opção</th><th className="p-3">Preço</th><th className="p-3">Duração</th><th className="p-3">Sinal</th><th className="p-3">Canais</th><th className="p-3"></th></tr></thead>
-              <tbody>{variants.map((variant: any) => {
+              <tbody>{filteredVariants.map((variant: any) => {
                 const parent = services.find((service: any) => service.id === variant.service_id);
                 const signal = variant.deposit_type === "percentage" ? `${variant.deposit_value}%` : variant.deposit_type === "fixed" ? brl(Number(variant.deposit_value)) : variant.deposit_type === "material_cost" ? "Custo da fibra" : "Sem sinal";
                 return <tr key={variant.id} className="border-b border-black/5">
