@@ -3977,6 +3977,7 @@ export function AdminServicesPage() {
   const [parentMethodForSub, setParentMethodForSub] = useState<any>(null);
   const [filterCategoryId, setFilterCategoryId] = useState("");
   const [serviceStatusFilter, setServiceStatusFilter] = useState<"active" | "all">("active");
+  const [variantStatusFilter, setVariantStatusFilter] = useState<"active" | "all">("active");
   const [variantOpen, setVariantOpen] = useState(false);
   const [editingVariant, setEditingVariant] = useState<any>(null);
   const [variantForm, setVariantForm] = useState<any>({});
@@ -4216,9 +4217,10 @@ export function AdminServicesPage() {
   const inventory = payload.inventory || [];
   const variants = payload.variants || [];
   const filteredVariants = variants.filter((variant: any) => {
-    if (serviceStatusFilter === "all") return true;
     const parentService = services.find((service: any) => service.id === variant.service_id);
-    return parentService?.active === true;
+    const matchesParentStatus = serviceStatusFilter === "all" || parentService?.active === true;
+    const matchesVariantStatus = variantStatusFilter === "all" || variant.active === true;
+    return matchesParentStatus && matchesVariantStatus;
   });
   const linksFor = (service?: any) =>
     professionals.map((professional: any) => {
@@ -4318,6 +4320,7 @@ export function AdminServicesPage() {
     setEditingVariant(variant);
     setVariantForm({
       ...variant,
+      serviceId: variant.service_id,
       durationMinutes: String(variant.duration_minutes || 60),
       depositType: variant.deposit_type || "none",
       depositValue: String(variant.deposit_value || 0),
@@ -4328,28 +4331,92 @@ export function AdminServicesPage() {
     });
     setVariantOpen(true);
   };
+  const openNewVariant = () => {
+    setEditingVariant(null);
+    setVariantForm({
+      serviceId: services.find((service: any) => service.active === true)?.id || services[0]?.id || "",
+      code: "",
+      label: "",
+      price: "",
+      durationMinutes: "60",
+      depositType: "none",
+      depositValue: "0",
+      requiresAssessment: true,
+      requiresHumanConfirmation: false,
+      showOnlineBooking: true,
+      allowWhatsappBooking: true,
+      active: true,
+      sortOrder: 0,
+    });
+    setVariantOpen(true);
+  };
+  const variantPayload = (variant: any, overrides: Record<string, unknown> = {}) => ({
+    ...variant,
+    id: variant.id || undefined,
+    serviceId: variant.serviceId || variant.service_id,
+    code: variant.code,
+    label: variant.label,
+    price: Number(variant.price),
+    durationMinutes: Number(variant.durationMinutes ?? variant.duration_minutes),
+    depositType: variant.depositType ?? variant.deposit_type ?? "none",
+    depositValue: Number(variant.depositValue ?? variant.deposit_value ?? 0),
+    requiresAssessment: variant.requiresAssessment ?? variant.requires_assessment ?? true,
+    requiresHumanConfirmation: variant.requiresHumanConfirmation ?? variant.requires_human_confirmation ?? false,
+    showOnlineBooking: variant.showOnlineBooking ?? variant.show_online_booking ?? true,
+    allowWhatsappBooking: variant.allowWhatsappBooking ?? variant.allow_whatsapp_booking ?? true,
+    active: variant.active !== false,
+    ...overrides,
+  });
   const saveVariant = async (event: FormEvent) => {
     event.preventDefault();
     setSaving(true);
     try {
       await apiFetch("/api/portal?resource=admin-service-variant", {
-        method: "PATCH",
-        body: JSON.stringify({
-          ...variantForm,
-          id: editingVariant.id,
-          serviceId: editingVariant.service_id,
-          durationMinutes: Number(variantForm.durationMinutes),
-          depositValue: Number(variantForm.depositValue || 0),
-        }),
+        method: editingVariant ? "PATCH" : "POST",
+        body: JSON.stringify(variantPayload(variantForm, { id: editingVariant?.id })),
       });
       await p.reload();
       setVariantOpen(false);
-      setToast("Variação atualizada no site e no WhatsApp.");
+      setEditingVariant(null);
+      setToast(editingVariant ? "Variação atualizada no site e no WhatsApp." : "Variação criada com sucesso.");
     } catch (err) {
       setToast(err instanceof Error ? err.message : "Não foi possível salvar a variação.");
     } finally {
       setSaving(false);
       setTimeout(() => setToast(""), 2600);
+    }
+  };
+  const toggleVariantActive = async (variant: any) => {
+    setSaving(true);
+    try {
+      await apiFetch("/api/portal?resource=admin-service-variant", {
+        method: "PATCH",
+        body: JSON.stringify(variantPayload(variant, { active: variant.active !== true })),
+      });
+      await p.reload();
+      setToast(variant.active ? "Variação arquivada." : "Variação reativada.");
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "Não foi possível alterar a variação.");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2600);
+    }
+  };
+  const deleteVariant = async (variant: any) => {
+    if (!window.confirm(`Remover permanentemente a variação "${variant.label}"?`)) return;
+    setSaving(true);
+    try {
+      await apiFetch("/api/portal?resource=admin-service-variant", {
+        method: "DELETE",
+        body: JSON.stringify({ id: variant.id }),
+      });
+      await p.reload();
+      setToast("Variação removida com sucesso.");
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "Não foi possível remover a variação.");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 3200);
     }
   };
   const toggleActive = async (service: any) => {
@@ -4645,37 +4712,66 @@ export function AdminServicesPage() {
         />
       );
       })()}
-      {filteredVariants.length > 0 && (
-        <section className="mt-8 surface overflow-hidden">
-          <div className="border-b border-black/10 p-5">
-            <h2 className="font-display text-2xl">Variações do catálogo 2026</h2>
-            <p className="muted mt-1">Preço, duração, avaliação e publicação compartilhados pelo site e WhatsApp.</p>
+      <section className="mt-8 surface overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-black/10 p-5">
+            <div>
+              <h2 className="font-display text-2xl">Variações do catálogo 2026</h2>
+              <p className="muted mt-1">Cada item pertence a um serviço principal e pode ter nome, preço e disponibilidade próprios.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="text-xs font-bold text-stone-500" htmlFor="variant-status-filter">
+                Listar variações:
+              </label>
+              <select
+                id="variant-status-filter"
+                className="field text-xs max-w-xs"
+                value={variantStatusFilter}
+                onChange={(event) => setVariantStatusFilter(event.target.value as "active" | "all")}
+              >
+                <option value="active">Somente variações ativas</option>
+                <option value="all">Todas as variações</option>
+              </select>
+              <button type="button" className="btn-primary" onClick={openNewVariant}>
+                <Plus size={15} />
+                Criar variação
+              </button>
+            </div>
           </div>
           <div className="max-h-[520px] overflow-auto">
             <table className="w-full text-left text-xs">
-              <thead className="sticky top-0 bg-white"><tr className="border-b border-black/10"><th className="p-3">Serviço / opção</th><th className="p-3">Preço</th><th className="p-3">Duração</th><th className="p-3">Sinal</th><th className="p-3">Canais</th><th className="p-3"></th></tr></thead>
+              <thead className="sticky top-0 bg-white"><tr className="border-b border-black/10"><th className="p-3">Serviço principal / nome do item</th><th className="p-3">Status</th><th className="p-3">Preço</th><th className="p-3">Duração</th><th className="p-3">Sinal</th><th className="p-3">Canais</th><th className="p-3"></th></tr></thead>
               <tbody>{filteredVariants.map((variant: any) => {
                 const parent = services.find((service: any) => service.id === variant.service_id);
                 const signal = variant.deposit_type === "percentage" ? `${variant.deposit_value}%` : variant.deposit_type === "fixed" ? brl(Number(variant.deposit_value)) : variant.deposit_type === "material_cost" ? "Custo da fibra" : "Sem sinal";
                 return <tr key={variant.id} className="border-b border-black/5">
                   <td className="p-3"><b className="block">{parent?.name || "Serviço"}</b><span className="text-stone-500">{variant.label}</span></td>
+                  <td className="p-3"><Badge tone={variant.active ? "green" : "neutral"}>{variant.active ? "ATIVA" : "ARQUIVADA"}</Badge></td>
                   <td className="p-3 font-semibold">{brl(Number(variant.price))}</td>
                   <td className="p-3">{variant.duration_minutes} min</td>
                   <td className="p-3">{signal}</td>
                   <td className="p-3">{variant.show_online_booking ? "Site" : "—"} / {variant.allow_whatsapp_booking ? "WhatsApp" : "—"}</td>
-                  <td className="p-3 text-right"><button type="button" className="rounded-full border border-black/10 p-2" onClick={() => openVariant(variant)} title="Editar variação"><Pencil size={14}/></button></td>
+                  <td className="p-3 text-right">
+                    <div className="flex justify-end gap-2">
+                      <button type="button" className="rounded-full border border-black/10 p-2" onClick={() => openVariant(variant)} title="Editar variação"><Pencil size={14}/></button>
+                      <button type="button" disabled={saving} className="rounded-full border border-black/10 p-2 disabled:opacity-50" onClick={() => toggleVariantActive(variant)} title={variant.active ? "Arquivar variação" : "Reativar variação"}>{variant.active ? <Pause size={14}/> : <Play size={14}/>}</button>
+                      <button type="button" disabled={saving} className="rounded-full border border-rose-200 p-2 text-rose-700 disabled:opacity-50" onClick={() => deleteVariant(variant)} title="Remover variação"><Trash2 size={14}/></button>
+                    </div>
+                  </td>
                 </tr>;
-              })}</tbody>
+              })}
+              {!filteredVariants.length && <tr><td className="p-8 text-center text-stone-500" colSpan={7}>Nenhuma variação corresponde aos filtros selecionados.</td></tr>}
+              </tbody>
             </table>
           </div>
         </section>
-      )}
-      <Modal open={variantOpen} onClose={() => !saving && setVariantOpen(false)} title="Editar variação">
-        {editingVariant && <form onSubmit={saveVariant} className="space-y-4">
-          <label className="block text-xs font-bold">Nome<input className="field mt-2" value={variantForm.label || ""} onChange={(e) => setVariantForm({...variantForm,label:e.target.value})}/></label>
+      <Modal open={variantOpen} onClose={() => !saving && setVariantOpen(false)} title={editingVariant ? "Editar variação" : "Criar variação"}>
+        <form onSubmit={saveVariant} className="space-y-4">
+          <label className="block text-xs font-bold">Serviço principal<select required className="field mt-2" value={variantForm.serviceId || ""} onChange={(e) => setVariantForm({...variantForm,serviceId:e.target.value})}><option value="">Selecione um serviço</option>{services.map((service: any) => <option key={service.id} value={service.id}>{service.name}{service.active ? "" : " (arquivado)"}</option>)}</select></label>
+          <label className="block text-xs font-bold">Nome do item<input required className="field mt-2" placeholder="Ex.: 60/65/70 cm — 100 g" value={variantForm.label || ""} onChange={(e) => setVariantForm({...variantForm,label:e.target.value})}/></label>
+          <label className="block text-xs font-bold">Código interno<input required className="field mt-2" placeholder="Ex.: ponto-americano-60-70-100g" value={variantForm.code || ""} onChange={(e) => setVariantForm({...variantForm,code:e.target.value})}/></label>
           <div className="grid grid-cols-2 gap-3">
-            <label className="text-xs font-bold">Preço<input className="field mt-2" type="number" step="0.01" value={variantForm.price ?? ""} onChange={(e) => setVariantForm({...variantForm,price:e.target.value})}/></label>
-            <label className="text-xs font-bold">Duração (min)<input className="field mt-2" type="number" value={variantForm.durationMinutes || ""} onChange={(e) => setVariantForm({...variantForm,durationMinutes:e.target.value})}/></label>
+            <label className="text-xs font-bold">Preço<input required min="0" className="field mt-2" type="number" step="0.01" value={variantForm.price ?? ""} onChange={(e) => setVariantForm({...variantForm,price:e.target.value})}/></label>
+            <label className="text-xs font-bold">Duração (min)<input required min="15" max="1440" className="field mt-2" type="number" value={variantForm.durationMinutes || ""} onChange={(e) => setVariantForm({...variantForm,durationMinutes:e.target.value})}/></label>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <label className="text-xs font-bold">Tipo de sinal<select className="field mt-2" value={variantForm.depositType || "none"} onChange={(e) => setVariantForm({...variantForm,depositType:e.target.value})}><option value="none">Nenhum</option><option value="fixed">Valor fixo</option><option value="percentage">Percentual</option><option value="full">Integral</option><option value="material_cost">Custo da fibra</option></select></label>
@@ -4686,9 +4782,10 @@ export function AdminServicesPage() {
             <label><input type="checkbox" checked={variantForm.requiresHumanConfirmation === true} onChange={(e)=>setVariantForm({...variantForm,requiresHumanConfirmation:e.target.checked})}/> Confirmação humana</label>
             <label><input type="checkbox" checked={variantForm.showOnlineBooking === true} onChange={(e)=>setVariantForm({...variantForm,showOnlineBooking:e.target.checked})}/> Publicar no site</label>
             <label><input type="checkbox" checked={variantForm.allowWhatsappBooking === true} onChange={(e)=>setVariantForm({...variantForm,allowWhatsappBooking:e.target.checked})}/> Publicar no WhatsApp</label>
+            <label><input type="checkbox" checked={variantForm.active !== false} onChange={(e)=>setVariantForm({...variantForm,active:e.target.checked})}/> Variação ativa</label>
           </div>
           <button className="btn-primary w-full" disabled={saving}>{saving ? "Salvando…" : "Salvar variação"}</button>
-        </form>}
+        </form>
       </Modal>
       <Modal
         open={open}

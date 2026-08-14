@@ -925,6 +925,41 @@ async function saveAdminServiceVariant(user, body) {
   return result.rows[0];
 }
 
+async function deleteAdminServiceVariant(user, body) {
+  requireRole(user, ["admin"]);
+  const id = validUuid(body.id, "Variação");
+  try {
+    return await transaction(async (client) => {
+      const previous = await client.query(
+        "select * from public.service_variants where id=$1",
+        [id],
+      );
+      if (!previous.rows[0]) throw appError("Variação não encontrada.", 404);
+
+      const { rowCount } = await client.query(
+        "delete from public.service_variants where id=$1",
+        [id],
+      );
+      if (!rowCount) throw appError("Variação não encontrada.", 404);
+
+      await client.query(
+        `insert into public.audit_logs(actor_id,action,entity_type,entity_id,previous_data)
+         values($1,'delete','service_variant',$2,$3::jsonb)`,
+        [user.id, id, JSON.stringify(previous.rows[0])],
+      );
+      return { success: true };
+    });
+  } catch (error) {
+    if (error.code === "23503") {
+      throw appError(
+        "Não é possível remover esta variação porque ela já foi usada em agendamentos. Arquive a variação para ocultá-la do site e do WhatsApp.",
+        400,
+      );
+    }
+    throw error;
+  }
+}
+
 async function adminPromotions(user) {
   requireRole(user, ["admin"]);
   await ensureMarketingSchema();
@@ -3907,6 +3942,8 @@ async function mutate(user, resource, body, method = "POST") {
   if (resource === "admin-service" && method === "DELETE")
     return deleteAdminService(user, body);
   if (resource === "admin-service") return saveAdminService(user, body);
+  if (resource === "admin-service-variant" && method === "DELETE")
+    return deleteAdminServiceVariant(user, body);
   if (resource === "admin-service-variant") return saveAdminServiceVariant(user, body);
   if (resource === "admin-category" && method === "DELETE")
     return deleteAdminCategory(user, body);
