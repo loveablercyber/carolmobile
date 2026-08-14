@@ -48,3 +48,34 @@ test("2026 migration is idempotent and keeps commercial variants separate from i
   assert.match(sql, /combo-micro-75-350[^\n]+2415/i);
   assert.doesNotMatch(sql, /insert into public\.hair_inventory/i);
 });
+
+test("2026 normalization preserves history and restores the official catalog links", async () => {
+  const sql = await readFile(
+    new URL("../database/neon-service-catalog-2026-normalization.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(sql, /service_catalog_normalization_backups/i);
+  assert.match(sql, /where catalog_code is null/i);
+  assert.match(sql, /where catalog_code is not null/i);
+  assert.match(sql, /combo-ponto-[^']*'\s*,\s*'combo-ponto'/i);
+  assert.match(sql, /update public\.service_variants/i);
+  assert.doesNotMatch(sql, /delete\s+from\s+public\.services/i);
+  assert.doesNotMatch(sql, /delete\s+from\s+public\.appointments/i);
+  const rollback = await readFile(
+    new URL("../database/neon-service-catalog-2026-normalization-rollback.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(rollback, /service_catalog_normalization_backups/i);
+  assert.doesNotMatch(rollback, /delete\s+from\s+public\.appointments/i);
+});
+
+test("WhatsApp only loads variants whose parent service is active", async () => {
+  const source = await readFile(
+    new URL("../server/lib/ai-whatsapp.js", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /from public\.service_variants v\s+join public\.services s on s\.id=v\.service_id\s+where v\.active and v\.allow_whatsapp_booking and s\.active/i,
+  );
+});

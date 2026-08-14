@@ -1601,7 +1601,10 @@ export async function getAiCommercialBase() {
     query(
       `select id, name, active, category_id, parent_id from public.hair_methods order by name`
     ),
-    query(`select * from public.service_variants where active and allow_whatsapp_booking order by service_id,sort_order,label`).catch(() => ({ rows: [] })),
+    query(`select v.* from public.service_variants v
+      join public.services s on s.id=v.service_id
+      where v.active and v.allow_whatsapp_booking and s.active
+      order by v.service_id,v.sort_order,v.label`).catch(() => ({ rows: [] })),
     query(`select a.*,va.service_variant_id from public.service_addons a join public.service_variant_addons va on va.addon_id=a.id where a.active and a.allow_whatsapp_booking order by a.sort_order,a.name`).catch(() => ({ rows: [] }))
   ]);
   const base = {
