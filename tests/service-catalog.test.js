@@ -79,3 +79,35 @@ test("WhatsApp only loads variants whose parent service is active", async () => 
     /from public\.service_variants v\s+join public\.services s on s\.id=v\.service_id\s+where v\.active and v\.allow_whatsapp_booking and s\.active/i,
   );
 });
+
+test("AI commercial base lists every active service without parallel AI activation", async () => {
+  const source = await readFile(
+    new URL("../server/lib/ai-whatsapp.js", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("export async function getAiCommercialBase");
+  const end = source.indexOf("export async function getAiBase", start);
+  const commercialBase = source.slice(start, end);
+  assert.match(commercialBase, /from public\.services s\s+where s\.active=true/i);
+  assert.match(commercialBase, /true as ai_active/i);
+  assert.doesNotMatch(commercialBase, /join public\.ai_service_settings/i);
+  assert.doesNotMatch(commercialBase, /catalog_code is (?:not )?null/i);
+});
+
+test("WhatsApp admin service list is read-only and delegates edits to admin services", async () => {
+  const page = await readFile(
+    new URL("../src/pages/WhatsAppIntegration.tsx", import.meta.url),
+    "utf8",
+  );
+  const start = page.indexOf("function BaseKnowledgeTab");
+  const end = page.indexOf("function serviceToForm", start);
+  const section = page.slice(start, end);
+  assert.match(section, /service\.active !== false/);
+  assert.match(section, /Lista automática e somente leitura/);
+  assert.match(section, /Gerenciar em Serviços/);
+  assert.doesNotMatch(section, /service-settings/);
+  assert.doesNotMatch(section, />Editar</);
+
+  const api = await readFile(new URL("../api/ai-whatsapp.js", import.meta.url), "utf8");
+  assert.doesNotMatch(api, /resource === "service-settings"/);
+});

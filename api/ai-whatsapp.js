@@ -5,7 +5,6 @@ import {
   getAiPanel,
   getAiSettings,
   saveAiFlowSettings,
-  saveAiServiceSettings,
   saveAiSettings,
   saveKnowledgeArticle,
   deleteKnowledgeArticle,
@@ -39,10 +38,6 @@ async function mutate(user, resource, body) {
   if (resource === "settings") {
     const settings = await saveAiSettings(user, body);
     return { settings, panel: await getAiPanel() };
-  }
-  if (resource === "service-settings") {
-    const service = await saveAiServiceSettings(user, body);
-    return { service, panel: await getAiPanel() };
   }
   if (resource === "flow-settings") {
     const flow = await saveAiFlowSettings(user, body);

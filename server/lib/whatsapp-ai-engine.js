@@ -225,6 +225,7 @@ function textMatchesCatalogEntry(text, entryText) {
 function hasCommercialCatalogReference(text, base = {}) {
   const entries = [];
   for (const service of base.services || []) {
+    if (service.active === false) continue;
     entries.push([
       service.name,
       service.commercial_name,
@@ -234,9 +235,6 @@ function hasCommercialCatalogReference(text, base = {}) {
     ].filter(Boolean).join(" "));
   }
   for (const item of base.products || []) entries.push([item.name, item.category].filter(Boolean).join(" "));
-  for (const item of base.inventory || []) {
-    entries.push([item.name, item.category, item.color, item.shade, item.texture].filter(Boolean).join(" "));
-  }
   for (const article of base.knowledgeArticles || []) {
     entries.push([article.title, article.short_answer, article.category].filter(Boolean).join(" "));
   }
@@ -245,7 +243,7 @@ function hasCommercialCatalogReference(text, base = {}) {
 
 function bookableAiServices(base = {}) {
   return (base.services || [])
-    .filter((service) => service.active !== false && service.ai_active && service.allow_auto_booking)
+    .filter((service) => service.active !== false && service.show_online_booking !== false)
     .sort((a, b) => Number(a.priority_order || 100) - Number(b.priority_order || 100));
 }
 
@@ -366,14 +364,18 @@ function matchingPromotionForService(service, base = {}) {
   }) || null;
 }
 
-function matchingServiceForPriceQuestion(text, base = {}) {
+function matchingServicesForPriceQuestion(text, base = {}) {
   const normalized = normalizeText(text);
-  const services = (base.services || []).filter((service) => service.active !== false && service.ai_active);
-  return services.find((service) => {
+  const services = (base.services || []).filter((service) => service.active !== false);
+  return services.filter((service) => {
     const haystack = serviceSearchText(service);
     const terms = haystack.split(/\s+/).filter((term) => term.length >= 4);
     return terms.some((term) => normalized.includes(term));
-  }) || null;
+  });
+}
+
+function matchingServiceForPriceQuestion(text, base = {}) {
+  return matchingServicesForPriceQuestion(text, base)[0] || null;
 }
 
 function promotionDateText(promotion = {}) {
@@ -429,13 +431,55 @@ function buildPromotionIntentResponse(text, base = {}) {
 }
 
 function buildPriceIntentResponse(text, base = {}) {
-  const service = matchingServiceForPriceQuestion(text, base);
-  if (!service) return null;
+  const matches = matchingServicesForPriceQuestion(text, base);
+  if (!matches.length) return null;
+  if (matches.length > 1) {
+    const options = matches.slice(0, 6).map((service) => {
+      const variants = (base.serviceVariants || []).filter((variant) =>
+        variant.service_id === service.id && variant.active !== false && variant.allow_whatsapp_booking !== false,
+      );
+      const prices = variants.map((variant) => Number(variant.price || 0)).filter((value) => value >= 0);
+      if (!prices.length) return `- ${service.name}: ${servicePriceText(service, serviceValue(service), { serviceName: service.name })}`;
+      const minimum = Math.min(...prices);
+      const maximum = Math.max(...prices);
+      return `- ${service.name}: ${formatBookingCurrency(minimum)}${maximum !== minimum ? ` a ${formatBookingCurrency(maximum)}` : ""}.`;
+    });
+    return [
+      "Trabalhamos com estas opções cadastradas:",
+      options.join("\n"),
+      "O preço final depende do método, comprimento e gramatura. Qual método você deseja: Fita Adesiva, Ponto Americano Invisível, Entrelace ou Microcápsula de Queratina?",
+    ].join("\n\n");
+  }
+  const service = matches[0];
   const serviceName = service.commercial_name || service.name;
-  const price = serviceValue(service);
+  const variants = (base.serviceVariants || []).filter((variant) =>
+    variant.service_id === service.id && variant.active !== false && variant.allow_whatsapp_booking !== false,
+  );
+  const numericTerms = [...new Set((String(text).match(/\d+/g) || []).map(Number))];
+  const exactVariants = numericTerms.length
+    ? variants.filter((variant) => {
+        const variantNumbers = (normalizeText([
+          variant.label,
+          variant.length_label,
+          variant.weight_grams,
+          variant.unit_count,
+        ].filter(Boolean).join(" ")).match(/\d+/g) || []).map(Number);
+        return numericTerms.every((term) => variantNumbers.includes(term));
+      })
+    : [];
+  const variantPrices = variants.map((variant) => Number(variant.price || 0)).filter((value) => value >= 0);
+  const price = exactVariants.length === 1
+    ? Number(exactVariants[0].price || 0)
+    : variantPrices.length
+      ? Math.min(...variantPrices)
+      : serviceValue(service);
   const promotion = matchingPromotionForService(service, base);
   const lines = [
-    servicePriceText(service, price, { serviceName }),
+    exactVariants.length === 1
+      ? `${serviceName} — ${exactVariants[0].label}: ${formatBookingCurrency(price)}.`
+      : variantPrices.length
+        ? `${serviceName} possui opções de ${formatBookingCurrency(Math.min(...variantPrices))} a ${formatBookingCurrency(Math.max(...variantPrices))}, conforme comprimento e quantidade.`
+        : servicePriceText(service, price, { serviceName }),
   ];
   if (promotion) {
     lines.push(
@@ -482,7 +526,7 @@ export function selectBookingService(text, base = {}, state = {}) {
 
 
   const normalized = normalizeText(text);
-  const services = (base.services || []).filter((service) => service.active !== false && service.ai_active);
+  const services = (base.services || []).filter((service) => service.active !== false);
   const bookable = bookableAiServices(base);
   const evaluation = findEvaluationService(bookable);
   const matched = services.find((service) => {
@@ -3484,19 +3528,89 @@ async function recordIgnoredWebhook(normalized, reason) {
   }
 }
 
-export function summarizeAiCommercialContext(base, settings = {}) {
-  const services = (base.services || [])
-    .filter((service) => service.active && service.ai_active)
-    .slice(0, 10)
+export function summarizeAiCommercialContext(base, settings = {}, incomingText = "") {
+  const activeServices = (base.services || []).filter((service) => service.active !== false);
+  const normalizedQuery = normalizeText(incomingText);
+  const ignoredTerms = new Set([
+    "como", "qual", "quais", "quanto", "custa", "valor", "preco", "voces", "voce",
+    "trabalham", "fazem", "fazer", "servico", "servicos", "sobre", "para", "uma", "tem",
+  ]);
+  const queryTerms = normalizedQuery
+    .split(/[^a-z0-9]+/)
+    .filter((term) => term.length >= 4 && !ignoredTerms.has(term));
+  const variantsByService = new Map();
+  for (const variant of base.serviceVariants || []) {
+    if (variant.active === false || variant.allow_whatsapp_booking === false) continue;
+    const current = variantsByService.get(variant.service_id) || [];
+    current.push(variant);
+    variantsByService.set(variant.service_id, current);
+  }
+  const rankedServices = activeServices
     .map((service) => {
-      const price = Number(service.initial_price || service.base_price || 0);
+      const variants = variantsByService.get(service.id) || [];
+      const haystack = normalizeText([
+        service.name,
+        service.description,
+        ...variants.map((variant) => [variant.label, variant.notes, variant.material_mode].filter(Boolean).join(" ")),
+      ].filter(Boolean).join(" "));
+      const score = queryTerms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0);
+      return { service, variants, score };
+    })
+    .sort((left, right) => right.score - left.score || String(left.service.name).localeCompare(String(right.service.name), "pt-BR"));
+  const matchedServices = queryTerms.length
+    ? rankedServices.filter((entry) => entry.score > 0)
+    : rankedServices;
+  const selectedServices = (matchedServices.length ? matchedServices : rankedServices).slice(0, 20);
+  const numericTerms = [...new Set((String(incomingText).match(/\d+/g) || []).map(Number))];
+  const services = selectedServices.map(({ service, variants }) => {
+    if (!variants.length) {
+      const price = Number(service.base_price || 0);
       const priceText = isFreeService(service)
         ? "sem custo"
         : price > 0
-          ? `valor inicial R$ ${price.toFixed(2)}`
+          ? `R$ ${price.toFixed(2)}`
           : "valor sob consulta";
-      return `- ${service.commercial_name || service.name}: ${priceText}, duração ${service.estimated_duration_minutes || service.duration_minutes || "sob consulta"} min.`;
-    });
+      return `- ${service.name}: ${priceText}; duração ${service.duration_minutes || "sob consulta"} min. ${service.description || ""}`.trim();
+    }
+
+    const exactVariants = numericTerms.length
+      ? variants.filter((variant) => {
+          const variantNumbers = (normalizeText([
+            variant.label,
+            variant.length_label,
+            variant.weight_grams,
+            variant.unit_count,
+          ].filter(Boolean).join(" ")).match(/\d+/g) || []).map(Number);
+          return numericTerms.every((term) => variantNumbers.includes(term));
+        })
+      : [];
+    if (exactVariants.length) {
+      const options = exactVariants.slice(0, 6).map((variant) =>
+        `${variant.label}: ${formatBookingCurrency(variant.price)}, ${variant.duration_minutes || service.duration_minutes || "duração sob consulta"} min`,
+      );
+      return `- ${service.name}: ${options.join("; ")}. Avaliação prévia: ${exactVariants.some((variant) => variant.requires_assessment) ? "obrigatória" : "conforme cadastro"}; confirmação humana: ${exactVariants.some((variant) => variant.requires_human_confirmation) ? "obrigatória" : "não obrigatória"}.`;
+    }
+
+    const prices = variants.map((variant) => Number(variant.price || 0)).filter((value) => value >= 0);
+    const durations = variants.map((variant) => Number(variant.duration_minutes || service.duration_minutes || 0)).filter((value) => value > 0);
+    const lengths = [...new Set(variants.map((variant) => clean(variant.length_label)).filter(Boolean))];
+    const weights = variants.map((variant) => Number(variant.weight_grams || 0)).filter((value) => value > 0);
+    const minimumPrice = prices.length ? Math.min(...prices) : 0;
+    const maximumPrice = prices.length ? Math.max(...prices) : 0;
+    const priceText = prices.length
+      ? `${formatBookingCurrency(minimumPrice)}${maximumPrice !== minimumPrice ? ` a ${formatBookingCurrency(maximumPrice)}` : ""}`
+      : "valor sob consulta";
+    const minimumDuration = durations.length ? Math.min(...durations) : 0;
+    const maximumDuration = durations.length ? Math.max(...durations) : 0;
+    const durationText = durations.length
+      ? `${minimumDuration}${maximumDuration !== minimumDuration ? ` a ${maximumDuration}` : ""} min`
+      : "sob consulta";
+    const optionDetails = [
+      lengths.length ? `comprimentos ${lengths.join(" ou ")}` : "",
+      weights.length ? `pesos ${Math.min(...weights)}${Math.max(...weights) !== Math.min(...weights) ? ` a ${Math.max(...weights)}` : ""} g` : "",
+    ].filter(Boolean).join(", ");
+    return `- ${service.name}: ${priceText}; duração ${durationText}; ${variants.length} opção(ões)${optionDetails ? ` (${optionDetails})` : ""}. ${service.description || ""}`.trim();
+  });
   const plans = (base.plans || [])
     .filter((plan) => plan.active)
     .slice(0, 8)
@@ -3518,23 +3632,6 @@ export function summarizeAiCommercialContext(base, settings = {}) {
     .filter((flow) => flow.enabled)
     .map((flow) => flow.name || flow.flow_key)
     .slice(0, 12);
-  const servicesWithOffer = (base.services || []).filter((s) => s.offer_inventory_items);
-  const servicesWithOfferDescriptions = servicesWithOffer.map((service) => {
-    const matching = (base.inventory || []).filter((item) => 
-      item.quantity > 0 && 
-      item.category_id === service.category_id && 
-      (!service.hair_method_id || item.hair_method_id === service.hair_method_id)
-    );
-    const optionsText = matching.length > 0 
-      ? matching.map((item) => {
-          const price = Number(item.suggested_price || 0);
-          const priceText = price > 0 ? `R$ ${price.toFixed(2)}` : "valor sob consulta";
-          const lengthText = item.length_cm ? (String(item.length_cm).toLowerCase().includes('cm') ? item.length_cm : `${item.length_cm}cm`) : "N/A";
-          return `  * Opção de Cabelo (Cód: ${item.code || "N/A"}): Cor ${item.color || "N/A"}, Tom ${item.shade || "N/A"}, ${lengthText}, ${item.weight_grams || "N/A"}g — ${priceText} (Disponível: ${item.quantity} un)`;
-        }).join("\n")
-      : "  (Nenhuma variação disponível em estoque no momento)";
-    return `- Serviço: ${service.name} (Variações do Estoque)\n${optionsText}`;
-  });
   const products = (base.products || [])
     .filter((item) => item.active !== false && Number(item.stock_quantity || 0) > 0)
     .slice(0, 15)
@@ -3546,11 +3643,10 @@ export function summarizeAiCommercialContext(base, settings = {}) {
 
   return [
     "Dados reais liberados para esta resposta:",
-    services.length ? `Serviços:\n${services.join("\n")}` : "Serviços: nenhum serviço foi liberado para atendimento automático.",
+    services.length ? `Serviços ativos e variações comerciais:\n${services.join("\n")}` : "Serviços: nenhum serviço ativo cadastrado.",
     plans.length ? `Planos ativos:\n${plans.join("\n")}` : "Planos ativos: nenhum plano ativo encontrado.",
     coupons.length ? `Cupons ativos:\n${coupons.join("\n")}` : "Cupons ativos: nenhum cupom ativo encontrado.",
     promotions.length ? `Promocoes ativas para WhatsApp:\n${promotions.join("\n")}` : "Promocoes ativas para WhatsApp: nenhuma promocao ativa cadastrada.",
-    servicesWithOfferDescriptions.length ? `Variações de Cabelos e mechas em estoque por serviço:\n${servicesWithOfferDescriptions.join("\n")}` : "Cabelos e mechas: nenhum item em estoque no momento para serviços cadastrados.",
     products.length ? `Produtos e acessórios ativos:\n${products.join("\n")}` : "Produtos e acessórios: nenhum item ativo em estoque no momento.",
     enabledFlows.length
       ? `Fluxos automáticos habilitados: ${enabledFlows.join(", ")}.`
@@ -3558,7 +3654,8 @@ export function summarizeAiCommercialContext(base, settings = {}) {
     settings.allowAutoBooking
       ? "Pré-agendamento automático está permitido, mas exige dados completos e confirmação explícita antes de qualquer gravação."
       : "A IA pode conduzir e registrar uma solicitação de pré-agendamento; a equipe confirma disponibilidade e horário.",
-    "Catálogo: responda sobre cabelos naturais, mechas, microlink, queratina, fita adesiva, telas, acessórios e produtos de manutenção usando exclusivamente os itens cadastrados acima. Nunca invente produto, preço, disponibilidade, cor, peso ou comprimento.",
+    "Catálogo: a existência de um serviço é determinada pelos serviços ativos e suas variações comerciais, nunca pelo estoque físico. Para serviços com cabelo ou fibra inclusa, informe que a disponibilidade do material é confirmada por uma profissional após a avaliação. Nunca diga que o salão não oferece um serviço apenas porque não há item de estoque.",
+    "Fibra Russa: é o nome comercial de uma fibra sintética oferecida nos combos ativos. Quando a pergunta não definir o método, apresente as opções cadastradas e pergunte se a cliente prefere Fita Adesiva, Ponto Americano Invisível, Entrelace ou Microcápsula de Queratina.",
     "Promocoes: nunca trate promocao como servico. Quando a cliente perguntar por desconto, oferta, promocao ou valor de um servico com promocao relacionada, use somente as promocoes ativas listadas acima.",
     "Nunca prometa horário, pagamento ou agendamento confirmado sem uma gravação bem-sucedida no backend.",
   ].join("\n\n");
@@ -3705,7 +3802,7 @@ export function buildAiConversationMessage({
     .join("\n\n");
 
   const optionalContext = [
-    clean(commercialContext).slice(0, 1600),
+    clean(commercialContext).slice(0, 3600),
     clean(knowledgeContext).slice(0, 1300),
     `Cliente já cadastrada: ${knownClient ? "sim" : "não"}.`,
   ]
@@ -4810,7 +4907,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     settings,
     currentState,
   });
-  const commercialContext = summarizeAiCommercialContext(base, settings);
+  const commercialContext = summarizeAiCommercialContext(base, settings, concatenatedText);
   const systemPrompt = buildRuntimePrompt(settings);
 
   let knowledgeContext = "";

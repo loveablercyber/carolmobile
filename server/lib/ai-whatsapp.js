@@ -1543,18 +1543,20 @@ export async function getAiCommercialBase() {
   }
   const [services, plans, coupons, promotions, flows, knowledgeArticles, inventory, products, categories, methods, serviceVariants, serviceAddons] = await Promise.all([
     query(
-      `select s.id,s.category_id,s.hair_method_id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
+      `select s.id,s.catalog_code,s.category_id,s.hair_method_id,s.name,s.description,s.duration_minutes,s.base_price,s.deposit_amount,s.active,
         coalesce(s.is_free,false) as is_free,
         coalesce(s.show_online_booking,true) as show_online_booking,
         coalesce(s.offer_inventory_items,false) as offer_inventory_items,
-        ais.id as ai_service_settings_id,
-        coalesce(ais.active,false) as ai_active,coalesce(ais.commercial_name,s.name) as commercial_name,
-        ais.short_description,ais.detailed_description,ais.initial_price,ais.estimated_duration_minutes,
-        ais.allow_auto_quote,ais.allow_auto_booking,ais.requires_assessment,ais.requires_deposit,
-        ais.deposit_type,ais.deposit_value,ais.reference_photos_required,ais.recommended_message,ais.priority_order
+        true as ai_active,s.name as commercial_name,
+        s.description as short_description,s.description as detailed_description,
+        s.base_price as initial_price,s.duration_minutes as estimated_duration_minutes,
+        true as allow_auto_quote,coalesce(s.show_online_booking,true) as allow_auto_booking,
+        false as requires_assessment,(s.deposit_amount > 0) as requires_deposit,
+        'amount'::text as deposit_type,s.deposit_amount as deposit_value,
+        false as reference_photos_required,null::text as recommended_message,100 as priority_order
        from public.services s
-       left join public.ai_service_settings ais on ais.service_id=s.id
-       order by s.active desc,coalesce(ais.priority_order,100),s.name`,
+       where s.active=true
+       order by s.name`,
     ),
     query(
       `select p.id,p.name,p.price,p.benefits,p.active,

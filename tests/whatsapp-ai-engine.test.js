@@ -356,21 +356,18 @@ test("checks AI service hours in Sao Paulo timezone", () => {
   assert.equal(isWithinAiHours({ ...settings, allow24h: true }, new Date("2026-06-24T23:00:00.000Z")), true);
 });
 
-test("summarizes only real AI-enabled commercial data", () => {
+test("summarizes active services without requiring parallel AI settings", () => {
   const context = summarizeAiCommercialContext({
     services: [
       {
-        name: "Fita",
-        commercial_name: "Mega Hair Fita",
+        name: "Mega Hair Fita",
         active: true,
-        ai_active: true,
         base_price: 950,
         duration_minutes: 210,
       },
       {
         name: "Serviço interno",
-        active: true,
-        ai_active: false,
+        active: false,
         base_price: 1,
       },
     ],
@@ -676,23 +673,32 @@ test("isReplyingToExplanationOffer detects confirmations to explanation offers",
   assert.equal(isReplyingToExplanationOffer("sim", historyBooking), false);
 });
 
-test("summarizeAiCommercialContext includes active inventory stock", () => {
+test("summarizeAiCommercialContext uses service variants and never physical stock to decide service availability", () => {
   const base = {
     services: [
-      { id: "serv-1", name: "Alongamento", category_id: "cat-1", offer_inventory_items: true, active: true, ai_active: true }
+      { id: "serv-1", name: "Combo Fibra Russa + Ponto Americano Invisível", category_id: "cat-1", offer_inventory_items: false, active: true },
+      { id: "legacy", name: "Fibra Russa antiga", category_id: "legacy", offer_inventory_items: true, active: false },
+    ],
+    serviceVariants: [
+      { service_id: "serv-1", label: "60/65/70 cm — 100 g", length_label: "60/65/70 cm", weight_grams: 100, price: 390, duration_minutes: 240, requires_assessment: true, requires_human_confirmation: true },
+      { service_id: "serv-1", label: "75/80 cm — 100 g", length_label: "75/80 cm", weight_grams: 100, price: 430, duration_minutes: 240, requires_assessment: true, requires_human_confirmation: true },
     ],
     plans: [],
     coupons: [],
     flows: [],
     inventory: [
-      { name: "Cabelo Loiro Premium", category: "Cabelos", category_id: "cat-1", color: "Loiro Claro", shade: "9.0", length_cm: 65, weight_grams: 100, quantity: 5 }
+      { name: "Cabelo antigo", category: "Fibra Russa", category_id: "legacy", quantity: 0 }
     ]
   };
-  const summary = summarizeAiCommercialContext(base, {});
-  assert.match(summary, /Variações de Cabelos e mechas/);
-  assert.match(summary, /Loiro Claro/);
-  assert.match(summary, /Disponível: 5 un/);
-  assert.match(summary, /Nunca invente produto, preço, disponibilidade/);
+  const summary = summarizeAiCommercialContext(base, {}, "Vocês trabalham com Fibra Russa?");
+  assert.match(summary, /Combo Fibra Russa \+ Ponto Americano Invisível/);
+  assert.match(summary, /R\$\s*390,00/);
+  assert.match(summary, /R\$\s*430,00/);
+  assert.match(summary, /2 opção/);
+  assert.match(summary, /nunca pelo estoque físico/i);
+  assert.doesNotMatch(summary, /Fibra Russa antiga/);
+  assert.doesNotMatch(summary, /Cabelo antigo/);
+  assert.doesNotMatch(summary, /nenhuma variação disponível em estoque/i);
 });
 
 test("getAgendaAvailabilityContext formats slots when asking for agenda", async () => {

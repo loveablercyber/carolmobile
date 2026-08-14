@@ -1,4 +1,4 @@
-import { FormEvent, Fragment, ReactNode, useEffect, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useState } from "react";
 import {
   Bot,
   BookOpen,
@@ -115,6 +115,10 @@ type AiPanelData = {
     flows: Array<Record<string, any>>;
     conversations: Array<Record<string, any>>;
     inventory: Array<Record<string, any>>;
+    categories: Array<Record<string, any>>;
+    methods: Array<Record<string, any>>;
+    serviceVariants: Array<Record<string, any>>;
+    serviceAddons: Array<Record<string, any>>;
     logs: Array<Record<string, any>>;
     requestLogs: Array<Record<string, any>>;
     metricsSummary: Record<string, any>;
@@ -131,30 +135,8 @@ type AiTestResponse = {
     usage?: Record<string, any> | null;
   };
 };
-type AiServiceMutationResponse = {
-  data: { service: Record<string, any>; panel: AiPanelData };
-};
 type AiFlowMutationResponse = {
   data: { flow: Record<string, any>; panel: AiPanelData };
-};
-
-type ServiceForm = {
-  serviceId: string;
-  active: boolean;
-  commercialName: string;
-  shortDescription: string;
-  detailedDescription: string;
-  initialPrice: string;
-  estimatedDurationMinutes: string;
-  requiresAssessment: boolean;
-  requiresDeposit: boolean;
-  depositType: string;
-  depositValue: string;
-  referencePhotosRequired: boolean;
-  allowAutoQuote: boolean;
-  allowAutoBooking: boolean;
-  recommendedMessage: string;
-  priorityOrder: string;
 };
 
 type FlowForm = {
@@ -955,193 +937,86 @@ function AiAdminPanel({
 
 function BaseKnowledgeTab({
   panel,
-  onPanel,
-  notify,
 }: {
   panel: AiPanelData;
   onPanel: (panel: AiPanelData) => void;
   notify: (message: string) => void;
 }) {
-  const [savingServiceId, setSavingServiceId] = useState("");
-  const [showOnlyActive, setShowOnlyActive] = useState(false);
-  const [viewMode, setViewMode] = useState<"cards" | "list">("cards");
-  const [expandedServiceId, setExpandedServiceId] = useState<string | null>(null);
-
-  const saveService = async (form: ServiceForm) => {
-    setSavingServiceId(form.serviceId);
-    try {
-      const result = await apiFetch<AiServiceMutationResponse>(
-        "/api/ai-whatsapp?resource=service-settings",
-        { method: "POST", body: JSON.stringify(form) },
-      );
-      onPanel(result.data.panel);
-      notify("Serviço salvo na Base de Atendimento.");
-      return true;
-    } catch (error) {
-      console.error("AI WhatsApp service settings error", error);
-      notify(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível salvar o serviço para a IA.",
-      );
-      return false;
-    } finally {
-      setSavingServiceId("");
-    }
-  };
-
   const formatMoney = (val: any) => {
     return Number(val || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   };
 
-  const filteredServices = (panel.base.services || []).filter(
-    (service) => !showOnlyActive || service.ai_active
-  );
+  const filteredServices = (panel.base.services || []).filter((service) => service.active !== false);
+  const variants = panel.base.serviceVariants || [];
+  const categoryName = (id: string) => panel.base.categories?.find((item) => item.id === id)?.name || "Sem categoria";
+  const methodName = (id: string) => panel.base.methods?.find((item) => item.id === id)?.name || "Sem método";
 
   return (
     <div className="grid gap-5 xl:grid-cols-3">
       <section className="surface p-6 xl:col-span-2">
         <SectionHeading title="Serviços usados pela IA" />
         <p className="muted mb-5 text-sm">
-          Libere apenas serviços reais do catálogo. A IA só pode citar valores e
-          descrições salvos aqui.
+          Lista automática e somente leitura dos serviços ativos cadastrados.
+          Edite nomes, valores, duração e variações exclusivamente em Serviços.
         </p>
 
-        <div className="mb-5 flex flex-wrap items-center gap-4 bg-stone-50 p-4 rounded-[20px]">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-stone-500">Filtrar:</span>
-            <select
-              className="field py-1 px-3 bg-white text-xs min-h-8"
-              value={showOnlyActive ? "active" : "all"}
-              onChange={(e) => setShowOnlyActive(e.target.value === "active")}
-            >
-              <option value="all">Todos os serviços</option>
-              <option value="active">Apenas Ativos no WhatsApp</option>
-            </select>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-stone-500">Visualização:</span>
-            <div className="flex rounded-xl bg-stone-200/60 p-0.5">
-              <button
-                type="button"
-                className={`rounded-lg px-3 py-1 text-xs font-bold transition-all ${
-                  viewMode === "cards" ? "bg-white text-stone-800 shadow-sm" : "text-stone-500"
-                }`}
-                onClick={() => setViewMode("cards")}
-              >
-                Cards
-              </button>
-              <button
-                type="button"
-                className={`rounded-lg px-3 py-1 text-xs font-bold transition-all ${
-                  viewMode === "list" ? "bg-white text-stone-800 shadow-sm" : "text-stone-500"
-                }`}
-                onClick={() => setViewMode("list")}
-              >
-                Lista
-              </button>
-            </div>
-          </div>
-        </div>
-
         {filteredServices.length ? (
-          viewMode === "cards" ? (
-            <div className="grid gap-4">
-              {filteredServices.map((service) => (
-                <ServiceSettingsCard
-                  key={service.id}
-                  service={service}
-                  inventory={panel.base.inventory || []}
-                  saving={savingServiceId === service.id}
-                  disabled={!!savingServiceId}
-                  onSave={saveService}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="overflow-x-auto rounded-[20px] border border-black/5 bg-white">
-              <table className="w-full text-left text-sm text-stone-600 border-collapse">
-                <thead>
-                  <tr className="border-b border-black/5 text-[11px] font-bold text-stone-400 uppercase tracking-wider bg-stone-50/50">
-                    <th className="py-3 px-4">Serviço</th>
-                    <th className="py-3 px-4">Preço Base</th>
-                    <th className="py-3 px-4">Duração</th>
-                    <th className="py-3 px-4">Status WhatsApp</th>
-                    <th className="py-3 px-4 text-right">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-black/5">
-                  {filteredServices.map((service) => {
-                    const isExpanded = expandedServiceId === service.id;
-                    const catalogInactive = service.active === false;
-                    return (
-                      <Fragment key={service.id}>
-                        <tr className="hover:bg-black/[0.01] transition-colors">
-                          <td className="py-3 px-4">
-                            <div className="font-bold text-stone-800">{service.name}</div>
-                            {catalogInactive && <span className="text-[10px] text-rose-500 font-semibold">Catálogo inativo</span>}
-                          </td>
-                          <td className="py-3 px-4 font-mono">
-                            {service.offer_inventory_items ? "Estoque" : formatMoney(service.base_price)}
-                          </td>
-                          <td className="py-3 px-4 font-mono">
-                            {service.duration_minutes || "—"} min
-                          </td>
-                          <td className="py-3 px-4">
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={Boolean(service.ai_active)}
-                                disabled={!!savingServiceId || (catalogInactive && !service.ai_active)}
-                                onChange={async (event) => {
-                                  const form = serviceToForm(service);
-                                  form.active = event.target.checked;
-                                  await saveService(form);
-                                }}
-                              />
-                              <Badge tone={service.ai_active ? "green" : "neutral"}>
-                                {service.ai_active ? "Ativo" : "Inativo"}
-                              </Badge>
-                            </label>
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <button
-                              type="button"
-                              className="btn-secondary py-1 px-3 text-xs"
-                              onClick={() => setExpandedServiceId(isExpanded ? null : service.id)}
-                            >
-                              {isExpanded ? "Fechar" : "Editar"}
-                            </button>
-                          </td>
-                        </tr>
-                        {isExpanded && (
-                          <tr>
-                            <td colSpan={5} className="py-4 px-4 bg-stone-50/50">
-                              <div className="max-w-4xl mx-auto">
-                                <ServiceSettingsCard
-                                  service={service}
-                                  inventory={panel.base.inventory || []}
-                                  saving={savingServiceId === service.id}
-                                  disabled={!!savingServiceId}
-                                  onSave={saveService}
-                                />
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )
+          <div className="overflow-x-auto rounded-[20px] border border-black/5 bg-white">
+            <table className="w-full border-collapse text-left text-sm text-stone-600">
+              <thead>
+                <tr className="border-b border-black/5 bg-stone-50/50 text-[11px] font-bold uppercase tracking-wider text-stone-400">
+                  <th className="px-4 py-3">Serviço</th>
+                  <th className="px-4 py-3">Categoria / método</th>
+                  <th className="px-4 py-3">Valores</th>
+                  <th className="px-4 py-3">Duração</th>
+                  <th className="px-4 py-3">Variações</th>
+                  <th className="px-4 py-3">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/5">
+                {filteredServices.map((service) => {
+                  const serviceVariants = variants.filter((variant) => variant.service_id === service.id && variant.active !== false);
+                  const prices = serviceVariants.map((variant) => Number(variant.price || 0));
+                  const durations = serviceVariants.map((variant) => Number(variant.duration_minutes || 0)).filter(Boolean);
+                  const valueText = prices.length
+                    ? `${formatMoney(Math.min(...prices))}${Math.max(...prices) !== Math.min(...prices) ? ` – ${formatMoney(Math.max(...prices))}` : ""}`
+                    : formatMoney(service.base_price);
+                  const durationText = durations.length
+                    ? `${Math.min(...durations)}${Math.max(...durations) !== Math.min(...durations) ? ` – ${Math.max(...durations)}` : ""} min`
+                    : `${service.duration_minutes || "—"} min`;
+                  return (
+                    <tr key={service.id} className="transition-colors hover:bg-black/[0.01]">
+                      <td className="px-4 py-3">
+                        <div className="font-bold text-stone-800">{service.name}</div>
+                        <div className="mt-1 max-w-xs text-xs text-stone-400">{service.description || "Sem descrição"}</div>
+                      </td>
+                      <td className="px-4 py-3 text-xs">
+                        <div>{categoryName(service.category_id)}</div>
+                        <div className="text-stone-400">{methodName(service.hair_method_id)}</div>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs">{valueText}</td>
+                      <td className="px-4 py-3 font-mono text-xs">{durationText}</td>
+                      <td className="px-4 py-3">{serviceVariants.length}</td>
+                      <td className="px-4 py-3"><Badge tone="green">Ativo</Badge></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <EmptyState
-            title="Nenhum serviço correspondente"
-            text={showOnlyActive ? "Não há serviços ativos no WhatsApp atualmente." : "Cadastre serviços reais antes de liberar respostas comerciais pela IA."}
+            title="Nenhum serviço ativo"
+            text="Ative um serviço em Serviços para disponibilizá-lo ao site e à IA."
           />
         )}
+        <button
+          type="button"
+          className="btn-secondary mt-5"
+          onClick={() => { window.location.href = "/admin/servicos"; }}
+        >
+          Gerenciar em Serviços
+        </button>
       </section>
 
       <section className="surface p-6">
@@ -1170,290 +1045,6 @@ function BaseKnowledgeTab({
         </div>
       </section>
     </div>
-  );
-}
-
-function serviceToForm(service: Record<string, any>): ServiceForm {
-  return {
-    serviceId: String(service.id || ""),
-    active: Boolean(service.ai_active),
-    commercialName: String(service.commercial_name || service.name || ""),
-    shortDescription: String(
-      service.short_description || service.description || "",
-    ),
-    detailedDescription: String(
-      service.detailed_description || service.description || "",
-    ),
-    initialPrice: String(service.initial_price ?? service.base_price ?? ""),
-    estimatedDurationMinutes: String(
-      service.estimated_duration_minutes ?? service.duration_minutes ?? "",
-    ),
-    requiresAssessment: Boolean(service.requires_assessment),
-    requiresDeposit: Boolean(service.requires_deposit),
-    depositType: String(service.deposit_type || "amount"),
-    depositValue: String(service.deposit_value ?? service.deposit_amount ?? 0),
-    referencePhotosRequired: Boolean(service.reference_photos_required),
-    allowAutoQuote: Boolean(service.allow_auto_quote),
-    allowAutoBooking: Boolean(service.allow_auto_booking),
-    recommendedMessage: String(service.recommended_message || ""),
-    priorityOrder: String(service.priority_order || 100),
-  };
-}
-
-function ServiceSettingsCard({
-  service,
-  inventory,
-  saving,
-  disabled,
-  onSave,
-}: {
-  service: Record<string, any>;
-  inventory: Record<string, any>[];
-  saving: boolean;
-  disabled: boolean;
-  onSave: (form: ServiceForm) => Promise<boolean>;
-}) {
-  const [form, setForm] = useState<ServiceForm>(() => serviceToForm(service));
-  const matchingItems = (inventory || []).filter((item: any) => 
-    item.category_id === service.category_id && 
-    (!service.hair_method_id || item.hair_method_id === service.hair_method_id)
-  );
-
-  useEffect(() => {
-    setForm(serviceToForm(service));
-  }, [service]);
-
-  const set = <K extends keyof ServiceForm>(key: K, value: ServiceForm[K]) => {
-    setForm((current) => ({ ...current, [key]: value }));
-  };
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    const ok = await onSave(form);
-    if (!ok) setForm(serviceToForm(service));
-  };
-
-  const disabledAll = disabled || saving;
-  const catalogInactive = service.active === false;
-
-  return (
-    <form onSubmit={submit} className="rounded-[24px] bg-warm p-4">
-      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <b className="text-sm">{service.name}</b>
-            <Badge tone={form.active ? "green" : "neutral"}>
-              {form.active ? "IA ativa" : "não usado"}
-            </Badge>
-            {catalogInactive && <Badge tone="rose">catálogo inativo</Badge>}
-          </div>
-          <p className="mt-1 text-xs text-stone-500">
-            Catálogo: {service.offer_inventory_items ? "Sob variação de item" : formatMoney(service.base_price)} •{" "}
-            {service.duration_minutes || "—"} min
-          </p>
-        </div>
-        <label className="flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-xs font-bold text-stone-600">
-          <input
-            type="checkbox"
-            checked={form.active}
-            disabled={disabledAll || (catalogInactive && !form.active)}
-            onChange={(event) => set("active", event.target.checked)}
-          />
-          Ativo no WhatsApp
-        </label>
-      </div>
-
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <Field label="Nome comercial">
-          <input
-            className="field bg-white"
-            value={form.commercialName}
-            disabled={disabledAll}
-            onChange={(event) => set("commercialName", event.target.value)}
-          />
-        </Field>
-        {service.offer_inventory_items ? (
-          <div className="flex items-center text-xs font-bold text-stone-500 bg-white/40 rounded-2xl px-4 py-3">
-            Preço variável conforme item do estoque
-          </div>
-        ) : (
-          <Field label="Valor inicial">
-            <input
-              className="field bg-white"
-              type="number"
-              min={0}
-              step="0.01"
-              value={form.initialPrice}
-              disabled={disabledAll}
-              onChange={(event) => set("initialPrice", event.target.value)}
-            />
-          </Field>
-        )}
-        <Field label="Duração estimada em minutos">
-          <input
-            className="field bg-white"
-            type="number"
-            min={5}
-            max={720}
-            value={form.estimatedDurationMinutes}
-            disabled={disabledAll}
-            onChange={(event) =>
-              set("estimatedDurationMinutes", event.target.value)
-            }
-          />
-        </Field>
-        <Field label="Ordem de prioridade">
-          <input
-            className="field bg-white"
-            type="number"
-            min={1}
-            max={999}
-            value={form.priorityOrder}
-            disabled={disabledAll}
-            onChange={(event) => set("priorityOrder", event.target.value)}
-          />
-        </Field>
-      </div>
-
-      <Field label="Descrição curta para WhatsApp">
-        <textarea
-          className="field min-h-20 bg-white"
-          value={form.shortDescription}
-          disabled={disabledAll}
-          onChange={(event) => set("shortDescription", event.target.value)}
-        />
-      </Field>
-
-      <Field label="Descrição detalhada">
-        <textarea
-          className="field min-h-24 bg-white"
-          value={form.detailedDescription}
-          disabled={disabledAll}
-          onChange={(event) => set("detailedDescription", event.target.value)}
-        />
-      </Field>
-
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <CheckField
-          label="Exige avaliação"
-          checked={form.requiresAssessment}
-          disabled={disabledAll}
-          onChange={(checked) => set("requiresAssessment", checked)}
-        />
-        <CheckField
-          label="Fotos de referência obrigatórias"
-          checked={form.referencePhotosRequired}
-          disabled={disabledAll}
-          onChange={(checked) => set("referencePhotosRequired", checked)}
-        />
-        <CheckField
-          label="Permitir pré-orçamento automático"
-          checked={form.allowAutoQuote}
-          disabled={disabledAll}
-          onChange={(checked) => set("allowAutoQuote", checked)}
-        />
-        <CheckField
-          label="Permitir pré-agendamento automático"
-          checked={form.allowAutoBooking}
-          disabled={disabledAll}
-          onChange={(checked) => set("allowAutoBooking", checked)}
-        />
-        {!service.offer_inventory_items && (
-          <CheckField
-            label="Exige sinal"
-            checked={form.requiresDeposit}
-            disabled={disabledAll}
-            onChange={(checked) => set("requiresDeposit", checked)}
-          />
-        )}
-      </div>
-
-      {!service.offer_inventory_items && form.requiresDeposit && (
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          <Field label="Tipo do sinal">
-            <select
-              className="field bg-white"
-              value={form.depositType}
-              disabled={disabledAll}
-              onChange={(event) => set("depositType", event.target.value)}
-            >
-              <option value="amount">Valor fixo</option>
-              <option value="percentage">Percentual</option>
-            </select>
-          </Field>
-          <Field label="Valor do sinal">
-            <input
-              className="field bg-white"
-              type="number"
-              min={0}
-              step="0.01"
-              value={form.depositValue}
-              disabled={disabledAll}
-              onChange={(event) => set("depositValue", event.target.value)}
-            />
-          </Field>
-        </div>
-      )}
-
-      <Field label="Mensagem recomendada">
-        <textarea
-          className="field min-h-20 bg-white"
-          value={form.recommendedMessage}
-          disabled={disabledAll}
-          onChange={(event) => set("recommendedMessage", event.target.value)}
-          placeholder="Ex.: Ideal para quem busca mais volume com acabamento discreto."
-        />
-      </Field>
-
-      {service.offer_inventory_items && (
-        <div className="mt-4 rounded-2xl border border-black/5 p-4 bg-white/40 space-y-2">
-          <span className="text-[10px] font-bold text-stone-500 uppercase tracking-wider block">
-            Itens em estoque vinculados para a IA:
-          </span>
-          {matchingItems.length > 0 ? (
-            <div className="divide-y divide-black/5 max-h-40 overflow-y-auto pr-1">
-              {matchingItems.map((item: any) => (
-                <div key={item.id} className="py-1.5 flex justify-between items-center text-xs">
-                  <div>
-                    <span className="font-bold">{item.name || "Sem código"}</span>
-                    <span className="text-stone-400 mx-1">•</span>
-                    <span>{item.color} {item.shade ? `/ ${item.shade}` : ""}</span>
-                    <span className="text-stone-400 mx-1">•</span>
-                    <span>{item.length_cm ? (String(item.length_cm).toLowerCase().includes('cm') ? item.length_cm : `${item.length_cm}cm`) : "—"}</span>
-                    <span className="text-stone-400 mx-1">•</span>
-                    <span>{item.weight_grams ? `${item.weight_grams}g` : "—"}</span>
-                  </div>
-                  <div className="text-right">
-                    <span className="font-bold block">
-                      {Number(item.suggested_price || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                    </span>
-                    <span className="text-[10px] text-stone-400">
-                      Disponível: {item.quantity} un
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-stone-400 italic">
-              Nenhum item ativo no estoque com a categoria e método deste serviço.
-            </p>
-          )}
-        </div>
-      )}
-
-      {catalogInactive && (
-        <p className="mt-3 rounded-xl bg-rose-50 p-3 text-xs font-semibold text-rose-700">
-          Este serviço está inativo no catálogo real. Reative no cadastro de
-          serviços antes de liberar para a IA.
-        </p>
-      )}
-
-      <button disabled={disabledAll} className="btn-primary mt-4">
-        <ShieldCheck size={15} />
-        {saving ? "Salvando serviço…" : "Salvar serviço"}
-      </button>
-    </form>
   );
 }
 

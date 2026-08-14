@@ -131,7 +131,7 @@ test("processIncomingWhatsAppWebhook opens the backend service catalog on greeti
     if (text.includes("ai_settings") && text.includes("select")) {
       return { rowCount: 1, rows: [mockSettings] };
     }
-    if (text.includes("select s.id,s.category_id") && text.includes("from public.services s")) {
+    if (text.includes("select s.id,s.catalog_code,s.category_id") && text.includes("from public.services s")) {
       return {
         rowCount: 2,
         rows: [

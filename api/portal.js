@@ -21,6 +21,7 @@ import {
   send,
 } from "../server/lib/http.js";
 import { resolveReceiptReview } from "../server/lib/payment-rules.js";
+import { invalidateAiBaseCache } from "../server/lib/ai-whatsapp.js";
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -922,6 +923,7 @@ async function saveAdminServiceVariant(user, body) {
     ? await query(`update public.service_variants set service_id=$1,code=$2,label=$3,purpose=$4,operation=$5,material_mode=$6,length_label=$7,weight_grams=$8,weight_mode=$9,unit_type=$10,unit_count=$11,unit_mode=$12,price=$13,duration_minutes=$14,deposit_type=$15,deposit_value=$16,deposit_non_refundable=$17,requires_assessment=$18,requires_human_confirmation=$19,show_online_booking=$20,allow_whatsapp_booking=$21,active=$22,sort_order=$23,notes=$24,updated_at=now() where id=$25 returning *`,[...fields,id])
     : await query(`insert into public.service_variants(service_id,code,label,purpose,operation,material_mode,length_label,weight_grams,weight_mode,unit_type,unit_count,unit_mode,price,duration_minutes,deposit_type,deposit_value,deposit_non_refundable,requires_assessment,requires_human_confirmation,show_online_booking,allow_whatsapp_booking,active,sort_order,notes) values(${fields.map((_,i)=>`$${i+1}`).join(",")}) returning *`,fields);
   if (!result.rows[0]) throw appError("Variação não encontrada.",404);
+  invalidateAiBaseCache();
   return result.rows[0];
 }
 
@@ -929,7 +931,7 @@ async function deleteAdminServiceVariant(user, body) {
   requireRole(user, ["admin"]);
   const id = validUuid(body.id, "Variação");
   try {
-    return await transaction(async (client) => {
+    const result = await transaction(async (client) => {
       const previous = await client.query(
         "select * from public.service_variants where id=$1",
         [id],
@@ -949,6 +951,8 @@ async function deleteAdminServiceVariant(user, body) {
       );
       return { success: true };
     });
+    invalidateAiBaseCache();
+    return result;
   } catch (error) {
     if (error.code === "23503") {
       throw appError(
@@ -2980,6 +2984,7 @@ async function saveAdminService(user, body) {
     );
     return service;
   });
+  invalidateAiBaseCache();
   return result;
 }
 
@@ -3000,6 +3005,7 @@ async function deleteAdminService(user, body) {
       );
       return { success: true };
     });
+    invalidateAiBaseCache();
     return result;
   } catch (error) {
     if (error.code === "23503") {
