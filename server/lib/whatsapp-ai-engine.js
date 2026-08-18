@@ -135,10 +135,53 @@ function withBookingFlowHelp(text, reason) {
   return [body, BOOKING_FLOW_HELP_TEXT].filter(Boolean).join("\n\n");
 }
 
-export function isBookingFlowInterruptionQuestion(text, history = []) {
-  return isClientAskingQuestion(text) ||
+function currentFlowOptionLabels(state = {}) {
+  const optionGroups = {
+    awaiting_category: [state.categoryOptions, ["categoryName"]],
+    awaiting_method: [state.methodOptions, ["methodName"]],
+    awaiting_service: [state.serviceOptions, ["serviceName", "requestedServiceName"]],
+    awaiting_inventory: [state.inventoryOptions, ["inventoryName"]],
+    awaiting_addon: [state.addonOptions, ["addonName"]],
+  };
+  const [options, fields] = optionGroups[String(state.status || "")] || [[], []];
+  return (Array.isArray(options) ? options : [])
+    .flatMap((option) => fields.map((field) => normalizeText(option?.[field] || "")))
+    .filter(Boolean);
+}
+
+function isExplicitCurrentFlowSelection(text, state = {}) {
+  if (numericChoice(text)) return true;
+  const normalized = normalizeText(text);
+  if (!normalized) return false;
+  return currentFlowOptionLabels(state).some((label) => label === normalized);
+}
+
+function hasExplicitBookingAction(text) {
+  const normalized = normalizeText(text);
+  return includesAny(normalized, [
+    "quero agendar",
+    "queria agendar",
+    "gostaria de agendar",
+    "posso agendar",
+    "vamos agendar",
+    "quero marcar",
+    "marcar horario",
+    "reservar horario",
+    "fazer agendamento",
+    "iniciar agendamento",
+    "escolho o servico",
+    "escolho esse",
+  ]);
+}
+
+export function isBookingFlowInterruptionQuestion(text, history = [], { base = {}, state = {} } = {}) {
+  if (
+    isClientAskingQuestion(text) ||
     isReplyingToExplanationOffer(text, history) ||
-    isClientChangingSubjectOrNegating(text);
+    isClientChangingSubjectOrNegating(text)
+  ) return true;
+  if (isExplicitCurrentFlowSelection(text, state) || hasExplicitBookingAction(text)) return false;
+  return hasCommercialCatalogReference(text, base);
 }
 
 function prunePayload(value, depth = 0) {
@@ -238,6 +281,22 @@ function hasCommercialCatalogReference(text, base = {}) {
       service.description,
     ].filter(Boolean).join(" "));
   }
+  for (const category of base.categories || []) {
+    if (category.active === false) continue;
+    entries.push([category.name, category.description].filter(Boolean).join(" "));
+  }
+  for (const method of base.methods || []) {
+    if (method.active === false) continue;
+    entries.push([method.name, method.description].filter(Boolean).join(" "));
+  }
+  for (const variant of base.serviceVariants || []) {
+    if (variant.active === false || variant.allow_whatsapp_booking === false) continue;
+    entries.push([variant.label, variant.length_label, variant.notes].filter(Boolean).join(" "));
+  }
+  for (const addon of base.serviceAddons || []) {
+    if (addon.active === false || addon.allow_whatsapp_booking === false) continue;
+    entries.push([addon.name, addon.description].filter(Boolean).join(" "));
+  }
   for (const item of base.products || []) entries.push([item.name, item.category].filter(Boolean).join(" "));
   for (const article of base.knowledgeArticles || []) {
     entries.push([article.title, article.short_answer, article.category].filter(Boolean).join(" "));
@@ -275,6 +334,10 @@ function serviceSearchText(service) {
       .filter(Boolean)
       .join(" "),
   );
+}
+
+export function serializeBookingState(state = {}) {
+  return JSON.stringify(state && typeof state === "object" ? state : {});
 }
 
 const COMMERCIAL_TOPIC_ALIASES = [
@@ -502,6 +565,68 @@ function matchingServicesForPriceQuestion(text, base = {}) {
   });
 }
 
+function matchingServicesForCatalogQuery(text, base = {}) {
+  const categories = new Map((base.categories || []).map((item) => [item.id, item.name || ""]));
+  const methods = new Map((base.methods || []).map((item) => [item.id, item.name || ""]));
+  return structuredCatalogServices(base).filter((service) => {
+    const variants = (base.serviceVariants || [])
+      .filter((variant) => variant.service_id === service.id && variant.active !== false)
+      .map((variant) => [
+        variant.label,
+        variant.length_label,
+        variant.weight_grams ? `${variant.weight_grams} gramas` : "",
+      ].filter(Boolean).join(" "));
+    const searchable = [
+      service.name,
+      service.commercial_name,
+      service.short_description,
+      service.detailed_description,
+      service.description,
+      categories.get(service.category_id),
+      methods.get(service.hair_method_id),
+      ...variants,
+    ].filter(Boolean).join(" ");
+    return textMatchesCatalogEntry(text, searchable);
+  });
+}
+
+export function buildCatalogExplorationResponse(text, base = {}) {
+  const matches = matchingServicesForCatalogQuery(text, base);
+  if (!matches.length) return null;
+
+  const optionLines = matches.slice(0, 6).map((service) => {
+    const name = service.commercial_name || service.name;
+    const variants = (base.serviceVariants || []).filter((variant) =>
+      variant.service_id === service.id &&
+      variant.active !== false &&
+      variant.allow_whatsapp_booking !== false,
+    );
+    const prices = variants.map((variant) => Number(variant.price || 0)).filter((value) => value >= 0);
+    const priceText = prices.length
+      ? `${formatBookingCurrency(Math.min(...prices))}${Math.max(...prices) !== Math.min(...prices) ? ` a ${formatBookingCurrency(Math.max(...prices))}` : ""}`
+      : (isFreeService(service) ? "sem custo" : (serviceValue(service) > 0 ? formatBookingCurrency(serviceValue(service)) : "valor sob consulta"));
+    return `- ${name}: ${priceText}`;
+  });
+
+  if (matches.length === 1) {
+    const service = matches[0];
+    const description = clean(service.short_description || service.description || service.detailed_description);
+    return [
+      `Encontrei este serviço relacionado: ${service.commercial_name || service.name}.`,
+      description,
+      optionLines[0],
+      "A indicação final é confirmada na avaliação prévia. Você quer saber como funciona, consultar as variações ou agendar a avaliação?",
+    ].filter(Boolean).join("\n\n");
+  }
+
+  return [
+    "Encontrei estas opções relacionadas no catálogo ativo:",
+    optionLines.join("\n"),
+    matches.length > 6 ? `Há mais ${matches.length - 6} opção(ões) relacionadas.` : "",
+    "Qual opção você quer conhecer melhor? Posso explicar o procedimento, mostrar as variações e valores ou iniciar o agendamento da avaliação.",
+  ].filter(Boolean).join("\n\n");
+}
+
 function matchingServiceForPriceQuestion(text, base = {}) {
   return matchingServicesForPriceQuestion(text, base)[0] || null;
 }
@@ -720,6 +845,51 @@ export function findEvaluationService(servicesList = []) {
   }) || null;
 }
 
+export function prepareRequiredAssessmentBooking(state = {}, base = {}) {
+  if (!state.serviceRequiresAssessment || state.bookingPurpose === "assessment") return false;
+  const assessment = (base.services || []).find((service) =>
+    service.active !== false &&
+    service.show_online_booking !== false &&
+    service.catalog_code === "assessment-extensions",
+  ) || findEvaluationService(bookableAiServices(base));
+  if (!assessment || assessment.id === state.serviceId) return false;
+
+  const requestedProcedure = {
+    serviceId: state.serviceId || "",
+    serviceVariantId: state.serviceVariantId || "",
+    serviceVariantCode: state.serviceVariantCode || "",
+    serviceName: state.serviceName || state.requestedServiceName || "",
+    value: Number(state.serviceValue || 0),
+    durationMinutes: Number(state.serviceDurationMinutes || 0),
+  };
+  const assessmentDetails = bookingServiceDetails(assessment);
+  const assessmentName = assessment.commercial_name || assessment.name;
+  Object.assign(state, {
+    bookingPurpose: "assessment",
+    requestedProcedure,
+    requestedServiceId: requestedProcedure.serviceId,
+    requestedServiceVariantId: requestedProcedure.serviceVariantId,
+    requestedServiceName: requestedProcedure.serviceName,
+    serviceId: assessment.id,
+    serviceVariantId: "",
+    serviceVariantCode: "",
+    serviceName: assessmentName,
+    baseServiceName: assessmentName,
+    serviceValue: serviceValue(assessment),
+    serviceIsFree: isFreeService(assessment),
+    offerInventoryItems: false,
+    ...assessmentDetails,
+    serviceRequiresAssessment: false,
+    serviceDetailsAccepted: true,
+    addonOptions: [],
+    addonIds: [],
+    addons: [],
+    addonDecisionMade: true,
+    serviceNote: `Como ${requestedProcedure.serviceName} exige avaliação prévia, este horário será reservado para a avaliação. O procedimento definitivo será confirmado e agendado separadamente pela profissional.`,
+  });
+  return true;
+}
+
 export function selectBookingService(text, base = {}, state = {}) {
   const choice = numericChoice(text);
   if (state.status === "awaiting_service" && Array.isArray(state.serviceOptions)) {
@@ -729,14 +899,16 @@ export function selectBookingService(text, base = {}, state = {}) {
     }
 
     const normalizedChoice = normalizeText(text);
-    const selected = state.serviceOptions.find((item) => {
+    const exact = state.serviceOptions.filter((item) => {
       const serviceName = normalizeText(item.serviceName || item.requestedServiceName || "");
-      return serviceName && (
-        normalizedChoice === serviceName ||
-        serviceName.includes(normalizedChoice) ||
-        normalizedChoice.includes(serviceName)
-      );
+      return serviceName && normalizedChoice === serviceName;
     });
+    if (exact.length === 1) return exact[0]?.serviceId ? exact[0] : null;
+    const partial = state.serviceOptions.filter((item) => {
+      const serviceName = normalizeText(item.serviceName || item.requestedServiceName || "");
+      return serviceName && (serviceName.includes(normalizedChoice) || normalizedChoice.includes(serviceName));
+    });
+    const selected = partial.length === 1 ? partial[0] : null;
     return selected?.serviceId ? selected : null;
   }
 
@@ -745,7 +917,7 @@ export function selectBookingService(text, base = {}, state = {}) {
   const services = (base.services || []).filter((service) => service.active !== false);
   const bookable = bookableAiServices(base);
   const evaluation = findEvaluationService(bookable);
-  const matched = services.find((service) => {
+  const matching = services.filter((service) => {
     const nameStr = normalizeText(service.commercial_name || service.name || "");
     if (!nameStr) return false;
 
@@ -764,6 +936,16 @@ export function selectBookingService(text, base = {}, state = {}) {
     }
     return false;
   });
+  const exactMatches = matching.filter((service) => {
+    const name = normalizeText(service.commercial_name || service.name || "");
+    return name.length >= 5 && normalized.includes(name);
+  });
+  const candidates = exactMatches.length ? exactMatches : matching;
+  const matched = candidates.length === 1 ? candidates[0] : null;
+
+  // Uma referência compartilhada por vários serviços (por exemplo, somente o
+  // material) nunca deve selecionar silenciosamente o primeiro item do catálogo.
+  if (candidates.length > 1) return null;
 
   if (matched?.allow_auto_booking) {
     return {
@@ -1518,11 +1700,19 @@ function optionLines(options, formatter) {
 function slotPageLines(options = [], start = 0) {
   const visible = options.slice(start, start + SLOT_PAGE_SIZE);
   const lines = [optionLines(visible, formatSlot)];
-  const nextCommand = start + SLOT_PAGE_SIZE + 1;
   if (options.length > start + SLOT_PAGE_SIZE) {
-    lines.push(`Digite ${nextCommand} para ver mais horários.`);
+    lines.push(`Digite "mais horários" para ver as próximas opções.`);
   }
   return lines.filter(Boolean).join("\n");
+}
+
+export function selectDisplayedBookingSlot(state = {}, text = "") {
+  const choice = numericChoice(text);
+  if (!choice || !Array.isArray(state.slotOptions)) return null;
+  const pageStart = Number(state.slotPageStart || 0);
+  return state.slotOptions
+    .slice(pageStart, pageStart + SLOT_PAGE_SIZE)
+    .find((item) => Number(item.id) === choice) || null;
 }
 
 export function buildBookingResumePrompt(state = {}) {
@@ -1975,7 +2165,7 @@ async function saveBookingState(conversationId, state) {
     `update public.whatsapp_conversations
         set booking_state=$2, updated_at=now()
       where id=$1`,
-    [conversationId, JSON.stringify(prunePayload(state))],
+    [conversationId, serializeBookingState(state)],
   );
 }
 
@@ -2219,20 +2409,12 @@ async function availableBookingSlots(client, { serviceId, serviceVariantId = "",
   let durationMinutes = Number(service.rows[0].duration_minutes || 60);
   if (serviceVariantId) {
     const variant = await client.query(
-      `select duration_minutes,requires_assessment from public.service_variants
+      `select duration_minutes from public.service_variants
        where id=$1 and service_id=$2 and active and allow_whatsapp_booking limit 1`,
       [serviceVariantId, serviceId],
     );
     if (!variant.rows[0]) return { service: null, slots: [] };
-    if (variant.rows[0].requires_assessment) {
-      const assessment = await client.query(
-        `select duration_minutes from public.services
-         where catalog_code='assessment-extensions' and active limit 1`,
-      );
-      durationMinutes = Number(assessment.rows[0]?.duration_minutes || 60);
-    } else {
-      durationMinutes = Number(variant.rows[0].duration_minutes || durationMinutes);
-    }
+    durationMinutes = Number(variant.rows[0].duration_minutes || durationMinutes);
   }
 
   const professionals = await client.query(
@@ -2350,11 +2532,8 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [professional.rows[0].id]);
 
     const startsAt = new Date(`${state.date}T${state.time}:00-03:00`);
-    const assessment = variant.rows[0]?.requires_assessment
-      ? await client.query(`select duration_minutes from public.services where catalog_code='assessment-extensions' and active limit 1`)
-      : { rows: [] };
     const addonDuration = addons.rows.reduce((sum, addon) => sum + Number(addon.duration_minutes || 0), 0);
-    const durationMinutes = Number(assessment.rows[0]?.duration_minutes || (Number(variant.rows[0]?.duration_minutes || service.rows[0].duration_minutes || 60) + addonDuration));
+    const durationMinutes = Number(variant.rows[0]?.duration_minutes || service.rows[0].duration_minutes || 60) + addonDuration;
     const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000);
     const { period, error: periodError } = schedulePeriod(startsAt, endsAt);
     if (periodError) throw new Error(periodError);
@@ -2989,6 +3168,9 @@ function buildBookingSummary(state) {
   const depositText = state.serviceRequiresDeposit ? `\n💳 Sinal: R$ ${Number(state.serviceDepositAmount || 0).toFixed(2)}` : "";
   return [
     `💇 *Serviço:* ${state.serviceName}`,
+    state.bookingPurpose === "assessment" && state.requestedServiceName
+      ? `✨ *Interesse informado:* ${state.requestedServiceName}`
+      : "",
     state.professionalName ? `👤 *Profissional:* ${state.professionalName}` : "",
     `📅 *Data:* ${formatDateLabel(state.date)}`,
     `🕒 *Horário:* ${state.time}`,
@@ -3255,16 +3437,23 @@ export async function handleStructuredBookingFlow({
     state.serviceDetailsAccepted = true;
     state.status = "collecting";
 
-    const inventoryResult = await processServiceHierarchySelection(
-      text,
-      base,
-      state,
-      conversationId,
-      normalized,
-      false,
-      "",
-    );
-    if (inventoryResult) return inventoryResult;
+    const assessmentPrepared = prepareRequiredAssessmentBooking(state, base);
+    if (!assessmentPrepared) {
+      const inventoryResult = await processServiceHierarchySelection(
+        text,
+        base,
+        state,
+        conversationId,
+        normalized,
+        false,
+        "",
+      );
+      if (inventoryResult) return inventoryResult;
+    }
+  }
+
+  if (state.serviceRequiresAssessment && state.serviceDetailsAccepted) {
+    prepareRequiredAssessmentBooking(state, base);
   }
 
   if (state.serviceVariantId && state.serviceDetailsAccepted && !state.addonDecisionMade) {
@@ -3398,8 +3587,7 @@ export async function handleStructuredBookingFlow({
         });
         return { ok: true, replied: true, reason: "booking_slot_more_options", conversationId };
       }
-      const displayedSlots = state.slotOptions.slice(pageStart, pageStart + SLOT_PAGE_SIZE);
-      const selected = displayedSlots.find((item) => Number(item.id) === choice);
+      const selected = selectDisplayedBookingSlot(state, text);
       if (selected) {
         Object.assign(state, {
           date: selected.date,
@@ -4382,6 +4570,9 @@ export function buildLocalIntentResponse(text, base = {}, context = {}) {
     ].join("\n\n");
   }
 
+  const catalogExplorationResponse = buildCatalogExplorationResponse(text, base);
+  if (catalogExplorationResponse) return catalogExplorationResponse;
+
   return null;
 }
 
@@ -5011,7 +5202,10 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   }
   const hasActiveBookingState = isActiveBookingState(currentStateForRouting);
   const bookingInterruptionQuestion = hasActiveBookingState &&
-    isBookingFlowInterruptionQuestion(concatenatedText, history);
+    isBookingFlowInterruptionQuestion(concatenatedText, history, {
+      base,
+      state: currentStateForRouting,
+    });
   console.log("whatsapp-ai-engine execution log:", {
     phone: normalized.phoneNumber,
     lastIntent: recorded.conversation.last_intent || null,
@@ -5048,7 +5242,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   const backendCatalogRequest =
     isServiceCatalogMenuIntent(concatenatedText) ||
     (
-      !isClientAskingQuestion(concatenatedText) &&
+      hasExplicitBookingAction(concatenatedText) &&
       hasCommercialCatalogReference(routingText, base)
     );
   if (!hasActiveBookingState && backendCatalogRequest) {
@@ -5111,7 +5305,10 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       });
   if (localAgendaAvailability) return localAgendaAvailability;
 
-  const hasQuestion = isBookingFlowInterruptionQuestion(concatenatedText, history);
+  const hasQuestion = isBookingFlowInterruptionQuestion(concatenatedText, history, {
+    base,
+    state: currentStateForRouting,
+  });
 
   if (!hasQuestion && !prioritizeBookingState) {
     const structuredBooking = await handleStructuredBookingFlow({

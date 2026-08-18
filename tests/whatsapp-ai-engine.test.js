@@ -42,6 +42,10 @@ import {
   detectBookingGlobalCommand,
   buildBookingResumePrompt,
   isBookingFlowInterruptionQuestion,
+  buildCatalogExplorationResponse,
+  serializeBookingState,
+  prepareRequiredAssessmentBooking,
+  selectDisplayedBookingSlot,
 } from "../server/lib/whatsapp-ai-engine.js";
 
 const originalQuery = pool.query;
@@ -634,6 +638,17 @@ test("answers Fibra Russa availability from the active catalog", () => {
   assert.doesNotMatch(response, /Você faz aplicação/i);
 });
 
+test("does not select the first service when a commercial term matches multiple options", () => {
+  const selected = selectBookingService("quero agendar fibra russa", {
+    services: [
+      { id: "weave", name: "Combo Fibra Russa + Entrelace", active: true, allow_auto_booking: true },
+      { id: "tape", name: "Combo Fibra Russa + Fita Adesiva", active: true, allow_auto_booking: true },
+      { id: "assessment", name: "Avaliação para alongamento", active: true, is_free: true },
+    ],
+  });
+  assert.equal(selected, null);
+});
+
 test("isClientAskingQuestion classifies questions correctly", () => {
   assert.equal(isClientAskingQuestion("Qual o valor do mega?"), true);
   assert.equal(isClientAskingQuestion("Como funciona o microlink"), true);
@@ -707,6 +722,99 @@ test("summarizeAiCommercialContext uses service variants and never physical stoc
   assert.doesNotMatch(summary, /Fibra Russa antiga/);
   assert.doesNotMatch(summary, /Cabelo antigo/);
   assert.doesNotMatch(summary, /nenhuma variação disponível em estoque/i);
+});
+
+test("catalog terms interrupt menus generically but exact displayed options still select", () => {
+  const base = {
+    services: [
+      { id: "fiber", name: "Combo Fibra Russa + Entrelace", active: true },
+      { id: "keratin", name: "Aplicação com Microcápsula de Queratina", active: true },
+    ],
+  };
+  const categoryState = {
+    status: "awaiting_category",
+    categoryOptions: [{ id: 1, categoryName: "Aplicação com cabelo/fibra inclusa" }],
+  };
+  assert.equal(isBookingFlowInterruptionQuestion("Fibra russa", [], { base, state: categoryState }), true);
+  assert.equal(isBookingFlowInterruptionQuestion("Queratina", [], { base, state: categoryState }), true);
+  assert.equal(isBookingFlowInterruptionQuestion("1", [], { base, state: categoryState }), false);
+  assert.equal(
+    isBookingFlowInterruptionQuestion("Aplicação com cabelo/fibra inclusa", [], { base, state: categoryState }),
+    false,
+  );
+  assert.equal(isBookingFlowInterruptionQuestion("quero agendar fibra russa", [], { base, state: categoryState }), false);
+});
+
+test("catalog exploration is generated from active services without hard-coded material names", () => {
+  const response = buildCatalogExplorationResponse("nanocápsula", {
+    services: [
+      { id: "nano", name: "Alongamento com Nanocápsula", active: true, show_online_booking: true },
+      { id: "old", name: "Nanocápsula antiga", active: false, show_online_booking: true },
+    ],
+    serviceVariants: [
+      { service_id: "nano", label: "100 g", price: 700, active: true, allow_whatsapp_booking: true },
+      { service_id: "nano", label: "150 g", price: 900, active: true, allow_whatsapp_booking: true },
+    ],
+  });
+  assert.match(response, /Alongamento com Nanocápsula/);
+  assert.match(response, /R\$\s*700,00 a R\$\s*900,00/);
+  assert.doesNotMatch(response, /antiga/);
+});
+
+test("booking state persistence keeps every field and every available slot", () => {
+  const state = Object.fromEntries(Array.from({ length: 45 }, (_, index) => [`field${index + 1}`, index + 1]));
+  state.status = "awaiting_slot";
+  state.slotOptions = Array.from({ length: 17 }, (_, index) => ({
+    id: index + 1,
+    date: "2026-08-19",
+    time: `${String(9 + Math.floor(index / 2)).padStart(2, "0")}:${index % 2 ? "30" : "00"}`,
+    professionalId: "professional-1",
+  }));
+  const persisted = JSON.parse(serializeBookingState(state));
+  assert.equal(persisted.field45, 45);
+  assert.equal(persisted.slotOptions.length, 17);
+  assert.equal(persisted.slotOptions[16].id, 17);
+  assert.equal(selectDisplayedBookingSlot(persisted, "2")?.time, "09:30");
+  persisted.slotPageStart = 10;
+  assert.equal(selectDisplayedBookingSlot(persisted, "11")?.id, 11);
+});
+
+test("required procedures become an explicit evaluation booking while preserving client interest", () => {
+  const state = {
+    serviceId: "procedure-1",
+    serviceVariantId: "variant-1",
+    serviceVariantCode: "micro-200",
+    serviceName: "Microcápsula — 200 g",
+    serviceValue: 1380,
+    serviceDurationMinutes: 600,
+    serviceRequiresAssessment: true,
+    serviceDetailsAccepted: true,
+    addonDecisionMade: false,
+  };
+  const changed = prepareRequiredAssessmentBooking(state, {
+    services: [
+      { id: "procedure-1", name: "Microcápsula", active: true },
+      {
+        id: "assessment-1",
+        name: "Avaliação para alongamento",
+        catalog_code: "assessment-extensions",
+        duration_minutes: 60,
+        base_price: 0,
+        is_free: true,
+        active: true,
+      },
+    ],
+  });
+  assert.equal(changed, true);
+  assert.equal(state.bookingPurpose, "assessment");
+  assert.equal(state.serviceId, "assessment-1");
+  assert.equal(state.serviceVariantId, "");
+  assert.equal(state.serviceDurationMinutes, 60);
+  assert.equal(state.serviceIsFree, true);
+  assert.equal(state.requestedServiceName, "Microcápsula — 200 g");
+  assert.equal(state.requestedProcedure.serviceVariantId, "variant-1");
+  assert.equal(state.addonDecisionMade, true);
+  assert.match(state.serviceNote, /procedimento definitivo/i);
 });
 
 const contextualFiberBase = {
