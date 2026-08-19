@@ -43,6 +43,8 @@ import {
   buildBookingResumePrompt,
   isBookingFlowInterruptionQuestion,
   buildCatalogExplorationResponse,
+  buildCatalogExplorationResult,
+  matchingCatalogInformationOptions,
   serializeBookingState,
   prepareRequiredAssessmentBooking,
   selectDisplayedBookingSlot,
@@ -761,6 +763,121 @@ test("catalog exploration is generated from active services without hard-coded m
   assert.doesNotMatch(response, /antiga/);
 });
 
+test("catalog exploration numbers choices and resolves number, natural name and ambiguous price", () => {
+  const base = {
+    services: [
+      { id: "weave", name: "Combo Fibra Russa + Entrelace", active: true, show_online_booking: true },
+      { id: "tape", name: "Combo Fibra Russa + Fita Adesiva", active: true, show_online_booking: true },
+      { id: "keratin", name: "Combo Fibra Russa + Microcápsula de Queratina", active: true, show_online_booking: true },
+      { id: "american", name: "Combo Fibra Russa + Ponto Americano Invisível", active: true, show_online_booking: true },
+    ],
+    serviceVariants: [
+      { service_id: "weave", label: "300 g", price: 690, active: true },
+      { service_id: "weave", label: "550 g", price: 1400, active: true },
+      { service_id: "tape", label: "100 g", price: 440, active: true },
+      { service_id: "tape", label: "350 g", price: 1330, active: true },
+      { service_id: "keratin", label: "100 g", price: 690, active: true },
+      { service_id: "keratin", label: "350 g", price: 2415, active: true },
+      { service_id: "american", label: "100 g", price: 390, active: true },
+      { service_id: "american", label: "350 g", price: 1015, active: true },
+    ],
+  };
+
+  const result = buildCatalogExplorationResult("O que você tem de fibra russa?", base);
+  assert.equal(result.options.length, 4);
+  assert.match(result.text, /1\) Combo Fibra Russa \+ Entrelace/);
+  assert.match(result.text, /4\) Combo Fibra Russa \+ Ponto Americano Invisível/);
+  assert.match(result.text, /Responda com o número ou com o nome/i);
+  assert.deepEqual(
+    matchingCatalogInformationOptions("2", result.options).map((option) => option.serviceId),
+    ["tape"],
+  );
+  assert.deepEqual(
+    matchingCatalogInformationOptions("Combo fibra russa mais entrelace", result.options).map((option) => option.serviceId),
+    ["weave"],
+  );
+  assert.deepEqual(
+    matchingCatalogInformationOptions("Combo de 690", result.options).map((option) => option.serviceId),
+    ["weave", "keratin"],
+  );
+
+  const exact = buildCatalogExplorationResult("Combo Fibra Russa mais Entrelace", base);
+  assert.deepEqual(exact.options.map((option) => option.serviceId), ["weave"]);
+});
+
+test("a unique service name remains a booking selection while a shared name stays informational", () => {
+  const state = {
+    status: "awaiting_service",
+    serviceOptions: [
+      { id: 1, serviceId: "weave", serviceName: "Combo Fibra Russa + Entrelace" },
+      { id: 2, serviceId: "tape", serviceName: "Combo Fibra Russa + Fita Adesiva" },
+    ],
+  };
+  const base = {
+    services: [
+      { id: "weave", name: "Combo Fibra Russa + Entrelace", active: true },
+      { id: "tape", name: "Combo Fibra Russa + Fita Adesiva", active: true },
+    ],
+  };
+
+  assert.equal(isBookingFlowInterruptionQuestion("Entrelace", [], { base, state }), false);
+  assert.equal(selectBookingService("Entrelace", base, state)?.serviceId, "weave");
+  assert.equal(
+    selectBookingService("Combo Fibra Russa mais Entrelace", base, state)?.serviceId,
+    "weave",
+  );
+  assert.equal(isBookingFlowInterruptionQuestion("Fibra Russa", [], { base, state }), true);
+});
+
+test("a bare hair knowledge topic selects the matching displayed service", () => {
+  const state = {
+    status: "awaiting_service",
+    serviceOptions: [
+      { id: 1, serviceId: "color", serviceName: "Coloração" },
+      { id: 2, serviceId: "treatment", serviceName: "Tratamento capilar" },
+    ],
+  };
+  const base = {
+    services: [
+      { id: "color", name: "Coloração", active: true },
+      { id: "treatment", name: "Tratamento capilar", active: true },
+    ],
+  };
+  assert.equal(isBookingFlowInterruptionQuestion("Coloração", [], { base, state }), false);
+  assert.equal(selectBookingService("Coloração", base, state)?.serviceId, "color");
+  assert.equal(isBookingFlowInterruptionQuestion("Como funciona coloração?", [], { base, state }), true);
+});
+
+test("catalog exploration keeps every match and advertises pagination", () => {
+  const services = Array.from({ length: 8 }, (_, index) => ({
+    id: `service-${index + 1}`,
+    name: `Alongamento especial ${index + 1}`,
+    active: true,
+    show_online_booking: true,
+  }));
+  const result = buildCatalogExplorationResult("alongamento", { services });
+  assert.equal(result.options.length, 8);
+  assert.match(result.text, /1\) Alongamento especial 1/);
+  assert.doesNotMatch(result.text, /7\) Alongamento especial 7/);
+  assert.match(result.text, /mais 2 opção/i);
+  assert.match(result.text, /mais opções/i);
+});
+
+test("answers common hair topics that are not bookable without claiming the salon offers them", () => {
+  const response = buildLocalIntentResponse("Coloração você faz?", { services: [] });
+  assert.match(response, /não aparece no catálogo ativo/i);
+  assert.match(response, /altera pigmentos/i);
+  assert.match(response, /disponibilidade precisa ser confirmada/i);
+  assert.doesNotMatch(response, /instabilidade/i);
+  assert.equal(
+    isBookingFlowInterruptionQuestion("Coloração", [], {
+      base: { services: [] },
+      state: { status: "awaiting_category" },
+    }),
+    true,
+  );
+});
+
 test("booking state persistence keeps every field and every available slot", () => {
   const state = Object.fromEntries(Array.from({ length: 45 }, (_, index) => [`field${index + 1}`, index + 1]));
   state.status = "awaiting_slot";
@@ -983,7 +1100,7 @@ test("buildBookingGuidance handles paused booking flow when has question", () =>
   assert.match(booking.text, /nunca pergunte novamente campo preenchido/i);
 });
 
-test("buildBookingGuidance pauses and resumes an inventory step for a care question", () => {
+test("buildBookingGuidance pauses an inventory step without repeating its menu", () => {
   const booking = buildBookingGuidance({
     incomingText: "Como cuidar?",
     history: [],
@@ -1002,8 +1119,9 @@ test("buildBookingGuidance pauses and resumes an inventory step for a care quest
   assert.equal(booking.active, true);
   assert.equal(booking.shouldRegister, false);
   assert.match(booking.text, /Responda somente a pergunta atual/i);
-  assert.match(booking.text, /backend retomara a etapa automaticamente/i);
-  assert.match(booking.resumeText, /Castanho Médio/);
+  assert.match(booking.text, /backend informara como a cliente pode retomar/i);
+  assert.match(booking.resumeText, /envie “continuar”/i);
+  assert.doesNotMatch(booking.resumeText, /Castanho Médio/);
 });
 
 test("handleStructuredBookingFlow shows service details after service selection", async () => {
@@ -1353,6 +1471,96 @@ test("handleStructuredBookingFlow does not replace WhatsApp phone with CPF", asy
   assert.equal(savedStates.at(-1).clientPhone, "5511999999999");
   assert.match(sentTexts.at(-1), /CPF: 12345678901/);
   assert.match(sentTexts.at(-1), /Telefone: 5511999999999/);
+});
+
+test("a slot number is consumed once before confirmation or alteration", async () => {
+  const sentTexts = [];
+  const savedStates = [];
+  let appointmentInserts = 0;
+  pool.query = async (sql, params = []) => {
+    if (sql.includes("update public.whatsapp_conversations") && sql.includes("booking_state=$2")) {
+      savedStates.push(JSON.parse(params[1]));
+      return { rowCount: 1, rows: [] };
+    }
+    if (sql.includes("insert into public.appointments")) appointmentInserts += 1;
+    if (sql.includes("insert into public.whatsapp_messages")) {
+      return { rowCount: 1, rows: [{ id: "outbound-slot-number" }] };
+    }
+    return { rowCount: 1, rows: [{ id: "generic-id" }] };
+  };
+  pool.connect = async () => ({
+    query: async (sql, params = []) => {
+      if (["begin", "commit", "rollback"].includes(String(sql).toLowerCase())) {
+        return { rowCount: 0, rows: [] };
+      }
+      return pool.query(sql, params);
+    },
+    release: () => {},
+  });
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).includes("/api/send-text")) {
+      sentTexts.push(JSON.parse(options.body || "{}").text || "");
+    }
+    return new Response(JSON.stringify({ success: true, messageId: "msg-slot-number" }));
+  };
+  process.env.BAILEYS_API_URL = "https://baileys.example.test";
+  process.env.BAILEYS_API_KEY = "test-key";
+
+  const baseState = {
+    status: "awaiting_slot",
+    serviceId: "service-assessment",
+    serviceName: "Avaliação para alongamento",
+    serviceValue: 0,
+    serviceIsFree: true,
+    serviceDetailsAccepted: true,
+    addonDecisionMade: true,
+    date: "2099-08-19",
+    clientName: "Maria Silva",
+    clientEmail: "maria@example.test",
+    clientCpf: "12345678901",
+    clientBirthDate: "1990-05-10",
+    clientPhone: "5511999999999",
+    slotOptions: [
+      { id: 1, date: "2099-08-19", time: "09:00", professionalId: "professional-1", professionalName: "Carol Sol" },
+      { id: 2, date: "2099-08-19", time: "09:30", professionalId: "professional-1", professionalName: "Carol Sol" },
+    ],
+    slotPageStart: 0,
+  };
+  const requestFor = (text, state) => handleStructuredBookingFlow({
+    normalized: { phoneNumber: "5511999999999" },
+    conversationId: `conversation-slot-${text}`,
+    inboundMessageId: `inbound-slot-${text}`,
+    text,
+    settings: { allowAutoBooking: true },
+    base: {
+      flows: [{ flow_key: "pre_agendamento", enabled: true }],
+      services: [{ id: "service-assessment", name: "Avaliação para alongamento", active: true }],
+    },
+    recorded: { conversation: { booking_state: JSON.stringify(state) } },
+    queueLatencyMs: 0,
+    receivedAt: new Date(),
+    history: [],
+  });
+
+  for (const [choice, expectedTime] of [["1", "09:00"], ["2", "09:30"]]) {
+    const response = await requestFor(choice, baseState);
+    assert.equal(response.reason, "booking_confirmation_request");
+    assert.equal(savedStates.at(-1).status, "awaiting_confirmation");
+    assert.equal(savedStates.at(-1).time, expectedTime);
+    assert.match(sentTexts.at(-1), /Resumo do seu Agendamento/i);
+  }
+  assert.equal(appointmentInserts, 0);
+
+  const alterationResponse = await requestFor("2", {
+    ...baseState,
+    status: "awaiting_confirmation",
+    time: "09:30",
+    professionalId: "professional-1",
+    professionalName: "Carol Sol",
+  });
+  assert.equal(alterationResponse.reason, "booking_change_requested");
+  assert.equal(savedStates.at(-1).status, "awaiting_slot");
+  assert.equal(savedStates.at(-1).time, "");
 });
 
 test("handleStructuredBookingFlow may repeat a structured menu without falling back to AI", async () => {

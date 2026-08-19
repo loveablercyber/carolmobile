@@ -86,6 +86,10 @@ import {
   naturalConversationPrefix,
   buildOutOfScopeResponse,
 } from "./whatsapp/local-handlers.js";
+import {
+  buildHairKnowledgeResponse,
+  isKnownHairKnowledgeTopic,
+} from "./whatsapp/hair-knowledge.js";
 
 // Re-exportar funções para compatibilidade total com os testes existentes
 export {
@@ -151,9 +155,12 @@ function currentFlowOptionLabels(state = {}) {
 
 function isExplicitCurrentFlowSelection(text, state = {}) {
   if (numericChoice(text)) return true;
-  const normalized = normalizeText(text);
-  if (!normalized) return false;
-  return currentFlowOptionLabels(state).some((label) => label === normalized);
+  const labels = currentFlowOptionLabels(state);
+  if (!labels.length) return false;
+  const matches = labels.filter((label) =>
+    catalogOptionMatches(text, { serviceName: label }),
+  );
+  return matches.length === 1;
 }
 
 function hasExplicitBookingAction(text) {
@@ -181,6 +188,7 @@ export function isBookingFlowInterruptionQuestion(text, history = [], { base = {
     isClientChangingSubjectOrNegating(text)
   ) return true;
   if (isExplicitCurrentFlowSelection(text, state) || hasExplicitBookingAction(text)) return false;
+  if (isKnownHairKnowledgeTopic(text)) return true;
   return hasCommercialCatalogReference(text, base);
 }
 
@@ -568,7 +576,14 @@ function matchingServicesForPriceQuestion(text, base = {}) {
 function matchingServicesForCatalogQuery(text, base = {}) {
   const categories = new Map((base.categories || []).map((item) => [item.id, item.name || ""]));
   const methods = new Map((base.methods || []).map((item) => [item.id, item.name || ""]));
-  return structuredCatalogServices(base).filter((service) => {
+  const services = structuredCatalogServices(base);
+  const normalizedQuery = catalogChoiceText(text);
+  const exactNameMatches = services.filter((service) => {
+    const name = catalogChoiceText(service.commercial_name || service.name || "");
+    return name.length >= 5 && normalizedQuery.includes(name);
+  });
+  if (exactNameMatches.length) return exactNameMatches;
+  return services.filter((service) => {
     const variants = (base.serviceVariants || [])
       .filter((variant) => variant.service_id === service.id && variant.active !== false)
       .map((variant) => [
@@ -590,11 +605,59 @@ function matchingServicesForCatalogQuery(text, base = {}) {
   });
 }
 
-export function buildCatalogExplorationResponse(text, base = {}) {
+function catalogChoiceText(value) {
+  return normalizeText(value)
+    .replace(/[+&]/g, " mais ")
+    .replace(/\be\b/g, " mais ")
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function catalogPriceTokens(value) {
+  return (String(value || "").match(/\d[\d.,]*/g) || [])
+    .map((token) => token.replace(/,00$/, "").replace(/[.,]/g, ""))
+    .filter((token) => token && token !== "0");
+}
+
+function catalogOptionMatches(text, option = {}) {
+  const input = catalogChoiceText(text);
+  const name = catalogChoiceText(option.serviceName || "");
+  if (!input || !name) return false;
+  if (input === name || input.includes(name)) return true;
+  const requestedPrices = catalogPriceTokens(text).filter((token) => token.length >= 3);
+  const optionPrices = new Set(catalogPriceTokens(option.priceText));
+  if (requestedPrices.length && requestedPrices.every((token) => optionPrices.has(token))) {
+    return true;
+  }
+  const ignored = new Set([
+    "combo",
+    "mais",
+    "com",
+    "para",
+    "servico",
+    "quero",
+    "saber",
+    "sobre",
+  ]);
+  const tokens = input.split(" ").filter((token) => token.length >= 4 && !ignored.has(token));
+  if (!tokens.length) return false;
+  return tokens.every((token) => name.includes(token));
+}
+
+export function matchingCatalogInformationOptions(text, options = []) {
+  const choice = numericChoice(text);
+  if (choice && options.some((option) => Number(option.id) === choice)) {
+    return options.filter((option) => Number(option.id) === choice);
+  }
+  return options.filter((option) => catalogOptionMatches(text, option));
+}
+
+export function buildCatalogExplorationResult(text, base = {}) {
   const matches = matchingServicesForCatalogQuery(text, base);
   if (!matches.length) return null;
 
-  const optionLines = matches.slice(0, 6).map((service) => {
+  const options = matches.map((service, index) => {
     const name = service.commercial_name || service.name;
     const variants = (base.serviceVariants || []).filter((variant) =>
       variant.service_id === service.id &&
@@ -605,26 +668,238 @@ export function buildCatalogExplorationResponse(text, base = {}) {
     const priceText = prices.length
       ? `${formatBookingCurrency(Math.min(...prices))}${Math.max(...prices) !== Math.min(...prices) ? ` a ${formatBookingCurrency(Math.max(...prices))}` : ""}`
       : (isFreeService(service) ? "sem custo" : (serviceValue(service) > 0 ? formatBookingCurrency(serviceValue(service)) : "valor sob consulta"));
-    return `- ${name}: ${priceText}`;
+    return {
+      id: index + 1,
+      serviceId: service.id,
+      serviceName: name,
+      priceText,
+    };
   });
+  const visibleOptions = options.slice(0, 6);
+  const numberedOptions = visibleOptions.map((option) => `${option.id}) ${option.serviceName}: ${option.priceText}`);
 
   if (matches.length === 1) {
     const service = matches[0];
     const description = clean(service.short_description || service.description || service.detailed_description);
-    return [
+    return {
+      options,
+      text: [
       `Encontrei este serviço relacionado: ${service.commercial_name || service.name}.`,
       description,
-      optionLines[0],
-      "A indicação final é confirmada na avaliação prévia. Você quer saber como funciona, consultar as variações ou agendar a avaliação?",
-    ].filter(Boolean).join("\n\n");
+      numberedOptions[0],
+      "A indicação final é confirmada na avaliação prévia. Responda 1 ou escreva o nome para conhecer os detalhes.",
+    ].filter(Boolean).join("\n\n"),
+    };
   }
 
+  return {
+    options,
+    text: [
+      "Encontrei estas opções relacionadas no catálogo ativo:",
+      numberedOptions.join("\n"),
+      matches.length > 6
+        ? `Há mais ${matches.length - 6} opção(ões) relacionadas. Envie “mais opções” para visualizar.`
+        : "",
+      "Responda com o número ou com o nome da opção que você quer conhecer melhor.",
+    ].filter(Boolean).join("\n\n"),
+  };
+}
+
+export function buildCatalogExplorationResponse(text, base = {}) {
+  return buildCatalogExplorationResult(text, base)?.text || null;
+}
+
+function buildCatalogInformationDetail(option = {}, base = {}, { hasPausedBooking = false } = {}) {
+  const service = (base.services || []).find((item) =>
+    item.id === option.serviceId &&
+    item.active !== false &&
+    item.show_online_booking !== false,
+  );
+  if (!service) return "Essa opção não está mais disponível no catálogo ativo.";
+  const variants = (base.serviceVariants || []).filter((variant) =>
+    variant.service_id === service.id &&
+    variant.active !== false &&
+    variant.allow_whatsapp_booking !== false,
+  );
+  const durations = variants
+    .map((variant) => Number(variant.duration_minutes || service.duration_minutes || 0))
+    .filter((value) => value > 0);
+  const durationText = durations.length
+    ? `${Math.min(...durations)}${Math.max(...durations) !== Math.min(...durations) ? ` a ${Math.max(...durations)}` : ""} minutos`
+    : Number(service.duration_minutes || 0) > 0
+      ? `${Number(service.duration_minutes)} minutos`
+      : "confirmada após a avaliação";
+  const variantLines = variants.slice(0, 6).map((variant) =>
+    `- ${variant.label}: ${formatBookingCurrency(variant.price)}`,
+  );
   return [
-    "Encontrei estas opções relacionadas no catálogo ativo:",
-    optionLines.join("\n"),
-    matches.length > 6 ? `Há mais ${matches.length - 6} opção(ões) relacionadas.` : "",
-    "Qual opção você quer conhecer melhor? Posso explicar o procedimento, mostrar as variações e valores ou iniciar o agendamento da avaliação.",
+    `✨ *${service.commercial_name || service.name}*`,
+    clean(service.short_description || service.description || service.detailed_description),
+    `⏱️ Duração estimada: ${durationText}.`,
+    `💰 Valores cadastrados: ${option.priceText}.`,
+    variants.some((variant) => variant.requires_assessment) || service.requires_assessment
+      ? "📋 Requer avaliação prévia."
+      : "",
+    variantLines.length ? `Algumas variações:\n${variantLines.join("\n")}` : "",
+    variants.length > variantLines.length ? `Existem mais ${variants.length - variantLines.length} variação(ões) cadastradas.` : "",
+    hasPausedBooking
+      ? "Para comparar outra opção, escreva novamente o nome do serviço. Para voltar ao seu agendamento, envie “continuar”."
+      : "Para comparar outra opção, escreva novamente o nome do serviço. Para iniciar um agendamento, envie “menu”.",
   ].filter(Boolean).join("\n\n");
+}
+
+function clearCatalogInformationState(state = {}, { keepInformationPause = false } = {}) {
+  delete state.catalogInfoOptions;
+  delete state.catalogInfoSelectedServiceId;
+  delete state.catalogInfoUpdatedAt;
+  delete state.catalogInfoStatus;
+  delete state.catalogInfoPageStart;
+  if (!keepInformationPause) delete state.informationPause;
+}
+
+function bookingInformationPauseNotice(state = {}) {
+  if (!hasBookingStateProgress(state)) return "";
+  return "Seu agendamento continua salvo. Quando quiser retomar, envie “continuar”.";
+}
+
+async function handlePendingCatalogInformationChoice({
+  normalized,
+  conversationId,
+  text,
+  state,
+  base,
+}) {
+  const options = Array.isArray(state.catalogInfoOptions) ? state.catalogInfoOptions : [];
+  const catalogInfoActive = state.catalogInfoStatus === "awaiting_choice" && options.length > 0;
+  const informationPause = state.informationPause === true;
+  if (!catalogInfoActive && !informationPause) return null;
+  const normalizedText = normalizeText(text);
+  if (includesAny(normalizedText, ["continuar", "retomar", "voltar ao agendamento"])) {
+    clearCatalogInformationState(state);
+    state.updatedAt = new Date().toISOString();
+    await saveBookingState(conversationId, state);
+    const responseText = hasBookingStateProgress(state)
+      ? buildBookingResumePrompt(state)
+      : "Tudo certo. Envie “serviços” para conhecer o catálogo ou faça uma nova pergunta.";
+    await performSendTextAndRecord({
+      normalized,
+      conversationId,
+      text: responseText,
+      reason: "booking_catalog_info_resume",
+    });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    return { ok: true, replied: true, reason: "booking_catalog_info_resume", conversationId };
+  }
+
+  if (!catalogInfoActive) {
+    const isAnotherInformationRequest =
+      isClientAskingQuestion(text) ||
+      isKnownHairKnowledgeTopic(text) ||
+      hasCommercialCatalogReference(text, base);
+    if (isAnotherInformationRequest || !hasBookingStateProgress(state)) return null;
+    const responseText = [
+      "Seu agendamento está pausado enquanto esclarecemos suas dúvidas.",
+      "Para voltar exatamente à etapa anterior, envie “continuar”. Se preferir, pode fazer outra pergunta sobre cabelos ou Mega Hair.",
+    ].join("\n\n");
+    await performSendTextAndRecord({
+      normalized,
+      conversationId,
+      text: responseText,
+      reason: "information_pause_waiting",
+    });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    return { ok: true, replied: true, reason: "information_pause_waiting", conversationId };
+  }
+
+  if (includesAny(normalizedText, ["mais opcoes", "ver mais opcoes", "proximas opcoes"])) {
+    const pageStart = Number(state.catalogInfoPageStart || 0);
+    const nextStart = pageStart + 6;
+    if (nextStart >= options.length) {
+      const responseText = "Você já visualizou todas as opções. Escolha pelo número ou envie “continuar” para retomar o agendamento.";
+      await performSendTextAndRecord({
+        normalized,
+        conversationId,
+        text: responseText,
+        reason: "booking_catalog_info_last_page",
+      });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      return { ok: true, replied: true, reason: "booking_catalog_info_last_page", conversationId };
+    }
+    state.catalogInfoPageStart = nextStart;
+    state.catalogInfoUpdatedAt = new Date().toISOString();
+    state.updatedAt = new Date().toISOString();
+    await saveBookingState(conversationId, state);
+    const page = options.slice(nextStart, nextStart + 6);
+    const responseText = [
+      "Mais opções relacionadas:",
+      page.map((option) => `${option.id}) ${option.serviceName}: ${option.priceText}`).join("\n"),
+      options.length > nextStart + 6 ? "Envie “mais opções” para continuar." : "Estas são as últimas opções.",
+      "Escolha pelo número ou escreva o nome.",
+    ].join("\n\n");
+    await performSendTextAndRecord({
+      normalized,
+      conversationId,
+      text: responseText,
+      reason: "booking_catalog_info_more_options",
+    });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    return { ok: true, replied: true, reason: "booking_catalog_info_more_options", conversationId };
+  }
+
+  const matches = matchingCatalogInformationOptions(text, options);
+  const choice = numericChoice(text);
+  if (
+    !matches.length &&
+    (
+      isClientAskingQuestion(text) ||
+      isKnownHairKnowledgeTopic(text) ||
+      hasCommercialCatalogReference(text, base)
+    )
+  ) {
+    const hasPausedBooking = hasBookingStateProgress(state);
+    clearCatalogInformationState(state, { keepInformationPause: hasPausedBooking });
+    state.updatedAt = new Date().toISOString();
+    await saveBookingState(conversationId, state);
+    return null;
+  }
+  if (matches.length !== 1) {
+    const pageStart = Number(state.catalogInfoPageStart || 0);
+    const visibleOptions = options.slice(pageStart, pageStart + 6);
+    const visible = (matches.length ? matches : visibleOptions)
+      .map((option) => `${option.id}) ${option.serviceName}: ${option.priceText}`)
+      .join("\n");
+    const responseText = [
+      matches.length > 1
+        ? "Esse nome corresponde a mais de uma opção. Escolha pelo número:"
+        : choice
+          ? "Não encontrei esse número nas opções apresentadas. Escolha uma destas opções:"
+          : "Não identifiquei esse nome nas opções apresentadas. Escolha pelo número ou escreva o nome como aparece na lista:",
+      visible,
+    ].join("\n\n");
+    await performSendTextAndRecord({
+      normalized,
+      conversationId,
+      text: responseText,
+      reason: "booking_catalog_info_clarification",
+    });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    return { ok: true, replied: true, reason: "booking_catalog_info_clarification", conversationId };
+  }
+
+  const selected = matches[0];
+  const hasPausedBooking = hasBookingStateProgress(state);
+  clearCatalogInformationState(state, { keepInformationPause: hasPausedBooking });
+  state.updatedAt = new Date().toISOString();
+  await saveBookingState(conversationId, state);
+  const responseText = buildCatalogInformationDetail(selected, base, { hasPausedBooking });
+  await performSendTextAndRecord({
+    normalized,
+    conversationId,
+    text: responseText,
+    reason: "booking_catalog_info_detail",
+  });
+  await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+  return { ok: true, replied: true, reason: "booking_catalog_info_detail", conversationId };
 }
 
 function matchingServiceForPriceQuestion(text, base = {}) {
@@ -898,17 +1173,11 @@ export function selectBookingService(text, base = {}, state = {}) {
       return selected?.serviceId ? selected : null;
     }
 
-    const normalizedChoice = normalizeText(text);
-    const exact = state.serviceOptions.filter((item) => {
-      const serviceName = normalizeText(item.serviceName || item.requestedServiceName || "");
-      return serviceName && normalizedChoice === serviceName;
+    const namedMatches = state.serviceOptions.filter((item) => {
+      const serviceName = item.serviceName || item.requestedServiceName || "";
+      return serviceName && catalogOptionMatches(text, { serviceName });
     });
-    if (exact.length === 1) return exact[0]?.serviceId ? exact[0] : null;
-    const partial = state.serviceOptions.filter((item) => {
-      const serviceName = normalizeText(item.serviceName || item.requestedServiceName || "");
-      return serviceName && (serviceName.includes(normalizedChoice) || normalizedChoice.includes(serviceName));
-    });
-    const selected = partial.length === 1 ? partial[0] : null;
+    const selected = namedMatches.length === 1 ? namedMatches[0] : null;
     return selected?.serviceId ? selected : null;
   }
 
@@ -3339,6 +3608,7 @@ export async function handleStructuredBookingFlow({
     isServiceCatalogMenuIntent(text) ||
     Boolean(directServiceChoice?.serviceId);
   if (!active && !isBookingIntent(text)) return null;
+  const entryStatus = String(currentState.status || "collecting");
 
   const state = {
     status: "collecting",
@@ -3737,7 +4007,7 @@ export async function handleStructuredBookingFlow({
     return { ok: true, replied: true, reason: "booking_contact_request", conversationId };
   }
 
-  if (isFinalBookingAlteration(text) && state.status === "awaiting_confirmation") {
+  if (entryStatus === "awaiting_confirmation" && isFinalBookingAlteration(text)) {
     state.status = "awaiting_slot";
     state.time = "";
     state.professionalId = "";
@@ -3753,7 +4023,7 @@ export async function handleStructuredBookingFlow({
     return { ok: true, replied: true, reason: "booking_change_requested", conversationId };
   }
 
-  if (!isFinalBookingConfirmation(text)) {
+  if (entryStatus !== "awaiting_confirmation" || !isFinalBookingConfirmation(text)) {
     state.status = "awaiting_confirmation";
     await saveBookingState(conversationId, state);
     const finalSummaryText = [
@@ -4100,8 +4370,8 @@ export function buildBookingGuidance({
     return {
       active: true,
       shouldRegister: false,
-      text: `Existe um fluxo de pre-agendamento em andamento. Servico selecionado: ${serviceName} ${dateText}. Campos ja salvos: ${savedFields || "nenhum"}. Proximo campo faltante: ${nextStep}. Responda somente a pergunta atual da cliente, mantenha todos os campos salvos e nunca pergunte novamente campo preenchido. Nao repita o menu nem a pergunta pendente: o backend retomara a etapa automaticamente depois da sua resposta.`,
-      resumeText: buildBookingResumePrompt(currentState),
+      text: `Existe um fluxo de pre-agendamento em andamento. Servico selecionado: ${serviceName} ${dateText}. Campos ja salvos: ${savedFields || "nenhum"}. Proximo campo faltante: ${nextStep}. Responda somente a pergunta atual da cliente, mantenha todos os campos salvos e nunca pergunte novamente campo preenchido. Nao repita o menu nem a pergunta pendente: o backend informara como a cliente pode retomar a etapa depois da resposta.`,
+      resumeText: bookingInformationPauseNotice(currentState),
     };
   }
 
@@ -4573,6 +4843,11 @@ export function buildLocalIntentResponse(text, base = {}, context = {}) {
   const catalogExplorationResponse = buildCatalogExplorationResponse(text, base);
   if (catalogExplorationResponse) return catalogExplorationResponse;
 
+  const hairKnowledgeResponse = buildHairKnowledgeResponse(text, {
+    offeredInCatalog: matchingServicesForCatalogQuery(text, base).length > 0,
+  });
+  if (hairKnowledgeResponse) return hairKnowledgeResponse;
+
   return null;
 }
 
@@ -4585,6 +4860,58 @@ function getRetryDelay(retryCount) {
     return 3000 + Math.random() * 2000 + jitter; // 3-5s + jitter
   }
   return 1000 + jitter;
+}
+
+function normalizedAiProvider(value) {
+  const provider = String(value || "openai").toLowerCase().trim();
+  return provider === "grok" ? "groq" : provider;
+}
+
+function aiProviderRuntime(providerValue, settings = {}) {
+  const provider = normalizedAiProvider(providerValue);
+  if (provider === "gemini") {
+    const status = geminiPublicStatus();
+    return {
+      provider,
+      enabled: Boolean(status.enabled || settings.geminiEnabled),
+      configured: Boolean(status.configured || settings.geminiApiKey),
+      defaultModel: status.model || "gemini-2.5-flash-lite",
+      apiKey: settings.geminiApiKey || null,
+    };
+  }
+  if (provider === "groq") {
+    const status = groqPublicStatus();
+    return {
+      provider,
+      enabled: Boolean(status.enabled || settings.groqEnabled),
+      configured: Boolean(status.configured || settings.groqApiKey),
+      defaultModel: status.model || "llama-3.1-8b-instant",
+      apiKey: settings.groqApiKey || null,
+    };
+  }
+  const status = openAiPublicStatus();
+  return {
+    provider: "openai",
+    enabled: Boolean(status.enabled || settings.openaiEnabled),
+    configured: Boolean(status.configured || settings.openaiApiKey),
+    defaultModel: status.model || "gpt-4o-mini",
+    apiKey: settings.openaiApiKey || null,
+  };
+}
+
+async function generateTextWithConfiguredProvider({
+  provider,
+  systemPrompt,
+  message,
+  model,
+  timeoutMs,
+  maxTokens,
+  apiKey,
+}) {
+  const input = { systemPrompt, message, model, timeoutMs, maxTokens, apiKey };
+  if (provider === "gemini") return generateGeminiText(input);
+  if (provider === "groq") return generateGroqText(input);
+  return generateOpenAiText(input);
 }
 
 async function logAiRequest({
@@ -4873,7 +5200,8 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   const processingStartedAt = new Date();
   const queueLatencyMs = processingStartedAt.getTime() - receivedAt.getTime();
 
-  const globalBookingCommand = detectBookingGlobalCommand(concatenatedText);
+  const globalBookingCommand = detectBookingGlobalCommand(concatenatedText) ||
+    (isServiceCatalogMenuIntent(concatenatedText) ? "main_menu" : "");
   if (globalBookingCommand) {
     return handleBookingGlobalCommand({
       command: globalBookingCommand,
@@ -4973,11 +5301,9 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   const lastMsgAt = recorded.conversation.last_message_at
     ? new Date(recorded.conversation.last_message_at)
     : (initialBookingState.updatedAt ? new Date(initialBookingState.updatedAt) : null);
-  let isIdleExpired = false;
   if (lastMsgAt) {
     const idleDiffMinutes = (processingStartedAt.getTime() - lastMsgAt.getTime()) / (1000 * 60);
     if (idleDiffMinutes > maxIdleMinutes) {
-      isIdleExpired = true;
       await saveBookingState(conversationId, {});
       recorded.conversation.booking_state = {};
       initialBookingState = {};
@@ -4998,30 +5324,26 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   const shouldResetBooking = Boolean(localGreetingResponse) &&
     !hasActiveInitialBookingState &&
     shouldResetBookingStateOnGreeting(concatenatedText, initialBookingState);
-  const hasPersistedBookingProgress = Boolean(
-    initialBookingState.status ||
-    initialBookingState.serviceId,
-  );
   if (shouldResetBooking) await saveBookingState(conversationId, {});
 
-  if ((localGreetingResponse && !hasActiveInitialBookingState) || !hasPersistedBookingProgress || isIdleExpired) {
-    const isExplicitQuestionOrIntent = isClientAskingQuestion(concatenatedText) ||
-      Boolean(selectBookingService(concatenatedText, base, initialBookingState));
-
-    if (!isExplicitQuestionOrIntent || isSimpleGreeting(concatenatedText) || localGreetingResponse) {
-      const greetingText = localGreetingResponse || buildLocalGreetingResponse("oi", {
-        date: processingStartedAt,
-        timezone: settings.timezone,
-        salonName: settings.salonName,
-      });
-      return openInitialServiceCatalog({
-        normalized,
-        conversationId,
-        base,
-        recorded,
-        greetingText,
-      });
+  if (localGreetingResponse) {
+    const greetingState = hasActiveInitialBookingState ? initialBookingState : {};
+    if (hasActiveInitialBookingState) {
+      greetingState.informationPause = true;
+      greetingState.updatedAt = new Date().toISOString();
+      await saveBookingState(conversationId, greetingState);
     }
+    const responseText = hasActiveInitialBookingState
+      ? `${localGreetingResponse}\n\nSeu agendamento continua salvo. Quando quiser retomá-lo, envie “continuar”.`
+      : localGreetingResponse;
+    await sendTextAndRecord({
+      normalized,
+      conversationId,
+      text: responseText,
+      reason: "conversation_greeting",
+    });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    return { ok: true, replied: true, reason: "conversation_greeting", conversationId };
   }
 
   if (!isWithinAiHours(settings)) {
@@ -5200,12 +5522,27 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       currentStateForRouting = {};
     }
   }
+  const pendingCatalogInformation = await handlePendingCatalogInformationChoice({
+    normalized,
+    conversationId,
+    text: concatenatedText,
+    state: currentStateForRouting,
+    base,
+  });
+  if (pendingCatalogInformation) return pendingCatalogInformation;
+
   const hasActiveBookingState = isActiveBookingState(currentStateForRouting);
   const bookingInterruptionQuestion = hasActiveBookingState &&
     isBookingFlowInterruptionQuestion(concatenatedText, history, {
       base,
       state: currentStateForRouting,
     });
+  if (bookingInterruptionQuestion) {
+    currentStateForRouting.informationPause = true;
+    currentStateForRouting.updatedAt = new Date().toISOString();
+    await saveBookingState(conversationId, currentStateForRouting);
+    recorded.conversation.booking_state = currentStateForRouting;
+  }
   console.log("whatsapp-ai-engine execution log:", {
     phone: normalized.phoneNumber,
     lastIntent: recorded.conversation.last_intent || null,
@@ -5326,14 +5663,29 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     if (structuredBooking) return structuredBooking;
   }
 
+  const catalogExplorationResult = buildCatalogExplorationResult(routingText, base);
   const localIntentResponse = buildLocalIntentResponse(routingText, base, contextualReference);
   if (localIntentResponse) {
-    const responseText = bookingInterruptionQuestion
-      ? [localIntentResponse, buildBookingResumePrompt(currentStateForRouting)].join("\n\n")
-      : localIntentResponse;
-    const responseReason = bookingInterruptionQuestion
-      ? "booking_question_local_reply"
-      : "local_intent_reply";
+    const isCatalogExploration = catalogExplorationResult?.text === localIntentResponse;
+    if (isCatalogExploration) {
+      currentStateForRouting.catalogInfoOptions = catalogExplorationResult.options;
+      currentStateForRouting.catalogInfoSelectedServiceId = "";
+      currentStateForRouting.catalogInfoUpdatedAt = new Date().toISOString();
+      currentStateForRouting.catalogInfoStatus = "awaiting_choice";
+      currentStateForRouting.catalogInfoPageStart = 0;
+      currentStateForRouting.informationPause = true;
+      currentStateForRouting.updatedAt = new Date().toISOString();
+      await saveBookingState(conversationId, currentStateForRouting);
+    }
+    const pauseNotice = bookingInterruptionQuestion
+      ? bookingInformationPauseNotice(currentStateForRouting)
+      : "";
+    const responseText = [localIntentResponse, pauseNotice].filter(Boolean).join("\n\n");
+    const responseReason = isCatalogExploration
+      ? "booking_catalog_info_options"
+      : bookingInterruptionQuestion
+        ? "booking_question_local_reply"
+        : "local_intent_reply";
     await sendTextAndRecord({
       normalized,
       conversationId,
@@ -5476,145 +5828,105 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   });
 
   let finalResponse = null;
-  let finalProvider = settings.provider || "openai";
+  const primaryProvider = normalizedAiProvider(
+    settings.primaryProvider || settings.provider || "openai",
+  );
+  let finalProvider = primaryProvider;
   let finalModel = null;
   let finalUsage = null;
   let retryCountTotal = 0;
-  const fallbackUsed = false;
+  let fallbackUsed = false;
   let errorMsg = null;
   let errorCode = null;
-  let providerStartedAt = null;
-  let providerFinishedAt = null;
-
-  const provider = String(settings.provider || "openai").toLowerCase().trim();
-  let isConfigured = false;
-  let isEnabled = false;
-  let defaultModel = "gpt-4o-mini";
-
-  if (provider === "gemini") {
-    const status = geminiPublicStatus();
-    isConfigured = status.configured || Boolean(settings.geminiApiKey);
-    isEnabled = status.enabled || settings.geminiEnabled;
-    defaultModel = status.model || "gemini-2.5-flash-lite";
-  } else if (provider === "groq" || provider === "grok") {
-    const status = groqPublicStatus();
-    isConfigured = status.configured || Boolean(settings.groqApiKey);
-    isEnabled = status.enabled || settings.groqEnabled;
-    defaultModel = status.model || "llama-3.1-8b-instant";
-  } else {
-    const status = openAiPublicStatus();
-    isConfigured = status.configured || Boolean(settings.openaiApiKey);
-    isEnabled = status.enabled || settings.openaiEnabled;
-    defaultModel = status.model || "gpt-4o-mini";
+  const providerStartedAt = new Date();
+  let providerFinishedAt = providerStartedAt;
+  const candidates = [{
+    provider: primaryProvider,
+    model: settings.primaryModel || settings.model || "",
+    isFallback: false,
+  }];
+  if (settings.fallbackEnabled) {
+    const fallbackCandidate = {
+      provider: normalizedAiProvider(settings.fallbackProvider || primaryProvider),
+      model: settings.fallbackModel || "",
+      isFallback: true,
+    };
+    const duplicatesPrimary =
+      fallbackCandidate.provider === candidates[0].provider &&
+      (!fallbackCandidate.model || fallbackCandidate.model === candidates[0].model);
+    if (!duplicatesPrimary) candidates.push(fallbackCandidate);
   }
 
-  if (!isEnabled || !isConfigured) {
-    const missingReason = !isEnabled ? "disabled" : "not_configured";
-    console.warn(`AI provider ${provider} skipped: ${missingReason}.`, {
-      enabled: isEnabled,
-      configured: isConfigured,
-      model: settings.model || defaultModel,
-    });
-    errorMsg = `Provedor ${provider} não está habilitado/configurado no ambiente ou painel.`;
-    errorCode = `${provider.toUpperCase()}_${missingReason.toUpperCase()}`;
-  } else {
+  for (const candidate of candidates) {
+    if (finalResponse) break;
+    const runtime = aiProviderRuntime(candidate.provider, settings);
+    const activeModel = candidate.model || runtime.defaultModel;
+    if (!runtime.enabled || !runtime.configured) {
+      const missingReason = !runtime.enabled ? "disabled" : "not_configured";
+      console.warn(`AI provider ${runtime.provider} skipped: ${missingReason}.`, {
+        enabled: runtime.enabled,
+        configured: runtime.configured,
+        model: activeModel,
+      });
+      errorMsg = `Provedor ${runtime.provider} não está habilitado/configurado no ambiente ou painel.`;
+      errorCode = `${runtime.provider.toUpperCase()}_${missingReason.toUpperCase()}`;
+      continue;
+    }
+
+    if (candidate.isFallback) fallbackUsed = true;
     const retries = settings.maxRetries ?? 2;
     let currentAttempt = 0;
-    providerStartedAt = new Date();
-
-    const activeModel = settings.model || defaultModel;
-
     while (currentAttempt <= retries && !finalResponse) {
       try {
         if (currentAttempt > 0) {
-          retryCountTotal++;
+          retryCountTotal += 1;
           await delay(getRetryDelay(currentAttempt));
         }
-
-        let result;
-        if (provider === "gemini") {
-          result = await generateGeminiText({
-            systemPrompt,
-            message: promptMessage,
-            model: activeModel,
-            timeoutMs: settings.timeoutMs || 12000,
-            maxTokens: settings.maxResponseTokens || 300,
-            apiKey: settings.geminiApiKey || null,
-          });
-        } else if (provider === "groq" || provider === "grok") {
-          result = await generateGroqText({
-            systemPrompt,
-            message: promptMessage,
-            model: activeModel,
-            timeoutMs: settings.timeoutMs || 12000,
-            maxTokens: settings.maxResponseTokens || 300,
-            apiKey: settings.groqApiKey || null,
-          });
-        } else {
-          result = await generateOpenAiText({
-            systemPrompt,
-            message: promptMessage,
-            model: activeModel,
-            timeoutMs: settings.timeoutMs || 12000,
-            maxTokens: settings.maxResponseTokens || 300,
-            apiKey: settings.openaiApiKey || null,
-          });
-        }
-
+        const result = await generateTextWithConfiguredProvider({
+          provider: runtime.provider,
+          systemPrompt,
+          message: promptMessage,
+          model: activeModel,
+          timeoutMs: settings.timeoutMs || 12000,
+          maxTokens: settings.maxResponseTokens || 300,
+          apiKey: runtime.apiKey,
+        });
         finalResponse = result.text;
-        finalModel = result.model;
+        finalProvider = runtime.provider;
+        finalModel = result.model || activeModel;
         finalUsage = result.usage;
       } catch (err) {
         console.error(
-          `AI provider ${provider} failed (attempt ${currentAttempt + 1}/${retries + 1}): ${err.message}`,
+          `AI provider ${runtime.provider} failed (attempt ${currentAttempt + 1}/${retries + 1}): ${err.message}`,
         );
         errorMsg = err.message;
-        errorCode = err.code || null;
+        errorCode = err.code || String(err.status || "") || null;
         if (err.code === "RESOURCE_EXHAUSTED" || err.status === 429 || err.status === 401) break;
-        currentAttempt++;
+        currentAttempt += 1;
       }
     }
-    providerFinishedAt = new Date();
+  }
+  providerFinishedAt = new Date();
 
-    const lastAiMessage = history.filter(item => item.sender_type === "ai").pop();
-    const lastAiText = lastAiMessage ? lastAiMessage.body : "";
-
-    if (finalResponse && lastAiText && finalResponse.trim() === lastAiText.trim()) {
-      try {
-        const loopPrompt = `${systemPrompt}\n\nATENÇÃO: Sua resposta gerada foi exatamente idêntica à última resposta enviada: "${finalResponse}". Para evitar repetição e loops, gere uma resposta diferente, mais natural e contextualizada.`;
-        let result;
-        if (provider === "gemini") {
-          result = await generateGeminiText({
-            systemPrompt: loopPrompt,
-            message: promptMessage,
-            model: activeModel,
-            timeoutMs: settings.timeoutMs || 12000,
-            maxTokens: settings.maxResponseTokens || 300,
-            apiKey: settings.geminiApiKey || null,
-          });
-        } else if (provider === "groq" || provider === "grok") {
-          result = await generateGroqText({
-            systemPrompt: loopPrompt,
-            message: promptMessage,
-            model: activeModel,
-            timeoutMs: settings.timeoutMs || 12000,
-            maxTokens: settings.maxResponseTokens || 300,
-            apiKey: settings.groqApiKey || null,
-          });
-        } else {
-          result = await generateOpenAiText({
-            systemPrompt: loopPrompt,
-            message: promptMessage,
-            model: activeModel,
-            timeoutMs: settings.timeoutMs || 12000,
-            maxTokens: settings.maxResponseTokens || 300,
-            apiKey: settings.openaiApiKey || null,
-          });
-        }
-        finalResponse = result.text;
-      } catch (err) {
-        console.error("Regenerating response to prevent loop failed:", err.message);
-      }
+  const lastAiMessage = history.filter(item => item.sender_type === "ai").pop();
+  const lastAiText = lastAiMessage ? lastAiMessage.body : "";
+  if (finalResponse && lastAiText && finalResponse.trim() === lastAiText.trim()) {
+    try {
+      const loopPrompt = `${systemPrompt}\n\nATENÇÃO: Sua resposta gerada foi exatamente idêntica à última resposta enviada: "${finalResponse}". Para evitar repetição e loops, gere uma resposta diferente, mais natural e contextualizada.`;
+      const runtime = aiProviderRuntime(finalProvider, settings);
+      const result = await generateTextWithConfiguredProvider({
+        provider: finalProvider,
+        systemPrompt: loopPrompt,
+        message: promptMessage,
+        model: finalModel || runtime.defaultModel,
+        timeoutMs: settings.timeoutMs || 12000,
+        maxTokens: settings.maxResponseTokens || 300,
+        apiKey: runtime.apiKey,
+      });
+      finalResponse = result.text;
+      finalUsage = result.usage || finalUsage;
+    } catch (err) {
+      console.error("Regenerating response to prevent loop failed:", err.message);
     }
   }
 
@@ -5703,13 +6015,13 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       model: finalModel,
     };
   } else {
-    console.error("OpenAI provider failed. Triggering contingency response.");
+    console.error("All configured AI providers failed. Triggering contingency response.");
 
     let contingencyReplied = false;
     if (settings.contingencyEnabled) {
       const contingencyText = [
-        "Olá! Recebi sua mensagem, mas nosso atendimento automático está com uma instabilidade momentânea. Pode tentar me enviar de novo em instantes, por favor?",
-        bookingInterruptionQuestion ? buildBookingResumePrompt(currentState) : "",
+        "Recebi sua mensagem, mas nosso atendimento automático está com uma instabilidade momentânea. Pode tentar novamente em instantes, por favor?",
+        bookingInterruptionQuestion ? bookingInformationPauseNotice(currentState) : "",
       ].filter(Boolean).join("\n\n");
       await sendTextAndRecord({
         normalized,
@@ -5740,16 +6052,16 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     await logAiRequest({
       conversationId,
       messageId: inboundMessageId,
-      provider: "openai",
-      model: settings.primaryModel || settings.model || "gpt-4o",
+      provider: finalProvider,
+      model: finalModel || settings.primaryModel || settings.model || "not_available",
       status: contingencyReplied ? "contingency_reply" : "provider_error",
       retryCount: retryCountTotal,
-      fallbackUsed: false,
+      fallbackUsed,
       queueLatencyMs,
       providerLatencyMs,
       totalLatencyMs,
-      errorCode: errorCode || "OPENAI_PROVIDER_FAILED",
-      errorMessage: errorMsg || "OpenAI provider failed.",
+      errorCode: errorCode || "AI_PROVIDERS_FAILED",
+      errorMessage: errorMsg || "Todos os provedores de IA falharam.",
     });
 
     return {

@@ -42,7 +42,11 @@ export function buildLocalGreetingResponse(text, {
   if (!isSimpleGreeting(text)) return "";
   const greeting = explicitGreetingFromText(text) || localGreetingForDate(date, timezone);
   const brand = clean(salonName) || "Carol Sol";
-  return `${greeting}! Sou a assistente virtual da ${brand}. Posso te ajudar com serviços, valores, horários ou agendamento.`;
+  return [
+    `${greeting}! Sou a assistente virtual da ${brand}. Como posso te ajudar?`,
+    "Posso responder dúvidas sobre cabelos e Mega Hair, explicar procedimentos e cuidados ou ajudar com valores e horários.",
+    "Se quiser conhecer o catálogo, envie “serviços”. Se quiser marcar uma avaliação, envie “agendar”.",
+  ].join("\n\n");
 }
 
 export function naturalConversationPrefix(text) {

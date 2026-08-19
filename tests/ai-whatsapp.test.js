@@ -80,6 +80,17 @@ test("normalizes AI WhatsApp settings and preserves explicit false values", () =
   assert.equal(normalized.fallbackEnabled, false);
 });
 
+test("preserves the configured fallback model independently from the primary model", () => {
+  const normalized = normalizeAiSettingsInput({
+    ...defaultAiSettings(),
+    model: "primary-model",
+    primaryModel: "primary-model",
+    fallbackModel: "fallback-model",
+  });
+  assert.equal(normalized.primaryModel, "primary-model");
+  assert.equal(normalized.fallbackModel, "fallback-model");
+});
+
 test("rejects invalid AI WhatsApp personality and short prompt", () => {
   assert.throws(
     () =>
@@ -106,6 +117,8 @@ test("builds runtime prompt with anti-hallucination rules and no secrets", () =>
   assert.match(prompt, /Nunca inventar preços/);
   assert.match(prompt, /ferramentas reais do backend/);
   assert.match(prompt, /Um número só representa a opção definida pelo estado atual do backend/);
+  assert.match(prompt, /Diferencie conhecimento educativo de oferta comercial/i);
+  assert.match(prompt, /realização pelo salão precisa ser confirmada/i);
   assert.doesNotMatch(prompt, /Se o usuário digitar a opção "3"/);
   assert.doesNotMatch(prompt, /GEMINI_API_KEY/i);
   assert.doesNotMatch(prompt, /apiKey/i);

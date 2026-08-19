@@ -90,7 +90,7 @@ test("generateGroqText rotates numbered keys between calls", async () => {
   assert.equal(new Set(authorizations).size, 2);
 });
 
-test("processIncomingWhatsAppWebhook opens the backend service catalog on greeting", async () => {
+test("processIncomingWhatsAppWebhook answers a greeting before offering the service catalog", async () => {
   const mockSettings = {
     id: "settings-123",
     business_id: "default",
@@ -193,13 +193,208 @@ test("processIncomingWhatsAppWebhook opens the backend service catalog on greeti
   const result = await processIncomingWhatsAppWebhook(payload);
   assert.equal(result.ok, true);
   assert.equal(result.replied, true);
-  assert.equal(result.reason, "booking_initial_category_catalog");
-  assert.match(sentTexts.at(-1), /Mega Hair/);
+  assert.equal(result.reason, "conversation_greeting");
+  assert.match(sentTexts.at(-1), /Como posso te ajudar/i);
+  assert.match(sentTexts.at(-1), /envie “serviços”/i);
+  assert.doesNotMatch(sentTexts.at(-1), /Categorias de serviços disponíveis/i);
   assert.doesNotMatch(sentTexts.at(-1), /Ponto Americano/);
   assert.doesNotMatch(sentTexts.at(-1), /Avaliacao personalizada/);
+
+  const catalogResult = await processIncomingWhatsAppWebhook({
+    from: "5511999999999@s.whatsapp.net",
+    text: "serviços",
+    isFromMe: false,
+    messageId: "msg-greeter-2",
+  });
+  assert.equal(catalogResult.reason, "booking_initial_category_catalog");
+  assert.match(sentTexts.at(-1), /Mega Hair/);
 });
 
-test("processIncomingWhatsAppWebhook uses OpenAI as the only generative provider", async () => {
+test("processIncomingWhatsAppWebhook pauses booking for hair information and resolves a numbered catalog choice", async () => {
+  const mockSettings = {
+    id: "settings-info-flow",
+    business_id: "default",
+    enabled: true,
+    timezone: "America/Sao_Paulo",
+    allow_24h: true,
+    cache_enabled: true,
+    max_auto_messages: 20,
+    grouping_window_ms: 1,
+    allow_new_contacts: true,
+    allow_existing_clients: true,
+  };
+  let bookingState = {
+    status: "awaiting_category",
+    categoryOptions: [
+      { id: 1, categoryId: "category-assessment", categoryName: "Avaliação" },
+      { id: 2, categoryId: "category-fiber", categoryName: "Aplicação com cabelo/fibra inclusa" },
+    ],
+  };
+  const queue = [];
+  const sentTexts = [];
+  let queueId = 0;
+
+  pool.query = async (sql, params = []) => {
+    if (sql.includes("insert into public.whatsapp_incoming_queue")) {
+      queueId += 1;
+      const row = {
+        id: `queue-info-${queueId}`,
+        phone_number: params[0],
+        message_id: params[1],
+        text: params[2],
+        processed: false,
+      };
+      queue.push(row);
+      return { rowCount: 1, rows: [row] };
+    }
+    if (sql.includes("whatsapp_incoming_queue") && sql.includes("select")) {
+      if (sql.includes("processed = false")) {
+        const rows = queue.filter((item) => item.phone_number === params[0] && !item.processed);
+        return { rowCount: rows.length, rows };
+      }
+      const duplicate = queue.some((item) => item.message_id === params[0]);
+      return { rowCount: duplicate ? 1 : 0, rows: duplicate ? [{ present: true }] : [] };
+    }
+    if (sql.includes("update public.whatsapp_incoming_queue")) {
+      for (const item of queue) item.processed = true;
+      return { rowCount: queue.length, rows: [] };
+    }
+    if (sql.includes("ai_settings") && sql.includes("select")) {
+      return { rowCount: 1, rows: [mockSettings] };
+    }
+    if (sql.includes("select s.id,s.catalog_code,s.category_id") && sql.includes("from public.services s")) {
+      return {
+        rowCount: 2,
+        rows: [
+          {
+            id: "service-weave",
+            name: "Combo Fibra Russa + Entrelace",
+            commercial_name: "Combo Fibra Russa + Entrelace",
+            description: "Fibra sintética e colocação por Entrelace inclusas.",
+            active: true,
+            show_online_booking: true,
+            allow_auto_booking: true,
+          },
+          {
+            id: "service-tape",
+            name: "Combo Fibra Russa + Fita Adesiva",
+            commercial_name: "Combo Fibra Russa + Fita Adesiva",
+            description: "Fibra sintética e colocação por Fita Adesiva inclusas.",
+            active: true,
+            show_online_booking: true,
+            allow_auto_booking: true,
+          },
+        ],
+      };
+    }
+    if (sql.includes("from public.service_variants v")) {
+      return {
+        rowCount: 2,
+        rows: [
+          { id: "variant-weave", service_id: "service-weave", label: "300 g", price: 690, duration_minutes: 360, active: true, allow_whatsapp_booking: true, requires_assessment: true },
+          { id: "variant-tape", service_id: "service-tape", label: "100 g", price: 440, duration_minutes: 180, active: true, allow_whatsapp_booking: true, requires_assessment: true },
+        ],
+      };
+    }
+    if (sql.includes("from public.service_categories")) {
+      return { rowCount: 2, rows: [{ id: "category-assessment", name: "Avaliação" }, { id: "category-fiber", name: "Aplicação com cabelo/fibra inclusa" }] };
+    }
+    if (sql.includes("from public.hair_methods")) return { rowCount: 0, rows: [] };
+    if (
+      sql.includes("from public.plans") ||
+      sql.includes("from public.coupons") ||
+      sql.includes("from public.marketing_promotions") ||
+      sql.includes("from public.ai_automation_flows") ||
+      sql.includes("from public.knowledge_articles") ||
+      sql.includes("from public.hair_inventory") ||
+      sql.includes("from public.products") ||
+      sql.includes("from public.service_addons")
+    ) return { rowCount: 0, rows: [] };
+    if (sql.includes("whatsapp_conversations") && sql.includes("select")) {
+      return {
+        rowCount: 1,
+        rows: [{
+          id: "conversation-info-flow",
+          status: "ai",
+          ai_enabled: true,
+          booking_state: JSON.stringify(bookingState),
+        }],
+      };
+    }
+    if (sql.includes("update public.whatsapp_conversations") && sql.includes("booking_state=$2")) {
+      bookingState = JSON.parse(params[1]);
+      return { rowCount: 1, rows: [] };
+    }
+    if (sql.includes("whatsapp_messages") && sql.includes("select") && sql.includes("count")) {
+      return { rowCount: 1, rows: [{ total: 0 }] };
+    }
+    if (sql.includes("whatsapp_messages") && sql.includes("select") && sql.includes("direction")) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (sql.includes("public.clients") && sql.includes("select")) return { rowCount: 0, rows: [] };
+    if (sql.includes("insert into public.whatsapp_messages")) {
+      return { rowCount: 1, rows: [{ id: `outbound-info-${sentTexts.length + 1}` }] };
+    }
+    return { rowCount: 1, rows: [{ id: "generic-info-id" }] };
+  };
+  pool.connect = async () => ({ query: pool.query, release: () => {} });
+  globalThis.fetch = async (url, options = {}) => {
+    if (url.includes("/api/send-text")) {
+      sentTexts.push(JSON.parse(options.body || "{}").text || "");
+      return new Response(JSON.stringify({ success: true, messageId: `sent-info-${sentTexts.length}` }));
+    }
+    if (url.includes("/api/presence")) return new Response(JSON.stringify({ success: true }));
+    return new Response(JSON.stringify({ success: true, status: "ready" }));
+  };
+  process.env.BAILEYS_API_URL = "https://baileys.example.com";
+  process.env.BAILEYS_API_KEY = "test-key";
+
+  const send = (text, id) => processIncomingWhatsAppWebhook({
+    from: "5511999999999@s.whatsapp.net",
+    text,
+    isFromMe: false,
+    messageId: id,
+  });
+
+  const hairReply = await send("Coloração você faz?", "msg-info-hair");
+  assert.equal(hairReply.reason, "booking_question_local_reply");
+  assert.match(sentTexts.at(-1), /não aparece no catálogo ativo/i);
+  assert.match(sentTexts.at(-1), /envie “continuar”/i);
+  assert.doesNotMatch(sentTexts.at(-1), /Escolha a categoria/i);
+  assert.equal(bookingState.status, "awaiting_category");
+  assert.equal(bookingState.informationPause, true);
+
+  const resumeReply = await send("continuar", "msg-info-resume");
+  assert.equal(resumeReply.reason, "booking_catalog_info_resume");
+  assert.match(sentTexts.at(-1), /Escolha a categoria/i);
+  assert.equal(bookingState.status, "awaiting_category");
+  assert.equal(bookingState.informationPause, undefined);
+
+  const catalogReply = await send("O que você tem de fibra russa?", "msg-info-catalog");
+  assert.equal(catalogReply.reason, "booking_catalog_info_options");
+  assert.match(sentTexts.at(-1), /1\) Combo Fibra Russa \+ Entrelace/);
+  assert.match(sentTexts.at(-1), /2\) Combo Fibra Russa \+ Fita Adesiva/);
+  assert.doesNotMatch(sentTexts.at(-1), /Escolha a categoria respondendo/i);
+  assert.equal(bookingState.catalogInfoOptions.length, 2);
+
+  const changedSubjectReply = await send("Como funciona coloração?", "msg-info-change-subject");
+  assert.equal(changedSubjectReply.reason, "booking_question_local_reply");
+  assert.match(sentTexts.at(-1), /altera pigmentos/i);
+  assert.equal(bookingState.catalogInfoOptions, undefined);
+  assert.equal(bookingState.status, "awaiting_category");
+
+  await send("O que você tem de fibra russa?", "msg-info-catalog-again");
+
+  const detailReply = await send("Combo fibra russa mais entrelace", "msg-info-detail");
+  assert.equal(detailReply.reason, "booking_catalog_info_detail");
+  assert.match(sentTexts.at(-1), /Fibra sintética e colocação por Entrelace inclusas/i);
+  assert.match(sentTexts.at(-1), /R\$\s*690,00/i);
+  assert.equal(bookingState.status, "awaiting_category");
+  assert.equal(bookingState.catalogInfoOptions, undefined);
+  assert.equal(bookingState.informationPause, true);
+});
+
+test("processIncomingWhatsAppWebhook uses the configured fallback provider after a primary failure", async () => {
   let geminiCalled = false;
   let groqCalled = false;
   let openAiCalled = false;
@@ -214,6 +409,8 @@ test("processIncomingWhatsAppWebhook uses OpenAI as the only generative provider
     cache_enabled: true,
     max_auto_messages: 10,
     grouping_window_ms: 1,
+    provider: "openai",
+    model: "legacy-openai-model",
     primary_provider: "gemini",
     primary_model: "gemini-2.5-flash-lite",
     fallback_provider: "groq",
@@ -296,7 +493,11 @@ test("processIncomingWhatsAppWebhook uses OpenAI as the only generative provider
 
     if (url.includes("api.groq.com")) {
       groqCalled = true;
-      return new Response(JSON.stringify({ success: false }), { status: 500 });
+      return new Response(JSON.stringify({
+        id: "groq-fallback-response",
+        choices: [{ message: { role: "assistant", content: "Resposta inteligente do provedor alternativo." } }],
+        usage: { prompt_tokens: 11, completion_tokens: 6 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
     if (url.includes("api.openai.com/v1/chat/completions")) {
@@ -313,9 +514,10 @@ test("processIncomingWhatsAppWebhook uses OpenAI as the only generative provider
 
   process.env.BAILEYS_API_URL = "https://baileys.example.com";
   process.env.BAILEYS_API_KEY = "test-key";
-  process.env.OPENAI_ENABLED = "true";
-  process.env.OPENAI_API_KEY = "openai-key";
-  process.env.OPENAI_MODEL = "gpt-5.4-mini";
+  process.env.GEMINI_ENABLED = "true";
+  process.env.GEMINI_API_KEY = "gemini-key";
+  process.env.GROQ_ENABLED = "true";
+  process.env.GROQ_API_KEY = "groq-key";
 
   const payload = {
     from: "5511999999999@s.whatsapp.net",
@@ -327,10 +529,10 @@ test("processIncomingWhatsAppWebhook uses OpenAI as the only generative provider
   const result = await processIncomingWhatsAppWebhook(payload);
   assert.equal(result.ok, true);
   assert.equal(result.replied, true);
-  assert.equal(result.reason, "openai_reply");
-  assert.equal(openAiCalled, true);
-  assert.equal(geminiCalled, false);
-  assert.equal(groqCalled, false);
+  assert.equal(result.reason, "groq_reply");
+  assert.equal(openAiCalled, false);
+  assert.equal(geminiCalled, true);
+  assert.equal(groqCalled, true);
 });
 
 test("processIncomingWhatsAppWebhook blocks out-of-scope questions before OpenAI", async () => {
@@ -446,8 +648,8 @@ test("processIncomingWhatsAppWebhook persists a booking request before replying 
     cache_enabled: true,
     max_auto_messages: 10,
     grouping_window_ms: 1,
-    primary_provider: "gemini",
-    primary_model: "gemini-2.5-flash-lite",
+    primary_provider: "openai",
+    primary_model: "gpt-5.4-mini",
     fallback_provider: "groq",
     fallback_model: "llama-3.1-8b-instant",
     fallback_enabled: true,
