@@ -2681,6 +2681,9 @@ export function AdminAppointmentsPage() {
     professionalId: "",
     serviceId: "",
     status: "",
+    source: "",
+    clientId: "",
+    search: "",
   });
   const [appointmentForm, setAppointmentForm] = useState({
     clientId: "",
@@ -2762,13 +2765,19 @@ export function AdminAppointmentsPage() {
       return false;
     if (filters.serviceId && item.service_id !== filters.serviceId) return false;
     if (filters.status && item.status !== filters.status) return false;
+    if (filters.source && item.source !== filters.source) return false;
+    if (filters.clientId && item.client_id !== filters.clientId) return false;
+    if (filters.search) {
+      const haystack = `${item.client || ""} ${item.service || ""} ${item.booking_code || ""}`.toLowerCase();
+      if (!haystack.includes(filters.search.toLowerCase())) return false;
+    }
     return true;
   });
   const filteredBlocked = blocked.filter((block: any) =>
     filters.professionalId ? block.professional_id === filters.professionalId : true,
   );
   const hasFilters = Boolean(
-    filters.professionalId || filters.serviceId || filters.status,
+    filters.professionalId || filters.serviceId || filters.status || filters.source || filters.clientId || filters.search,
   );
   const monthLabel = anchorDate.toLocaleDateString("pt-BR", {
     month: "long",
@@ -3031,7 +3040,25 @@ export function AdminAppointmentsPage() {
         </div>
       </div>
       <section className="surface mb-5 p-5">
-        <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_auto]">
+        <div className="grid gap-3 md:grid-cols-3">
+          <label className="block">
+            <span className="mb-2 block text-xs font-bold">Pesquisar</span>
+            <input className="field" value={filters.search} placeholder="Cliente, serviço ou código" onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
+          </label>
+          <label className="block">
+            <span className="mb-2 block text-xs font-bold">Cliente</span>
+            <select className="field" value={filters.clientId} onChange={(event) => setFilters({ ...filters, clientId: event.target.value })}>
+              <option value="">Todas</option>
+              {clients.map((client: any) => <option key={client.id} value={client.id}>{client.name}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-2 block text-xs font-bold">Origem</span>
+            <select className="field" value={filters.source} onChange={(event) => setFilters({ ...filters, source: event.target.value })}>
+              <option value="">Todas</option>
+              <option value="bot">Bot WhatsApp</option><option value="client">Cliente</option><option value="admin">Admin</option><option value="professional">Profissional</option><option value="app">Aplicativo/legado</option>
+            </select>
+          </label>
           <label className="block">
             <span className="mb-2 block text-xs font-bold">Profissional</span>
             <select
@@ -3088,7 +3115,7 @@ export function AdminAppointmentsPage() {
               type="button"
               disabled={!hasFilters}
               onClick={() =>
-                setFilters({ professionalId: "", serviceId: "", status: "" })
+                setFilters({ professionalId: "", serviceId: "", status: "", source: "", clientId: "", search: "" })
               }
               className="btn-secondary w-full disabled:opacity-50"
             >
@@ -6227,6 +6254,69 @@ export function AdminSumupPage() {
   );
 }
 
+export function AdminNotificationsPage() {
+  const [status, setStatus] = useState("all");
+  const p = useLoad<any>(`/api/portal?resource=admin-notifications&status=${status}`);
+  const counts = Object.fromEntries((p.data?.counts || []).map((item: any) => [item.delivery_status, item.total]));
+  const statusTone = (value: string): "green" | "rose" | "neutral" | "gold" => value === "sent" ? "green" : value === "failed" ? "rose" : value === "cancelled" ? "neutral" : "gold";
+
+  return (
+    <div>
+      <PageHeader
+        eyebrow="MONITORAMENTO"
+        title="Notificações"
+        subtitle="Entregas, tentativas e falhas dos avisos de agendamento."
+      />
+      <div className="mb-5 grid gap-3 sm:grid-cols-4">
+        <StatCard label="Enviadas" value={String(counts.sent || 0)} />
+        <StatCard label="Falhas" value={String(counts.failed || 0)} />
+        <StatCard label="Pendentes" value={String((counts.pending || 0) + (counts.processing || 0))} />
+        <StatCard label="Canceladas" value={String(counts.cancelled || 0)} />
+      </div>
+      <section className="surface p-5">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <label className="block min-w-[220px]">
+            <span className="mb-2 block text-xs font-bold">Status da entrega</span>
+            <select className="field" value={status} onChange={(event) => setStatus(event.target.value)}>
+              <option value="all">Todos</option>
+              <option value="pending">Pendentes</option>
+              <option value="processing">Processando</option>
+              <option value="sent">Enviados</option>
+              <option value="failed">Falhos</option>
+              <option value="cancelled">Cancelados</option>
+            </select>
+          </label>
+          {p.data?.health && (
+            <p className="muted text-xs">
+              Último cron: {dt(p.data.health.lastRunAt)} · enviados {p.data.health.sent || 0} · falhas {p.data.health.failed || 0}
+            </p>
+          )}
+        </div>
+        {p.loading ? <LoadingState /> : p.error ? <ErrorBox text={p.error} /> : !p.data?.items?.length ? (
+          <EmptyState title="Nenhuma notificação" text="Não há registros para este filtro." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left text-xs">
+              <thead><tr className="border-b border-black/10 text-stone-400"><th className="p-3">Criada</th><th className="p-3">Destinatário</th><th className="p-3">Tipo</th><th className="p-3">Agendamento</th><th className="p-3">Status</th><th className="p-3">Tentativas</th><th className="p-3">Erro</th></tr></thead>
+              <tbody>{p.data.items.map((item: any) => (
+                <tr key={item.id} className="border-b border-black/5 align-top">
+                  <td className="p-3">{dt(item.created_at)}</td>
+                  <td className="p-3 font-semibold">{item.recipient || "Sistema"}</td>
+                  <td className="p-3">{item.kind}</td>
+                  <td className="p-3">{item.booking_code || "—"}<br/><span className="text-stone-400">{item.service || ""}</span></td>
+                  <td className="p-3"><Badge tone={statusTone(item.delivery_status)}>{item.delivery_status}</Badge></td>
+                  <td className="p-3">{item.delivery_attempts || 0}</td>
+                  <td className="max-w-[260px] p-3 text-rose-700">{item.last_delivery_error || "—"}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 export function AdminSettingsPage() {
   const p = useLoad<any>("/api/portal?resource=admin-settings");
   const backupsLoad = useLoad<any[]>("/api/portal?resource=admin-backups");
@@ -6249,6 +6339,20 @@ export function AdminSettingsPage() {
     cancellation: "",
     reschedule: ""
   });
+  const [appointmentAutomation, setAppointmentAutomation] = useState<any>({
+    bookingEnabled: true,
+    notifyClientOnCreate: true,
+    notifyProfessionalOnCreate: true,
+    reminder24hEnabled: true,
+    reminder24hHoursBefore: 24,
+    reminder2hEnabled: true,
+    reminder2hHoursBefore: 2,
+    notifyClientOnReschedule: true,
+    notifyProfessionalOnReschedule: true,
+    notifyClientOnCancel: true,
+    notifyProfessionalOnCancel: true,
+    googleCalendarLinkEnabled: true,
+  });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
   const [testChannel, setTestChannel] = useState("email");
@@ -6260,6 +6364,9 @@ export function AdminSettingsPage() {
       setForm((current: any) => ({ ...current, ...p.data }));
       if (p.data.templates) {
         setTemplates(p.data.templates);
+      }
+      if (p.data.appointmentAutomation) {
+        setAppointmentAutomation(p.data.appointmentAutomation);
       }
     }
   }, [p.data]);
@@ -6370,13 +6477,13 @@ export function AdminSettingsPage() {
     reader.readAsText(file);
   };
 
-  const save = async (e: FormEvent) => {
-    e.preventDefault();
+  const save = async (e?: { preventDefault: () => void }) => {
+    e?.preventDefault();
     setSaving(true);
     try {
       await apiFetch("/api/portal?resource=admin-settings", {
         method: "PATCH",
-        body: JSON.stringify({ ...form, templates }),
+        body: JSON.stringify({ ...form, templates, appointmentAutomation }),
       });
       await p.reload();
       setToast("Alterações salvas com sucesso.");
@@ -6494,6 +6601,52 @@ export function AdminSettingsPage() {
               {saving ? "Salvando…" : "Salvar configurações"}
             </button>
           </form>
+
+          <section className="surface p-6 mt-6">
+            <SectionHeading title="Agendamentos e notificações" />
+            <p className="muted text-xs mb-4">
+              Controles usados pelo site, bot, confirmações e lembretes executados no servidor.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {[
+                ["bookingEnabled", "Permitir novos agendamentos"],
+                ["notifyClientOnCreate", "Confirmar para a cliente"],
+                ["notifyProfessionalOnCreate", "Avisar a profissional"],
+                ["reminder24hEnabled", "Lembrete de 24 horas"],
+                ["reminder2hEnabled", "Lembrete de 2 horas"],
+                ["googleCalendarLinkEnabled", "Exibir link do Google Calendar"],
+                ["notifyClientOnReschedule", "Avisar cliente ao remarcar"],
+                ["notifyProfessionalOnReschedule", "Avisar profissional ao remarcar"],
+                ["notifyClientOnCancel", "Avisar cliente ao cancelar"],
+                ["notifyProfessionalOnCancel", "Avisar profissional ao cancelar"],
+              ].map(([key, label]) => (
+                <label key={key} className="flex items-center gap-3 rounded-xl border border-black/10 p-3 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={appointmentAutomation[key] === true}
+                    onChange={(e) => setAppointmentAutomation((current: any) => ({ ...current, [key]: e.target.checked }))}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+              <Input
+                label="Primeiro lembrete (horas antes)"
+                type="number"
+                value={String(appointmentAutomation.reminder24hHoursBefore ?? 24)}
+                set={(v) => setAppointmentAutomation((current: any) => ({ ...current, reminder24hHoursBefore: Number(v) }))}
+              />
+              <Input
+                label="Segundo lembrete (horas antes)"
+                type="number"
+                value={String(appointmentAutomation.reminder2hHoursBefore ?? 2)}
+                set={(v) => setAppointmentAutomation((current: any) => ({ ...current, reminder2hHoursBefore: Number(v) }))}
+              />
+            </div>
+            <button disabled={saving} onClick={() => void save()} className="btn-primary mt-4" type="button">
+              <Save size={15} />
+              {saving ? "Salvando…" : "Salvar automações"}
+            </button>
+          </section>
 
           <section className="surface p-6 mt-6">
             <SectionHeading title="Templates de Mensagens" />

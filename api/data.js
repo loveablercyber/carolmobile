@@ -33,6 +33,10 @@ import {
   getMessageTemplate,
 } from "../server/lib/integrations.js";
 import {
+  generateGoogleCalendarUrl,
+  loadAppointmentAutomationContext,
+} from "../server/lib/appointment-automation.js";
+import {
   appError,
   getBody,
   handleError,
@@ -64,10 +68,11 @@ const uuidPattern =
 
 const appointmentSelect = `
   select a.id, a.booking_code, a.starts_at, a.ends_at, a.status, a.notes, a.estimated_value,
-    a.original_value, a.discount_amount, a.intake_data,
+    a.original_value, a.discount_amount, a.intake_data,a.source,a.timezone,a.updated_at,
     to_char(a.starts_at at time zone 'America/Sao_Paulo','DD/MM/YYYY') as date,
     to_char(a.starts_at at time zone 'America/Sao_Paulo','HH24:MI') as time,
-    s.id as service_id, s.name as service, s.duration_minutes,
+    s.id as service_id, s.name as service,
+    coalesce(a.duration_minutes,greatest(1,round(extract(epoch from (a.ends_at-a.starts_at))/60)::integer),s.duration_minutes) as duration_minutes,
     p.id as professional_id, pp.full_name as professional, pp.phone as professional_phone,
     pp.avatar_url as professional_avatar_url,
     c.id as client_id, cp.full_name as client, cp.phone as client_phone,
@@ -82,12 +87,15 @@ const appointmentSelect = `
   left join public.salon_locations l on l.id = a.location_id
 `;
 
-function formatAppointment(row) {
+function formatAppointment(row, automation = null) {
   if (!row) return row;
   const phone = row.client_phone || "";
   const last4 = phone.replace(/\D/g, "").slice(-4);
   const clientWhatsappTitle = last4 ? `Cliente WhatsApp ${last4}` : "Cliente WhatsApp";
 
+  const calendarUrl = automation?.settings?.googleCalendarLinkEnabled
+    ? generateGoogleCalendarUrl(row, automation)
+    : "";
   return {
     ...row,
     client_name: row.client,
@@ -100,6 +108,7 @@ function formatAppointment(row) {
       row.duration_minutes >= 60
         ? `${Math.floor(row.duration_minutes / 60)}h${row.duration_minutes % 60 ? String(row.duration_minutes % 60).padStart(2, "0") : ""}`
         : `${row.duration_minutes}min`,
+    calendar_url: calendarUrl,
   };
 }
 
@@ -298,6 +307,7 @@ async function getResource(req, res, user, resource) {
   }
 
   if (resource === "appointments") {
+    const automation = await loadAppointmentAutomationContext();
     const scope = await appointmentScope(user);
     const { range, error } = appointmentRange(req.query);
     if (error) throw appError(error);
@@ -318,12 +328,13 @@ async function getResource(req, res, user, resource) {
       params,
     );
     return send(res, 200, {
-      appointments: rows.map(formatAppointment),
+      appointments: rows.map((row) => formatAppointment(row, automation)),
       range,
     });
   }
 
   if (resource === "appointment-detail") {
+    const automation = await loadAppointmentAutomationContext();
     const user = await requireUser(req, ["admin", "professional", "client"]);
     const id = String(req.query?.id || "");
     if (!uuidPattern.test(id)) throw appError("Agendamento inválido.");
@@ -399,7 +410,7 @@ async function getResource(req, res, user, resource) {
         ),
       ]);
     return send(res, 200, {
-      appointment: formatAppointment(appointment),
+      appointment: formatAppointment(appointment, automation),
       history: history.rows,
       payments: payments.rows,
       messages: messages.rows,
@@ -820,6 +831,9 @@ async function createAppointment(req, res, user, body) {
     throw appError("Serviço inválido.");
   if (!uuidPattern.test(String(body.professionalId || "")))
     throw appError("Profissional inválida.");
+  const automation = await loadAppointmentAutomationContext();
+  if (!automation.settings.bookingEnabled)
+    throw appError("Novos agendamentos estão temporariamente desativados.", 503);
   const discoveryPhotoIds = normalizeDiscoveryPhotoIds(body.discoveryPhotoIds);
   if (user.role !== "client" && discoveryPhotoIds.length)
     throw appError("Fotos da descoberta so podem ser vinculadas pela cliente.", 403);
@@ -973,8 +987,10 @@ async function createAppointment(req, res, user, body) {
       total: couponResult.total,
       deposit,
     });
+    const source = user.role === "admin" ? "admin" : user.role === "professional" ? "professional" : "client";
+    const idempotencyKey = String(body.idempotencyKey || `${source}:${user.id}:${service.id}:${professional.id}:${startsAt.toISOString()}`).slice(0, 300);
     const { rows } = await client.query(
-      `insert into public.appointments(id,booking_code,client_id,professional_id,service_id,service_variant_id,location_id,starts_at,ends_at,status,notes,estimated_value,original_value,discount_amount,coupon_id,intake_data,catalog_snapshot,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) returning id`,
+      `insert into public.appointments(id,booking_code,client_id,professional_id,service_id,service_variant_id,location_id,starts_at,ends_at,status,notes,estimated_value,original_value,discount_amount,coupon_id,intake_data,catalog_snapshot,created_by,source,timezone,duration_minutes,idempotency_key) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) returning id`,
       [
         appointmentId,
         bookingCode,
@@ -994,6 +1010,10 @@ async function createAppointment(req, res, user, body) {
         JSON.stringify({ ...(body.intakeData || {}), requiresAssessment: variant?.requires_assessment === true }),
         JSON.stringify(snapshot),
         user.id,
+        source,
+        automation.settings.timezone,
+        bookingDuration,
+        idempotencyKey,
       ],
     );
     for (const addon of addons) {
@@ -1109,6 +1129,8 @@ async function createAppointment(req, res, user, body) {
     clientName: contact.rows[0]?.full_name,
     service: appointment.service,
     date: appointment.starts_at,
+    endsAt: appointment.ends_at,
+    durationMinutes: Math.max(1, Math.round((new Date(appointment.ends_at).getTime() - new Date(appointment.starts_at).getTime()) / 60_000)),
     professional: appointment.professional,
     professionalEmail: appointment.professional_email,
     professionalPhone: appointment.professional_phone,
@@ -1116,8 +1138,13 @@ async function createAppointment(req, res, user, body) {
     professionalNotificationId: appointment.professional_notification_id,
     notes: appointment.notes || "",
     value: appointment.estimated_value || 0,
+    location: appointment.location || automation.address,
+    bookingCode: appointment.booking_code,
+    settings: automation.settings,
+    businessName: automation.businessName,
+    address: automation.address,
   });
-  return send(res, 201, { appointment: formatAppointment(appointment) });
+  return send(res, 201, { appointment: formatAppointment(appointment, automation) });
 }
 
 export async function processReferralReward(client, clientId, appointmentId) {
@@ -1355,7 +1382,11 @@ async function updateAppointmentV2(req, res, user, body) {
       `update public.appointments set
         service_id=$1,professional_id=$2,starts_at=$3,ends_at=$4,status=$5,
         notes=$6,estimated_value=$7,original_value=$8,discount_amount=$9,
-        coupon_id=$10,cancellation_reason=$11,updated_at=now()
+        coupon_id=$10,cancellation_reason=$11,
+        cancelled_at=case when $5 in ('cancelled','no_show') then coalesce(cancelled_at,now()) else null end,
+        cancelled_by=case when $5 in ('cancelled','no_show') then $13 else null end,
+        confirmed_at=case when $5='confirmed' then coalesce(confirmed_at,now()) else confirmed_at end,
+        updated_at=now()
        where id=$12 returning id,status,updated_at`,
       [
         service.id,
@@ -1370,8 +1401,19 @@ async function updateAppointmentV2(req, res, user, body) {
         couponId,
         cancellationReason,
         body.id,
+        user.id,
       ],
     );
+
+    if (needsScheduleValidation || ["cancelled", "no_show", "completed"].includes(status)) {
+      await client.query(
+        `update public.notifications
+            set delivery_status='cancelled',cancelled_at=now(),updated_at=now()
+          where appointment_id=$1 and kind='appointment_reminder'
+            and delivery_status in ('pending','processing','failed')`,
+        [body.id],
+      );
+    }
 
     if (hasStatusUpdate && current.status !== status)
       await client.query(
@@ -1413,10 +1455,18 @@ async function updateAppointmentV2(req, res, user, body) {
     );
 
     const target = await client.query(
-      `select c.profile_id,a.client_id,a.coupon_id,a.discount_amount,s.name as service
+      `select c.profile_id as client_profile_id,a.client_id,a.coupon_id,a.discount_amount,a.booking_code,
+        a.starts_at,a.ends_at,a.notes,a.estimated_value,l.name as location,s.name as service,
+        cp.full_name as client_name,cp.phone as client_phone,cu.email as client_email,
+        pr.profile_id as professional_profile_id,pp.full_name as professional_name,
+        pp.phone as professional_phone,pu.email as professional_email
        from public.appointments a
        join public.clients c on c.id=a.client_id
+       join public.profiles cp on cp.id=c.profile_id left join auth.users cu on cu.id=cp.id
+       join public.professionals pr on pr.id=a.professional_id
+       join public.profiles pp on pp.id=pr.profile_id left join auth.users pu on pu.id=pp.id
        join public.services s on s.id=a.service_id
+       left join public.salon_locations l on l.id=a.location_id
        where a.id=$1`,
       [body.id],
     );
@@ -1430,7 +1480,7 @@ async function updateAppointmentV2(req, res, user, body) {
         `insert into public.notifications(profile_id,kind,title,body,data,action_url,metadata)
          values($1,$2,'Agendamento atualizado',$3,$4,$5,$4)`,
         [
-          item.profile_id,
+          item.client_profile_id,
           hasDetailUpdate ? "appointment_updated" : "appointment_status",
           hasDetailUpdate
             ? `Seu agendamento de ${item.service} foi atualizado pela equipe.`
@@ -1448,11 +1498,44 @@ async function updateAppointmentV2(req, res, user, body) {
         );
       if (status === "completed" && current.status !== "completed")
         await processReferralReward(client, item.client_id, body.id);
+      return {
+        ...changed.rows[0],
+        notification_context: item,
+        schedule_changed: needsScheduleValidation,
+        previous_status: current.status,
+      };
     }
     return changed.rows[0];
   });
   if (!updated) throw appError("Nao foi possivel atualizar o agendamento.");
-  return send(res, 200, { appointment: updated });
+  const change = updated.notification_context;
+  if (change && (updated.schedule_changed || updated.status === "cancelled")) {
+    const automation = await loadAppointmentAutomationContext();
+    const cancelled = updated.status === "cancelled";
+    const calendarUrl = !cancelled && automation.settings.googleCalendarLinkEnabled
+      ? generateGoogleCalendarUrl({
+          starts_at: change.starts_at,
+          ends_at: change.ends_at,
+          service: change.service,
+          professional: change.professional_name,
+          booking_code: change.booking_code,
+          location: change.location,
+        }, automation)
+      : "";
+    const eventName = cancelled ? "cancelado" : "remarcado";
+    const clientText = `Seu agendamento de ${change.service} foi ${eventName}.${cancelled ? "" : ` Nova data: ${new Date(change.starts_at).toLocaleString("pt-BR", { timeZone: automation.settings.timezone })}.`}${calendarUrl ? `\n\nAdicionar ao Google Calendar:\n${calendarUrl}` : ""}`;
+    const professionalText = `O agendamento de ${change.client_name} para ${change.service} foi ${eventName}.${cancelled ? "" : ` Nova data: ${new Date(change.starts_at).toLocaleString("pt-BR", { timeZone: automation.settings.timezone })}.`}${calendarUrl ? `\n\nAdicionar ao Google Calendar:\n${calendarUrl}` : ""}`;
+    const deliveries = [];
+    const allowClient = cancelled ? automation.settings.notifyClientOnCancel : automation.settings.notifyClientOnReschedule;
+    const allowProfessional = cancelled ? automation.settings.notifyProfessionalOnCancel : automation.settings.notifyProfessionalOnReschedule;
+    if (allowClient && change.client_email) deliveries.push(sendEmail({ to: change.client_email, subject: `Agendamento ${eventName} — Carol Sol`, html: `<p style="white-space:pre-line">${clientText}</p>` }));
+    if (allowClient && change.client_phone) deliveries.push(sendWhatsApp({ to: change.client_phone, text: clientText }));
+    if (allowProfessional && change.professional_email) deliveries.push(sendEmail({ to: change.professional_email, subject: `Agendamento ${eventName} — Carol Sol`, html: `<p style="white-space:pre-line">${professionalText}</p>` }));
+    if (allowProfessional && change.professional_phone) deliveries.push(sendWhatsApp({ to: change.professional_phone, text: professionalText }));
+    const outcomes = await Promise.allSettled(deliveries);
+    outcomes.filter((outcome) => outcome.status === "rejected").forEach((outcome) => console.error("Appointment change notification error:", outcome.reason?.message || outcome.reason));
+  }
+  return send(res, 200, { appointment: { id: updated.id, status: updated.status, updated_at: updated.updated_at } });
 }
 
 async function requestReschedule(res, user, body) {
@@ -1560,17 +1643,13 @@ async function requestReschedule(res, user, body) {
     .replace('{client}', result.client)
     .replace('{service}', result.service)
     .replace('{date}', pretty);
-  await Promise.allSettled([
-    sendEmail({
-      to: result.professional_email,
-      subject: "Solicitação de reagendamento — Carol Sol",
-      html: `<p>${rescheduleText}</p>`,
-    }),
-    sendWhatsApp({
-      to: result.professional_phone,
-      text: rescheduleText,
-    }),
-  ]);
+  const automation = await loadAppointmentAutomationContext();
+  if (automation.settings.notifyProfessionalOnReschedule) {
+    await Promise.allSettled([
+      sendEmail({ to: result.professional_email, subject: "Solicitação de reagendamento — Carol Sol", html: `<p>${rescheduleText}</p>` }),
+      sendWhatsApp({ to: result.professional_phone, text: rescheduleText }),
+    ]);
+  }
   return send(res, 201, { request: result.request });
 }
 
@@ -1671,6 +1750,12 @@ async function respondReschedule(res, user, body) {
       [request.appointment_id, startsAt, endsAt, newStatus],
     );
     await client.query(
+      `update public.notifications set delivery_status='cancelled',cancelled_at=now(),updated_at=now()
+        where appointment_id=$1 and kind='appointment_reminder'
+          and delivery_status in ('pending','processing','failed')`,
+      [request.appointment_id],
+    );
+    await client.query(
       `insert into public.appointment_status_history(appointment_id,from_status,to_status,changed_by,note) values($1,'reschedule_requested',$2,$3,$4)`,
       [
         request.appointment_id,
@@ -1728,14 +1813,16 @@ async function respondReschedule(res, user, body) {
         ? `Seu reagendamento de ${result.service} foi confirmado para ${prettyTime}.`
         : `A profissional respondeu sua solicitação de reagendamento de ${result.service}. Consulte o aplicativo.`);
 
-  await Promise.allSettled([
-    sendEmail({
-      to: recipientEmail,
-      subject,
-      html: `<p>${text}</p>`,
-    }),
-    sendWhatsApp({ to: recipientPhone, text: `Carol Sol: ${text}` }),
-  ]);
+  const automation = await loadAppointmentAutomationContext();
+  const allowed = user.role === "client"
+    ? automation.settings.notifyProfessionalOnReschedule
+    : automation.settings.notifyClientOnReschedule;
+  if (allowed) {
+    await Promise.allSettled([
+      sendEmail({ to: recipientEmail, subject, html: `<p>${text}</p>` }),
+      sendWhatsApp({ to: recipientPhone, text: `Carol Sol: ${text}` }),
+    ]);
+  }
   return send(res, 200, { ok: true });
 }
 
@@ -2239,16 +2326,37 @@ export default async function handler(req, res) {
     if (req.method === "DELETE" && resource === "appointments") {
       const id = body.id || req.query?.id;
       if (!id) throw appError("ID do agendamento é obrigatório.");
-      const { rows: apptRows } = await query(
-        `select id, client_id, professional_id, status from public.appointments where id=$1`,
-        [id]
-      );
-      if (!apptRows.length) throw appError("Agendamento não encontrado.", 404);
-      // Soft-delete to preserve financial records
-      await query(
-        `update public.appointments set status='cancelled', notes=coalesce(notes,'') || ' [Removido]', updated_at=now() where id=$1`,
-        [id]
-      );
+      if (!uuidPattern.test(String(id))) throw appError("Agendamento inválido.");
+      const scope = await appointmentScope(user);
+      const params = [...scope.params, id];
+      const idParam = params.length;
+      const cancelled = await transaction(async (client) => {
+        const previous = await client.query(
+          `select a.id,a.status from public.appointments a where ${scope.sql} and a.id=$${idParam} for update`,
+          params,
+        );
+        if (!previous.rowCount) throw appError("Agendamento não encontrado.", 404);
+        if (["completed", "cancelled", "no_show"].includes(previous.rows[0].status))
+          throw appError("Este agendamento não pode mais ser cancelado.", 409);
+        await client.query(
+          `update public.appointments set status='cancelled',cancelled_at=coalesce(cancelled_at,now()),
+             cancelled_by=$1,notes=coalesce(notes,'') || ' [Removido]',updated_at=now() where id=$2`,
+          [user.id, id],
+        );
+        await client.query(
+          `update public.notifications set delivery_status='cancelled',cancelled_at=now(),updated_at=now()
+            where appointment_id=$1 and kind='appointment_reminder'
+              and delivery_status in ('pending','processing','failed')`,
+          [id],
+        );
+        await client.query(
+          `insert into public.appointment_status_history(appointment_id,from_status,to_status,changed_by,note)
+           values($1,$2,'cancelled',$3,'Cancelado pelo aplicativo')`,
+          [id, previous.rows[0].status, user.id],
+        );
+        return true;
+      });
+      if (!cancelled) throw appError("Não foi possível cancelar o agendamento.");
       return send(res, 200, { success: true, id });
     }
     if (req.method === "POST" && resource === "admin-color") {

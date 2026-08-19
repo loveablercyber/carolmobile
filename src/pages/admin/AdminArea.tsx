@@ -9,6 +9,7 @@ import {
   AdminCouponsPage,
   AdminDashboardPage,
   AdminInventoryPage,
+  AdminNotificationsPage,
   AdminPaymentsPage,
   AdminPlansPage,
   AdminPromotionsPage,
@@ -19,7 +20,6 @@ import {
   AdminSettingsPage,
   AdminSumupPage,
 } from "./AdminPortal";
-import { ClientNotificationsPage } from "../client/ClientPortal";
 import { WhatsAppIntegrationPage } from "../WhatsAppIntegration";
 
 export function AdminArea() {
@@ -45,7 +45,7 @@ export function AdminArea() {
   else if (path.includes("/profissionais")) page = <AdminProfessionalsPage />;
   else if (path.includes("/servicos")) page = <AdminServicesPage />;
   else if (path.includes("/estoque")) page = <AdminInventoryPage />;
-  else if (path.includes("/notificacoes")) page = <ClientNotificationsPage />;
+  else if (path.includes("/notificacoes")) page = <AdminNotificationsPage />;
   else if (path.includes("/comissoes")) page = <AdminCommissionsPage />;
   else if (path.includes("/relatorios")) page = <AdminReportsPage />;
   else if (path.includes("/perfil")) page = <AdminProfilePage />;

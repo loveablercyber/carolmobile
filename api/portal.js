@@ -22,6 +22,10 @@ import {
 } from "../server/lib/http.js";
 import { resolveReceiptReview } from "../server/lib/payment-rules.js";
 import { invalidateAiBaseCache } from "../server/lib/ai-whatsapp.js";
+import {
+  loadAppointmentAutomationSettings,
+  normalizeAppointmentAutomationSettings,
+} from "../server/lib/appointment-automation.js";
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -890,6 +894,33 @@ async function adminServices(user) {
   };
 }
 
+async function adminNotificationsResource(user, status = "all") {
+  requireRole(user, ["admin"]);
+  const allowed = new Set(["all", "pending", "processing", "sent", "failed", "cancelled"]);
+  const selected = allowed.has(String(status)) ? String(status) : "all";
+  const params = [];
+  const where = selected === "all" ? "true" : (params.push(selected), `n.delivery_status=$${params.length}`);
+  const [items, counts, health] = await Promise.all([
+    query(
+      `select n.id,n.kind,n.title,n.body,n.appointment_id,n.notification_key,n.scheduled_at,n.delivered_at,
+        n.delivery_status,n.delivery_attempts,n.last_delivery_error,n.created_at,p.full_name as recipient,
+        a.booking_code,s.name as service,
+        coalesce((select json_agg(json_build_object('channel',l.channel,'status',l.status,'recipient',l.recipient,'error_message',l.error_message,'created_at',l.created_at) order by l.created_at desc) from public.notification_delivery_logs l where l.notification_id=n.id),'[]'::json) as delivery_logs
+       from public.notifications n
+       left join public.profiles p on p.id=n.profile_id
+       left join public.appointments a on a.id=coalesce(n.appointment_id,
+         case when coalesce(n.data->>'appointment_id','') ~* '^[0-9a-f-]{36}$' then (n.data->>'appointment_id')::uuid end)
+       left join public.services s on s.id=a.service_id
+       where ${where}
+       order by n.created_at desc limit 250`,
+      params,
+    ),
+    query(`select delivery_status,count(*)::int as total from public.notifications group by delivery_status`),
+    query(`select value from public.business_settings where key='appointment_reminder_health' limit 1`).catch(() => ({ rows: [] })),
+  ]);
+  return { items: items.rows, counts: counts.rows, health: health.rows[0]?.value || null, status: selected };
+}
+
 async function saveAdminServiceVariant(user, body) {
   requireRole(user, ["admin"]);
   const id = body.id ? validUuid(body.id, "Variação") : null;
@@ -1013,13 +1044,15 @@ async function adminCommissions(user) {
 async function adminSettings(user) {
   requireRole(user, ["admin"]);
   await ensureAdminSettingsSchema();
-  const [profile, templates] = await Promise.all([
+  const [profile, templates, appointmentAutomation] = await Promise.all([
     query("select value,updated_at from public.business_settings where key='business_profile'"),
-    query("select public_config from public.integration_settings where provider='message_templates'")
+    query("select public_config from public.integration_settings where provider='message_templates'"),
+    loadAppointmentAutomationSettings(),
   ]);
   return {
     ...(profile.rows[0]?.value || {}),
     updatedAt: profile.rows[0]?.updated_at || null,
+    appointmentAutomation,
     templates: templates.rows[0]?.public_config || {
       confirmation: "",
       reminder: "",
@@ -1053,6 +1086,7 @@ async function getResource(req, user, resource) {
   if (resource === "benefits") return benefitsResource(user);
   if (resource === "cards") return cardsResource(user);
   if (resource === "notifications") return notificationsResource(user);
+  if (resource === "admin-notifications") return adminNotificationsResource(user, req.query?.status);
   if (resource === "privacy") return privacyResource(user);
   if (resource === "referrals") return referralsResource(user);
   if (resource === "client-history") return clientHistoryResource(user);
@@ -3444,6 +3478,18 @@ async function saveAdminSettings(user, body) {
     );
   }
 
+  const appointmentAutomation = normalizeAppointmentAutomationSettings({
+    ...(body.appointmentAutomation || {}),
+    timezone: value.timezone,
+  });
+  await query(
+    `insert into public.business_settings(key,value,updated_by,updated_at)
+     values('appointment_automation',$1,$2,now())
+     on conflict(key) do update
+       set value=excluded.value,updated_by=excluded.updated_by,updated_at=now()`,
+    [JSON.stringify(appointmentAutomation), user.id],
+  );
+
   const { rows } = await query(
     `insert into public.business_settings(key,value,updated_by,updated_at)
     values('business_profile',$1,$2,now()) on conflict(key) do update set value=excluded.value,updated_by=excluded.updated_by,updated_at=now()
@@ -3454,7 +3500,11 @@ async function saveAdminSettings(user, body) {
     `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data) values($1,'update','business_settings','business_profile',$2)`,
     [user.id, JSON.stringify(value)],
   );
-  return { ...rows[0].value, updatedAt: rows[0].updated_at };
+  return {
+    ...rows[0].value,
+    appointmentAutomation,
+    updatedAt: rows[0].updated_at,
+  };
 }
 
 async function saveAdminProfessional(user, body) {

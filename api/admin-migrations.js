@@ -21,6 +21,10 @@ import {
   applyServiceCatalogNormalization,
   serviceCatalogNormalizationStatus,
 } from "../server/lib/service-catalog-normalization.js";
+import {
+  applyAppointmentAutomationMigration,
+  appointmentAutomationMigrationStatus,
+} from "../server/lib/appointment-automation-migration.js";
 
 function authorized(req) {
   const expected = process.env.CRON_SECRET;
@@ -38,6 +42,7 @@ export default async function handler(req, res) {
       req.query?.resource !== "ai-whatsapp" &&
       req.query?.resource !== "service-catalog-2026" &&
       req.query?.resource !== "service-catalog-2026-normalization" &&
+      req.query?.resource !== "appointment-automation" &&
       req.query?.resource !== "legacy-import"
     )
       return send(res, 404, { error: "Migração não encontrada." });
@@ -62,6 +67,19 @@ export default async function handler(req, res) {
         ok: true,
         ...result,
         migration: await serviceCatalogNormalizationStatus(),
+      });
+    }
+    if (req.query?.resource === "appointment-automation") {
+      if (req.method === "GET")
+        return send(res, 200, {
+          ok: true,
+          migration: await appointmentAutomationMigrationStatus(),
+        });
+      const result = await applyAppointmentAutomationMigration();
+      return send(res, 200, {
+        ok: true,
+        ...result,
+        migration: await appointmentAutomationMigrationStatus(),
       });
     }
     if (req.query?.resource === "legacy-import") {

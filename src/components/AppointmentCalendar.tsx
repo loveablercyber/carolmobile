@@ -18,6 +18,7 @@ export type AppointmentCalendarItem = {
   value?: string | null;
   estimated_value?: number | string | null;
   location?: string | null;
+  calendar_url?: string | null;
   notes?: string | null;
   intake_data?: any;
 };
@@ -339,6 +340,17 @@ export function AppointmentCalendar({
                 <span className="text-stone-400">Codigo</span>
                 <b className="mt-1 block">{selected.booking_code}</b>
               </div>
+            )}
+            {selected.calendar_url && (
+              <a
+                href={selected.calendar_url}
+                target="_blank"
+                rel="noreferrer"
+                className="btn-secondary w-full"
+              >
+                <CalendarDays size={15} />
+                Adicionar ao Google Calendar
+              </a>
             )}
             {selected.notes && (
               <div className="rounded-2xl bg-warm p-4 text-xs">

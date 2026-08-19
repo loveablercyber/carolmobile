@@ -4,6 +4,10 @@ import { join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sendBaileysTextMessage } from "./baileys-client.js";
 import { query } from "./db.js";
+import {
+  generateGoogleCalendarUrl,
+  normalizeAppointmentAutomationSettings,
+} from "./appointment-automation.js";
 
 const truthy = (value) =>
   ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
@@ -252,12 +256,72 @@ export async function getMessageTemplate(name, defaults) {
   }
 }
 
+const escapeHtml = (value) =>
+  String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+
+async function notificationPreferences(phone, email) {
+  if (!phone && !email) return { email: true, whatsapp: true };
+  const { rows } = await query(
+    `select coalesce(np.email,true) as wants_email,
+            coalesce(np.whatsapp,true) as wants_whatsapp
+       from public.profiles p
+       left join auth.users u on u.id=p.id
+       left join public.notification_preferences np on np.profile_id=p.id
+      where ($1::text <> '' and p.phone=$1)
+         or ($2::text <> '' and lower(u.email)=lower($2))
+      limit 1`,
+    [phone || "", email || ""],
+  );
+  return {
+    email: rows[0]?.wants_email ?? true,
+    whatsapp: rows[0]?.wants_whatsapp ?? true,
+  };
+}
+
+async function recordAppointmentDelivery({ notificationId, channel, recipient, result, error }) {
+  if (!notificationId) return;
+  const skipped = result?.skipped === true;
+  const status = error || skipped ? "failed" : "delivered";
+  const errorMessage = error?.message || (skipped ? "Canal não configurado no ambiente." : null);
+  await query(
+    `insert into public.notification_delivery_logs(
+       notification_id,channel,recipient,status,provider_reference,error_message
+     ) values($1,$2,$3,$4,$5,$6)`,
+    [
+      notificationId,
+      channel,
+      recipient,
+      status,
+      result?.id || result?.messageId || result?.provider || null,
+      errorMessage,
+    ],
+  ).catch((logError) =>
+    console.error("Appointment delivery log error:", logError.message),
+  );
+  await query(
+    `update public.notifications
+        set delivery_status=$2,
+            delivery_attempts=delivery_attempts+1,
+            last_delivery_error=$3,
+            delivered_at=case when $2='sent' then coalesce(delivered_at,now()) else delivered_at end,
+            updated_at=now()
+      where id=$1`,
+    [notificationId, status === "delivered" ? "sent" : "failed", errorMessage],
+  ).catch(() => null);
+}
+
 export async function notifyAppointment({
   email,
   phone,
   clientName,
   service,
   date,
+  endsAt,
   professional,
   professionalEmail,
   professionalPhone,
@@ -265,15 +329,42 @@ export async function notifyAppointment({
   professionalNotificationId,
   notes = "",
   value = 0,
+  durationMinutes = 0,
+  location = "",
+  bookingCode = "",
+  settings: settingsInput = {},
+  businessName = "Carol Sol",
+  address = "",
 }) {
+  const settings = normalizeAppointmentAutomationSettings(settingsInput);
   const prettyDate = new Date(date).toLocaleString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: settings.timezone,
     dateStyle: "short",
     timeStyle: "short",
   });
-  const formattedVal = Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const calculatedEndsAt = endsAt || new Date(
+    new Date(date).getTime() + Math.max(1, Number(durationMinutes || 60)) * 60_000,
+  ).toISOString();
+  const calendarUrl = settings.googleCalendarLinkEnabled
+    ? generateGoogleCalendarUrl(
+        {
+          starts_at: date,
+          ends_at: calculatedEndsAt,
+          service,
+          professional,
+          client: clientName,
+          location,
+          booking_code: bookingCode,
+        },
+        { businessName, timezone: settings.timezone, address },
+      )
+    : "";
+  const formattedVal = Number(value || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
   const confirmationTemplate = await getMessageTemplate(
-    'confirmation',
+    "confirmation",
     [
       "Olá, {name}.",
       "",
@@ -282,126 +373,98 @@ export async function notifyAppointment({
       "Serviço: {service}",
       "Profissional: {professional}",
       "Data/Horário: {date}",
+      "Duração: {duration}",
       "Valor: {value}",
-      "",
-      "Em breve você receberá as orientações.",
     ].join("\n"),
   );
-  const text = confirmationTemplate
-    .replace('{name}', clientName)
-    .replace('{service}', service)
-    .replace('{professional}', professional)
-    .replace('{date}', prettyDate)
-    .replace('{value}', formattedVal);
+  const text = [
+    confirmationTemplate
+      .replaceAll("{name}", clientName || "cliente")
+      .replaceAll("{service}", service || "Atendimento")
+      .replaceAll("{professional}", professional || "Equipe Carol Sol")
+      .replaceAll("{date}", prettyDate)
+      .replaceAll("{duration}", `${Math.max(1, Number(durationMinutes || 60))} minutos`)
+      .replaceAll("{value}", formattedVal),
+    calendarUrl ? `📅 Adicionar ao Google Calendar:\n${calendarUrl}` : "",
+  ].filter(Boolean).join("\n\n");
+  const professionalText = [
+    "📅 *Novo agendamento!*",
+    "",
+    `Cliente: ${clientName || "Cliente"}`,
+    phone ? `Telefone: ${phone}` : "",
+    `Serviço: ${service || "Atendimento"}`,
+    `Data/Horário: ${prettyDate}`,
+    `Duração: ${Math.max(1, Number(durationMinutes || 60))} minutos`,
+    `Valor: ${formattedVal}`,
+    notes ? `Observações: ${notes}` : "",
+    calendarUrl ? `📅 Adicionar ao Google Calendar:\n${calendarUrl}` : "",
+    "Acompanhe os detalhes no painel profissional.",
+  ].filter(Boolean).join("\n");
 
-  const professionalText = `Novo agendamento recebido! 📅\n\n*Cliente:* ${clientName}\n*Telefone:* ${phone || 'Não informado'}\n*Serviço:* ${service}\n*Data/Horário:* ${prettyDate}\n*Valor:* ${formattedVal}\n*Observações:* ${notes || 'Nenhuma'}\n\nPor favor, acesse seu painel profissional para acompanhar.`;
-
-  let wantsEmail = true;
-  let wantsWhatsapp = true;
-  try {
-    if (phone || email) {
-      const { rows } = await query(
-        `select coalesce(email, true) as wants_email, coalesce(whatsapp, true) as wants_whatsapp
-         from public.notification_preferences
-         where profile_id = (select id from public.profiles where phone = $1 or lower(email) = lower($2) limit 1)`,
-        [phone || "", email || ""]
-      );
-      if (rows[0]) {
-        wantsEmail = rows[0].wants_email;
-        wantsWhatsapp = rows[0].wants_whatsapp;
-      }
-    }
-  } catch (err) {
-    console.error("Failed to fetch client preferences:", err.message);
-  }
-
-  let profWantsEmail = true;
-  let profWantsWhatsapp = true;
-  try {
-    if (professionalPhone || professionalEmail) {
-      const { rows } = await query(
-        `select coalesce(email, true) as wants_email, coalesce(whatsapp, true) as wants_whatsapp
-         from public.notification_preferences
-         where profile_id = (select id from public.profiles where phone = $1 or lower(email) = lower($2) limit 1)`,
-        [professionalPhone || "", professionalEmail || ""]
-      );
-      if (rows[0]) {
-        profWantsEmail = rows[0].wants_email;
-        profWantsWhatsapp = rows[0].wants_whatsapp;
-      }
-    }
-  } catch (err) {
-    console.error("Failed to fetch professional preferences:", err.message);
-  }
-
+  const [clientPreferences, professionalPreferences] = await Promise.all([
+    notificationPreferences(phone, email).catch((error) => {
+      console.error("Failed to fetch client preferences:", error.message);
+      return { email: true, whatsapp: true };
+    }),
+    notificationPreferences(professionalPhone, professionalEmail).catch((error) => {
+      console.error("Failed to fetch professional preferences:", error.message);
+      return { email: true, whatsapp: true };
+    }),
+  ]);
   const deliveries = [];
-
-  if (email && wantsEmail) {
+  const deliver = ({ notificationId, channel, recipient, send }) => {
     deliveries.push((async () => {
       try {
-        const res = await sendEmail({
+        const result = await send();
+        await recordAppointmentDelivery({ notificationId, channel, recipient, result });
+        return result;
+      } catch (error) {
+        await recordAppointmentDelivery({ notificationId, channel, recipient, error });
+        throw error;
+      }
+    })());
+  };
+
+  if (settings.notifyClientOnCreate) {
+    if (email && clientPreferences.email)
+      deliver({
+        notificationId: clientNotificationId,
+        channel: "email",
+        recipient: email,
+        send: () => sendEmail({
           to: email,
-          subject: "Agendamento Carol Sol confirmado",
-          html: `<div style="font-family:Arial,sans-serif;color:#181511"><h1>Seu horário está reservado ✨</h1><p>${text}</p><p>Em caso de dúvida, responda esta mensagem.</p></div>`,
-        });
-        if (clientNotificationId) {
-          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, provider_reference) values($1, 'email', $2, 'delivered', $3)`, [clientNotificationId, email, res.id || 'resend-ok']);
-        }
-      } catch (err) {
-        if (clientNotificationId) {
-          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, error_message) values($1, 'email', $2, 'failed', $3)`, [clientNotificationId, email, err.message]);
-        }
-      }
-    })());
+          subject: "Agendamento Carol Sol registrado",
+          html: `<div style="font-family:Arial,sans-serif;color:#181511"><h1>Seu agendamento foi registrado ✨</h1><p style="white-space:pre-line">${escapeHtml(text)}</p></div>`,
+        }),
+      });
+    if (phone && clientPreferences.whatsapp)
+      deliver({
+        notificationId: clientNotificationId,
+        channel: "whatsapp",
+        recipient: phone,
+        send: () => sendWhatsApp({ to: phone, text }),
+      });
   }
 
-  if (phone && wantsWhatsapp) {
-    deliveries.push((async () => {
-      try {
-        const res = await sendWhatsApp({ to: phone, text });
-        if (clientNotificationId) {
-          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, provider_reference) values($1, 'whatsapp', $2, 'delivered', $3)`, [clientNotificationId, phone, res.messageId || 'baileys-ok']);
-        }
-      } catch (err) {
-        if (clientNotificationId) {
-          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, error_message) values($1, 'whatsapp', $2, 'failed', $3)`, [clientNotificationId, phone, err.message]);
-        }
-      }
-    })());
-  }
-
-  if (professionalEmail && profWantsEmail) {
-    deliveries.push((async () => {
-      try {
-        const res = await sendEmail({
+  if (settings.notifyProfessionalOnCreate) {
+    if (professionalEmail && professionalPreferences.email)
+      deliver({
+        notificationId: professionalNotificationId,
+        channel: "email",
+        recipient: professionalEmail,
+        send: () => sendEmail({
           to: professionalEmail,
           subject: "Novo agendamento recebido — Carol Sol",
-          html: `<div style="font-family:Arial,sans-serif;color:#181511"><h1>Novo pedido de atendimento</h1><p>${professionalText}</p></div>`,
-        });
-        if (professionalNotificationId) {
-          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, provider_reference) values($1, 'email', $2, 'delivered', $3)`, [professionalNotificationId, professionalEmail, res.id || 'resend-ok']);
-        }
-      } catch (err) {
-        if (professionalNotificationId) {
-          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, error_message) values($1, 'email', $2, 'failed', $3)`, [professionalNotificationId, professionalEmail, err.message]);
-        }
-      }
-    })());
-  }
-
-  if (professionalPhone && profWantsWhatsapp) {
-    deliveries.push((async () => {
-      try {
-        const res = await sendWhatsApp({ to: professionalPhone, text: professionalText });
-        if (professionalNotificationId) {
-          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, provider_reference) values($1, 'whatsapp', $2, 'delivered', $3)`, [professionalNotificationId, professionalPhone, res.messageId || 'baileys-ok']);
-        }
-      } catch (err) {
-        if (professionalNotificationId) {
-          await query(`insert into public.notification_delivery_logs(notification_id, channel, recipient, status, error_message) values($1, 'whatsapp', $2, 'failed', $3)`, [professionalNotificationId, professionalPhone, err.message]);
-        }
-      }
-    })());
+          html: `<div style="font-family:Arial,sans-serif;color:#181511"><h1>Novo pedido de atendimento</h1><p style="white-space:pre-line">${escapeHtml(professionalText)}</p></div>`,
+        }),
+      });
+    if (professionalPhone && professionalPreferences.whatsapp)
+      deliver({
+        notificationId: professionalNotificationId,
+        channel: "whatsapp",
+        recipient: professionalPhone,
+        send: () => sendWhatsApp({ to: professionalPhone, text: professionalText }),
+      });
   }
 
   if (process.env.ADMIN_NOTIFICATION_EMAIL) {
@@ -409,12 +472,12 @@ export async function notifyAppointment({
       sendEmail({
         to: process.env.ADMIN_NOTIFICATION_EMAIL,
         subject: "Novo agendamento — Carol Sol",
-        html: `<p>${clientName} reservou ${service} para ${prettyDate} com ${professional}.</p>`,
-      }).catch(err => console.error("Admin notification email error:", err.message))
+        html: `<p>${escapeHtml(clientName)} reservou ${escapeHtml(service)} para ${escapeHtml(prettyDate)} com ${escapeHtml(professional)}.</p>`,
+      }).catch((error) => console.error("Admin notification email error:", error.message)),
     );
   }
-
-  return Promise.allSettled(deliveries);
+  const results = await Promise.allSettled(deliveries);
+  return { results, calendarUrl };
 }
 
 export function parseCloudinaryAssetUrl(value) {

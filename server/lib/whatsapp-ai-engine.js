@@ -19,7 +19,12 @@ import { generateOpenAiText, openAiPublicStatus } from "./openai-client.js";
 import { generateGeminiText, geminiPublicStatus } from "./gemini-client.js";
 import { generateGroqText, groqPublicStatus } from "./groq-client.js";
 import { sendBaileysTextMessage, sendBaileysPresence } from "./baileys-client.js";
-import { sendEmail } from "./integrations.js";
+import { notifyAppointment, sendEmail } from "./integrations.js";
+import {
+  generateGoogleCalendarUrl,
+  loadAppointmentAutomationContext,
+  whatsappAppointmentIdempotencyKey,
+} from "./appointment-automation.js";
 import { catalogSnapshot, variantDepositAmount } from "./service-catalog.js";
 
 // Módulos refatorados na Fase 3
@@ -2743,13 +2748,20 @@ async function availableBookingSlots(client, { serviceId, serviceVariantId = "",
 }
 
 async function createWhatsappAppointment({ conversationId, phoneNumber, state }) {
+  const automation = await loadAppointmentAutomationContext();
+  if (!automation.settings.bookingEnabled) {
+    throw new Error("Novos agendamentos estão temporariamente desativados. Fale com uma atendente.");
+  }
   const result = await transaction(async (client) => {
     const lockedConversation = await client.query(
       "select id,appointment_id from public.whatsapp_conversations where id=$1 for update",
       [conversationId],
     );
     if (!lockedConversation.rows[0]) throw new Error("Conversa não encontrada para agendamento.");
-    if (lockedConversation.rows[0].appointment_id && !state.previousAppointmentId) {
+    if (
+      lockedConversation.rows[0].appointment_id &&
+      lockedConversation.rows[0].appointment_id !== (state.previousAppointmentId || null)
+    ) {
       return { id: lockedConversation.rows[0].appointment_id, alreadyCreated: true };
     }
 
@@ -2788,9 +2800,10 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       : { rows: [] };
     if (addons.rows.length !== addonIds.length) throw new Error("Adicional indisponível para esta opção.");
     const professional = await client.query(
-      `select p.id,p.profile_id,pp.full_name
+      `select p.id,p.profile_id,pp.full_name,pp.phone,u.email
          from public.professionals p
          join public.profiles pp on pp.id=p.profile_id
+         left join auth.users u on u.id=pp.id
          join public.professional_services ps on ps.professional_id=p.id and ps.service_id=$2
         where p.id=$1 and p.active
         limit 1`,
@@ -2831,7 +2844,7 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
     if (conflict.rowCount) throw new Error("Este horário acabou de ficar indisponível.");
 
     const location = await client.query(
-      "select id from public.salon_locations where active order by name limit 1",
+      "select id,name from public.salon_locations where active order by name limit 1",
     );
     const appointmentId = (await client.query("select uuid_generate_v4() as id")).rows[0].id;
     const bookingCode = `CS-${String(appointmentId).replace(/-/g, "").slice(-12).toUpperCase()}`;
@@ -2877,18 +2890,20 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       `Valor registrado: ${formatServiceValue({ is_free: state.serviceIsFree || service.rows[0].is_free }, state.serviceValue || service.rows[0].base_price || 0)}.`,
       "Confirmar disponibilidade e detalhes com a cliente antes do atendimento.",
     ].filter(Boolean).join(" ");
+    const idempotencyKey = whatsappAppointmentIdempotencyKey(conversationId, state.previousAppointmentId);
 
     if (variant.rows[0]) {
       await client.query(
         `insert into public.appointments(
           id,booking_code,client_id,professional_id,service_id,service_variant_id,location_id,starts_at,ends_at,
-          status,notes,estimated_value,original_value,discount_amount,intake_data,catalog_snapshot,created_by
-        ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,0,$13,$14,$15)`,
+          status,notes,estimated_value,original_value,discount_amount,intake_data,catalog_snapshot,created_by,
+          source,timezone,duration_minutes,idempotency_key
+        ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,0,$13,$14,$15,$16,$17,$18,$19)`,
         [appointmentId,bookingCode,bookingClient.client_id,professional.rows[0].id,service.rows[0].id,
           variant.rows[0].id,location.rows[0]?.id || null,startsAt.toISOString(),endsAt.toISOString(),
           initialStatus,notes,selectedValue,JSON.stringify(intake),
           JSON.stringify(catalogSnapshot({ service: service.rows[0], variant: variant.rows[0], addons: addons.rows, total: selectedValue, deposit: paymentInfo.amount })),
-          bookingClient.profile_id || null],
+          bookingClient.profile_id || null,"bot",automation.settings.timezone,durationMinutes,idempotencyKey],
       );
       for (const addon of addons.rows) {
         await client.query(
@@ -2902,11 +2917,12 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       await client.query(
         `insert into public.appointments(
           id,booking_code,client_id,professional_id,service_id,location_id,starts_at,ends_at,
-          status,notes,estimated_value,original_value,discount_amount,intake_data,created_by
-        ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,0,$12,$13)`,
+          status,notes,estimated_value,original_value,discount_amount,intake_data,created_by,
+          source,timezone,duration_minutes,idempotency_key
+        ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,0,$12,$13,$14,$15,$16,$17)`,
         [appointmentId,bookingCode,bookingClient.client_id,professional.rows[0].id,service.rows[0].id,
           location.rows[0]?.id || null,startsAt.toISOString(),endsAt.toISOString(),initialStatus,notes,
-          selectedValue,JSON.stringify(intake),bookingClient.profile_id || null],
+          selectedValue,JSON.stringify(intake),bookingClient.profile_id || null,"bot",automation.settings.timezone,durationMinutes,idempotencyKey],
       );
     }
     let paymentId = null;
@@ -2972,9 +2988,9 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       [appointmentId, initialStatus, bookingClient.profile_id || null],
     );
     const notificationData = JSON.stringify({ appointment_id: appointmentId, payment_id: paymentId, conversation_id: conversationId });
-    await client.query(
+    const clientNotification = await client.query(
       `insert into public.notifications(profile_id,kind,title,body,data,action_url,metadata)
-       values($1,'appointment_created','Pré-agendamento enviado',$2,$3,$4,$3)`,
+       values($1,'appointment_created','Pré-agendamento enviado',$2,$3,$4,$3) returning id`,
       [
         bookingClient.profile_id,
         shouldCreatePayment
@@ -2983,17 +2999,17 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
         notificationData,
         paymentId ? `/cliente/pagamentos/${paymentId}` : `/cliente/agendamentos/${appointmentId}`,
       ],
-    ).catch(() => null);
-    await client.query(
+    );
+    const professionalNotification = await client.query(
       `insert into public.notifications(profile_id,kind,title,body,data,action_url,metadata)
-       values($1,'appointment_requested','Novo pré-agendamento do WhatsApp',$2,$3,$4,$3)`,
+       values($1,'appointment_requested','Novo pré-agendamento do WhatsApp',$2,$3,$4,$3) returning id`,
       [
         professional.rows[0].profile_id,
         `Nova solicitação de ${service.rows[0].name} para ${startsAt.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}.`,
         notificationData,
         "/profissional/agenda",
       ],
-    ).catch(() => null);
+    );
     const nextState = {
       ...state,
       status: "booked",
@@ -3051,15 +3067,63 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       id: appointmentId,
       bookingCode,
       startsAt: startsAt.toISOString(),
+      endsAt: endsAt.toISOString(),
+      durationMinutes,
+      location: location.rows[0]?.name || automation.address || "",
       paymentId,
       paymentAmount: paymentInfo.amount,
       paymentUrl,
       billingReason: paymentInfo.billingReason,
       service: service.rows[0].name,
       professional: professional.rows[0].full_name,
+      professionalEmail: professional.rows[0].email || "",
+      professionalPhone: professional.rows[0].phone || "",
+      clientName: bookingClient.full_name || state.clientName || "",
+      clientEmail: bookingClient.email || state.clientEmail || "",
+      clientPhone: normalizeBookingPhone(state.clientPhone, phoneNumber),
+      clientNotificationId: clientNotification.rows[0]?.id || null,
+      professionalNotificationId: professionalNotification.rows[0]?.id || null,
+      value: selectedValue,
+      notes,
       access: bookingClient.access || null,
     };
   });
+  if (!result.alreadyCreated) {
+    const calendarUrl = generateGoogleCalendarUrl(
+      {
+        starts_at: result.startsAt,
+        ends_at: result.endsAt,
+        service: result.service,
+        professional: result.professional,
+        booking_code: result.bookingCode,
+        location: result.location,
+      },
+      automation,
+    );
+    result.calendarUrl = automation.settings.googleCalendarLinkEnabled ? calendarUrl : "";
+    await notifyAppointment({
+      email: result.clientEmail,
+      // A confirmação no próprio fluxo já é o aviso WhatsApp da cliente.
+      phone: "",
+      clientName: result.clientName,
+      service: result.service,
+      date: result.startsAt,
+      endsAt: result.endsAt,
+      durationMinutes: result.durationMinutes,
+      professional: result.professional,
+      professionalEmail: result.professionalEmail,
+      professionalPhone: result.professionalPhone,
+      clientNotificationId: result.clientNotificationId,
+      professionalNotificationId: result.professionalNotificationId,
+      notes: result.notes,
+      value: result.value,
+      location: result.location,
+      bookingCode: result.bookingCode,
+      settings: automation.settings,
+      businessName: automation.businessName,
+      address: automation.address,
+    });
+  }
   if (result.access?.email && result.access?.temporaryPassword) {
     await sendEmail({
       to: result.access.email,
@@ -4077,6 +4141,7 @@ export async function handleStructuredBookingFlow({
       `🕒 Horário: *${state.time}*`,
       appointment.professional ? `👩‍💼 Profissional: *${appointment.professional}*` : "",
       appointment.bookingCode ? `🔑 Protocolo: *${appointment.bookingCode}*` : "",
+      appointment.calendarUrl ? `📅 Adicionar ao Google Calendar:\n${appointment.calendarUrl}` : "",
       ...bookingCreatedPaymentLines(appointment),
       "",
       "✨ Em breve nossa equipe confirmará todos os detalhes com você por aqui! 💖",

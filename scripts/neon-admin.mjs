@@ -165,6 +165,10 @@ async function setup() {
     resolve("database/neon-service-catalog-2026-normalization.sql"),
     "utf8",
   );
+  const appointmentAutomationMigration = await readFile(
+    resolve("database/neon-appointment-automation.sql"),
+    "utf8",
+  );
 
   await client.query("begin");
   try {
@@ -304,6 +308,15 @@ async function setup() {
       await client.query(serviceCatalogNormalizationMigration);
       await client.query(
         "insert into public._luxe_migrations(version, description) values ('013_service_catalog_2026_normalization', 'Normalização segura do catálogo 2026 e arquivamento do legado')",
+      );
+    }
+    const { rowCount: appointmentAutomationApplied } = await client.query(
+      "select 1 from public._luxe_migrations where version = '014_appointment_automation'",
+    );
+    if (!appointmentAutomationApplied) {
+      await client.query(appointmentAutomationMigration);
+      await client.query(
+        "insert into public._luxe_migrations(version, description) values ('014_appointment_automation', 'Agendamentos idempotentes, notificações, lembretes e Google Calendar')",
       );
     }
     await client.query("commit");

@@ -1454,6 +1454,17 @@ function ClientAgenda() {
                   </div>
                 </div>
                 <div className="flex min-w-[210px] flex-col justify-end gap-3">
+                  {appointment.calendar_url && (
+                    <a
+                      href={appointment.calendar_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={index === 0 ? "btn-gold" : "btn-secondary"}
+                    >
+                      <CalendarDays size={15} />
+                      Adicionar ao Google Calendar
+                    </a>
+                  )}
                   <button
                     disabled={appointment.status === "reschedule_requested"}
                     onClick={() => {
