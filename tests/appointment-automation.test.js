@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
+  appointmentChangeMessage,
   appointmentNotificationVersion,
   dueAppointmentReminderWindows,
   generateGoogleCalendarUrl,
@@ -72,6 +73,44 @@ test("changes notification version when an appointment is rescheduled", () => {
     appointmentNotificationVersion({ updated_at: "2026-08-19T10:00:00Z" }),
     appointmentNotificationVersion({ updated_at: "2026-08-19T11:00:00Z" }),
   );
+});
+
+test("builds client messages for manual appointment status changes", () => {
+  const confirmed = appointmentChangeMessage({
+    status: "confirmed",
+    service: "Avaliação",
+    startsAt: "2026-08-20T17:00:00.000Z",
+    professional: "Carol Sol",
+  });
+  assert.equal(confirmed.title, "Agendamento confirmado");
+  assert.match(confirmed.text, /Seu agendamento foi confirmado/i);
+  assert.match(confirmed.text, /20\/08\/2026, 14:00/);
+  assert.match(confirmed.text, /Profissional: Carol Sol/);
+
+  const cancelled = appointmentChangeMessage({
+    status: "cancelled",
+    service: "Aplicação",
+    startsAt: "2026-08-20T17:00:00.000Z",
+  });
+  assert.equal(cancelled.title, "Agendamento cancelado");
+  assert.match(cancelled.text, /foi cancelado/i);
+  assert.doesNotMatch(cancelled.text, /Data\/Horário/);
+});
+
+test("builds reschedule and lifecycle messages without inventing statuses", () => {
+  const rescheduled = appointmentChangeMessage({
+    status: "rescheduled",
+    service: "Mega Hair",
+    startsAt: "2026-08-21T12:30:00.000Z",
+    calendarUrl: "https://calendar.google.com/example",
+  });
+  assert.equal(rescheduled.title, "Agendamento reagendado");
+  assert.match(rescheduled.text, /foi reagendado/i);
+  assert.match(rescheduled.text, /Adicionar ao Google Calendar/);
+
+  const completed = appointmentChangeMessage({ status: "completed", service: "Mega Hair" });
+  assert.match(completed.text, /atendimento foi concluído/i);
+  assert.doesNotMatch(completed.text, /Invalid Date/);
 });
 
 test("keeps repeated confirmations idempotent and permits a later second booking", () => {

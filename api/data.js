@@ -28,12 +28,14 @@ import {
   deleteFromCloudinary,
   isConfiguredCloudinaryUrl,
   notifyAppointment,
+  notifyAppointmentChange,
   sendEmail,
   sendWhatsApp,
   getMessageTemplate,
 } from "../server/lib/integrations.js";
 import {
   generateGoogleCalendarUrl,
+  appointmentChangeMessage,
   loadAppointmentAutomationContext,
 } from "../server/lib/appointment-automation.js";
 import {
@@ -1359,7 +1361,12 @@ async function updateAppointmentV2(req, res, user, body) {
     }
 
     const serviceChanged = service.id !== current.service_id;
+    const professionalChanged = professionalId !== current.professional_id;
+    const timeChanged =
+      startsAt.getTime() !== new Date(current.starts_at).getTime() ||
+      endsAt.getTime() !== new Date(current.ends_at).getTime();
     const status = hasStatusUpdate ? body.status : current.status;
+    const statusChanged = hasStatusUpdate && current.status !== status;
     const notes = Object.hasOwn(body, "notes")
       ? String(body.notes || "").trim() || null
       : current.notes;
@@ -1415,7 +1422,7 @@ async function updateAppointmentV2(req, res, user, body) {
       );
     }
 
-    if (hasStatusUpdate && current.status !== status)
+    if (statusChanged)
       await client.query(
         `insert into public.appointment_status_history(appointment_id,from_status,to_status,changed_by,note)
          values($1,$2,$3,$4,$5)`,
@@ -1476,9 +1483,9 @@ async function updateAppointmentV2(req, res, user, body) {
         appointment_id: body.id,
         status,
       });
-      await client.query(
+      const notification = await client.query(
         `insert into public.notifications(profile_id,kind,title,body,data,action_url,metadata)
-         values($1,$2,'Agendamento atualizado',$3,$4,$5,$4)`,
+         values($1,$2,'Agendamento atualizado',$3,$4,$5,$4) returning id`,
         [
           item.client_profile_id,
           hasDetailUpdate ? "appointment_updated" : "appointment_status",
@@ -1500,8 +1507,13 @@ async function updateAppointmentV2(req, res, user, body) {
         await processReferralReward(client, item.client_id, body.id);
       return {
         ...changed.rows[0],
+        notification_id: notification.rows[0]?.id || null,
         notification_context: item,
-        schedule_changed: needsScheduleValidation,
+        status_changed: statusChanged,
+        time_changed: timeChanged,
+        service_changed: serviceChanged,
+        professional_changed: professionalChanged,
+        schedule_changed: timeChanged || serviceChanged || professionalChanged,
         previous_status: current.status,
       };
     }
@@ -1509,31 +1521,66 @@ async function updateAppointmentV2(req, res, user, body) {
   });
   if (!updated) throw appError("Nao foi possivel atualizar o agendamento.");
   const change = updated.notification_context;
-  if (change && (updated.schedule_changed || updated.status === "cancelled")) {
-    const automation = await loadAppointmentAutomationContext();
-    const cancelled = updated.status === "cancelled";
-    const calendarUrl = !cancelled && automation.settings.googleCalendarLinkEnabled
-      ? generateGoogleCalendarUrl({
-          starts_at: change.starts_at,
-          ends_at: change.ends_at,
-          service: change.service,
-          professional: change.professional_name,
-          booking_code: change.booking_code,
-          location: change.location,
-        }, automation)
-      : "";
-    const eventName = cancelled ? "cancelado" : "remarcado";
-    const clientText = `Seu agendamento de ${change.service} foi ${eventName}.${cancelled ? "" : ` Nova data: ${new Date(change.starts_at).toLocaleString("pt-BR", { timeZone: automation.settings.timezone })}.`}${calendarUrl ? `\n\nAdicionar ao Google Calendar:\n${calendarUrl}` : ""}`;
-    const professionalText = `O agendamento de ${change.client_name} para ${change.service} foi ${eventName}.${cancelled ? "" : ` Nova data: ${new Date(change.starts_at).toLocaleString("pt-BR", { timeZone: automation.settings.timezone })}.`}${calendarUrl ? `\n\nAdicionar ao Google Calendar:\n${calendarUrl}` : ""}`;
-    const deliveries = [];
-    const allowClient = cancelled ? automation.settings.notifyClientOnCancel : automation.settings.notifyClientOnReschedule;
-    const allowProfessional = cancelled ? automation.settings.notifyProfessionalOnCancel : automation.settings.notifyProfessionalOnReschedule;
-    if (allowClient && change.client_email) deliveries.push(sendEmail({ to: change.client_email, subject: `Agendamento ${eventName} — Carol Sol`, html: `<p style="white-space:pre-line">${clientText}</p>` }));
-    if (allowClient && change.client_phone) deliveries.push(sendWhatsApp({ to: change.client_phone, text: clientText }));
-    if (allowProfessional && change.professional_email) deliveries.push(sendEmail({ to: change.professional_email, subject: `Agendamento ${eventName} — Carol Sol`, html: `<p style="white-space:pre-line">${professionalText}</p>` }));
-    if (allowProfessional && change.professional_phone) deliveries.push(sendWhatsApp({ to: change.professional_phone, text: professionalText }));
-    const outcomes = await Promise.allSettled(deliveries);
-    outcomes.filter((outcome) => outcome.status === "rejected").forEach((outcome) => console.error("Appointment change notification error:", outcome.reason?.message || outcome.reason));
+  const shouldNotifyExternal =
+    change &&
+    user.role !== "client" &&
+    (updated.status_changed || updated.schedule_changed);
+  if (shouldNotifyExternal) {
+    try {
+      const automation = await loadAppointmentAutomationContext();
+      const notificationStatus = updated.status === "cancelled"
+        ? "cancelled"
+        : updated.status_changed
+          ? updated.status
+          : updated.time_changed
+            ? "rescheduled"
+            : "updated";
+      const calendarUrl =
+        !["cancelled", "completed", "no_show"].includes(notificationStatus) &&
+        automation.settings.googleCalendarLinkEnabled
+          ? generateGoogleCalendarUrl({
+              starts_at: change.starts_at,
+              ends_at: change.ends_at,
+              service: change.service,
+              professional: change.professional_name,
+              booking_code: change.booking_code,
+              location: change.location,
+            }, automation)
+          : "";
+      const message = appointmentChangeMessage({
+        status: notificationStatus,
+        service: change.service,
+        startsAt: change.starts_at,
+        professional: change.professional_name,
+        timezone: automation.settings.timezone,
+        calendarUrl,
+      });
+      const allowedByAutomation = notificationStatus === "cancelled"
+        ? automation.settings.notifyClientOnCancel
+        : notificationStatus === "rescheduled"
+          ? automation.settings.notifyClientOnReschedule
+          : true;
+      if (allowedByAutomation) {
+        const outcome = await notifyAppointmentChange({
+          notificationId: updated.notification_id,
+          profileId: change.client_profile_id,
+          phone: change.client_phone,
+          email: change.client_email,
+          title: message.title,
+          text: message.text,
+        });
+        outcome.results
+          .filter((result) => result.status === "rejected")
+          .forEach((result) => console.error(
+            "Appointment change notification error:",
+            result.reason?.message || result.reason,
+          ));
+      }
+    } catch (error) {
+      // A alteração já foi confirmada no banco. Falha de canal externo não deve
+      // transformar uma atualização bem-sucedida em erro para o painel.
+      console.error("Appointment change notification error:", error.message);
+    }
   }
   return send(res, 200, { appointment: { id: updated.id, status: updated.status, updated_at: updated.updated_at } });
 }

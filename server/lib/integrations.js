@@ -264,23 +264,102 @@ const escapeHtml = (value) =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 
-async function notificationPreferences(phone, email) {
-  if (!phone && !email) return { email: true, whatsapp: true };
+async function notificationPreferences(phone, email, profileId = null) {
+  if (!phone && !email && !profileId) return { email: true, whatsapp: true };
   const { rows } = await query(
     `select coalesce(np.email,true) as wants_email,
             coalesce(np.whatsapp,true) as wants_whatsapp
        from public.profiles p
        left join auth.users u on u.id=p.id
        left join public.notification_preferences np on np.profile_id=p.id
-      where ($1::text <> '' and p.phone=$1)
+      where ($3::uuid is not null and p.id=$3)
+         or ($1::text <> '' and p.phone=$1)
          or ($2::text <> '' and lower(u.email)=lower($2))
       limit 1`,
-    [phone || "", email || ""],
+    [phone || "", email || "", profileId || null],
   );
   return {
     email: rows[0]?.wants_email ?? true,
     whatsapp: rows[0]?.wants_whatsapp ?? true,
   };
+}
+
+export async function notifyAppointmentChange({
+  notificationId,
+  profileId,
+  phone,
+  email,
+  title,
+  text,
+}) {
+  const preferences = await notificationPreferences(phone, email, profileId).catch((error) => {
+    console.error("Failed to fetch appointment change preferences:", error.message);
+    // Em caso de dúvida, não envie: uma falha de leitura não pode ignorar um opt-out.
+    return { email: false, whatsapp: false };
+  });
+  const deliveries = [];
+  const deliver = ({ channel, recipient, send }) => {
+    deliveries.push((async () => {
+      try {
+        const result = await send();
+        await recordAppointmentDelivery({ notificationId, channel, recipient, result });
+        return result;
+      } catch (error) {
+        await recordAppointmentDelivery({ notificationId, channel, recipient, error });
+        throw error;
+      }
+    })());
+  };
+
+  if (phone && preferences.whatsapp) {
+    deliver({
+      channel: "whatsapp",
+      recipient: phone,
+      send: () => sendWhatsApp({ to: phone, text: `Carol Sol: ${text}` }),
+    });
+  }
+  if (email && preferences.email) {
+    deliver({
+      channel: "email",
+      recipient: email,
+      send: () => sendEmail({
+        to: email,
+        subject: `${title} — Carol Sol`,
+        html: `<p style="white-space:pre-line">${escapeHtml(text)}</p>`,
+      }),
+    });
+  }
+  if (!deliveries.length && notificationId) {
+    await query(
+      `update public.notifications
+          set delivery_status='cancelled',
+              last_delivery_error='Canais externos desativados pela cliente.',
+              cancelled_at=now(),updated_at=now()
+        where id=$1`,
+      [notificationId],
+    ).catch(() => null);
+  }
+  const results = await Promise.allSettled(deliveries);
+  if (notificationId && results.length) {
+    const delivered = results.some(
+      (result) => result.status === "fulfilled" && result.value?.skipped !== true,
+    );
+    const errors = results
+      .filter((result) => result.status === "rejected" || result.value?.skipped === true)
+      .map((result) => result.status === "rejected"
+        ? result.reason?.message || "Falha no envio."
+        : "Canal não configurado no ambiente.")
+      .join(" | ") || null;
+    await query(
+      `update public.notifications
+          set delivery_status=$2,last_delivery_error=$3,
+              delivered_at=case when $2='sent' then coalesce(delivered_at,now()) else delivered_at end,
+              updated_at=now()
+        where id=$1`,
+      [notificationId, delivered ? "sent" : "failed", delivered ? null : errors],
+    ).catch(() => null);
+  }
+  return { results, preferences };
 }
 
 async function recordAppointmentDelivery({ notificationId, channel, recipient, result, error }) {

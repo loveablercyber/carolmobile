@@ -208,6 +208,58 @@ export function appointmentNotificationVersion(appointment = {}) {
   return Number.isFinite(timestamp) && timestamp > 0 ? String(timestamp) : "1";
 }
 
+const appointmentStatusMessages = Object.freeze({
+  requested: "recebemos sua solicitação de agendamento",
+  awaiting_payment: "seu agendamento está aguardando o pagamento",
+  pending_deposit: "seu agendamento está aguardando a confirmação do sinal",
+  confirmed: "seu agendamento foi confirmado",
+  in_service: "seu atendimento foi iniciado",
+  completed: "seu atendimento foi concluído",
+  cancelled: "seu agendamento foi cancelado",
+  no_show: "seu agendamento foi registrado como não comparecimento",
+  rescheduled: "seu agendamento foi reagendado",
+  reschedule_requested: "sua solicitação de reagendamento está em análise",
+  updated: "os dados do seu agendamento foram atualizados",
+});
+
+export function appointmentChangeMessage({
+  status = "updated",
+  service = "Atendimento",
+  startsAt,
+  professional = "",
+  timezone = "America/Sao_Paulo",
+  calendarUrl = "",
+} = {}) {
+  const eventText = appointmentStatusMessages[status] || appointmentStatusMessages.updated;
+  const parsedDate = new Date(startsAt || "");
+  const prettyDate = Number.isNaN(parsedDate.getTime())
+    ? ""
+    : parsedDate.toLocaleString("pt-BR", {
+        timeZone: timezone,
+        dateStyle: "short",
+        timeStyle: "short",
+      });
+  const title = status === "cancelled"
+    ? "Agendamento cancelado"
+    : status === "confirmed"
+      ? "Agendamento confirmado"
+      : status === "rescheduled"
+        ? "Agendamento reagendado"
+        : "Atualização do agendamento";
+  const text = [
+    `Olá! ${eventText.charAt(0).toUpperCase()}${eventText.slice(1)}.`,
+    `Serviço: ${String(service || "Atendimento").trim() || "Atendimento"}`,
+    prettyDate && !["cancelled", "completed", "no_show"].includes(status)
+      ? `Data/Horário: ${prettyDate}`
+      : "",
+    professional ? `Profissional: ${professional}` : "",
+    calendarUrl && !["cancelled", "completed", "no_show"].includes(status)
+      ? `Adicionar ao Google Calendar:\n${calendarUrl}`
+      : "",
+  ].filter(Boolean).join("\n");
+  return { title, text, prettyDate };
+}
+
 export function whatsappAppointmentIdempotencyKey(conversationId, previousAppointmentId = "") {
   const conversation = String(conversationId || "").trim();
   if (!conversation) throw new Error("Conversa obrigatória para idempotência.");
