@@ -2762,7 +2762,32 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       lockedConversation.rows[0].appointment_id &&
       lockedConversation.rows[0].appointment_id !== (state.previousAppointmentId || null)
     ) {
-      return { id: lockedConversation.rows[0].appointment_id, alreadyCreated: true };
+      const linkedAppointment = await client.query(
+        `select id, booking_code
+           from public.appointments
+          where id=$1
+            and status not in ('cancelled','rejected')
+          limit 1`,
+        [lockedConversation.rows[0].appointment_id],
+      );
+      if (linkedAppointment.rows[0]) {
+        return {
+          id: linkedAppointment.rows[0].id,
+          bookingCode: linkedAppointment.rows[0].booking_code || state.bookingCode || "",
+          alreadyCreated: true,
+          persisted: true,
+        };
+      }
+
+      // A conversa podia conservar um appointment_id de uma tentativa antiga
+      // cujo registro nunca foi criado (ou já não existe). Não trate esse vínculo
+      // órfão como sucesso: limpe-o sob o mesmo lock e prossiga com o INSERT real.
+      await client.query(
+        `update public.whatsapp_conversations
+            set appointment_id=null, payment_id=null, updated_at=now()
+          where id=$1`,
+        [conversationId],
+      );
     }
 
     const bookingClient = await ensureClientForBooking(client, {
@@ -3065,6 +3090,7 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
     ).catch(() => null);
     return {
       id: appointmentId,
+      persisted: true,
       bookingCode,
       startsAt: startsAt.toISOString(),
       endsAt: endsAt.toISOString(),
@@ -3223,7 +3249,20 @@ function isNewBookingRequestAfterBooked(text) {
   const normalized = normalizeText(text);
   if (numericChoice(text) === 1) return true;
   if (asksAboutExistingBooking(text)) return false;
-  if (isBookingIntent(text) || isAgendaAvailabilityIntent(text)) return true;
+  if (isAgendaAvailabilityIntent(text)) return true;
+  if (includesAny(normalized, [
+    "agendar outro",
+    "marcar outro",
+    "novo agendamento",
+    "novo horario",
+    "novo horário",
+    "quero agendar",
+    "quero marcar",
+    "gostaria de agendar",
+    "gostaria de marcar",
+    "preciso agendar",
+    "preciso marcar",
+  ])) return true;
   const hasServiceAction = includesAny(normalized, [
     "quero fazer aplicacao",
     "quero fazer uma aplicacao",
@@ -3564,6 +3603,12 @@ export async function handleStructuredBookingFlow({
       ).catch(() => null);
       if (!appQuery || appQuery.rowCount === 0) {
         persistedAppointmentId = "";
+        await query(
+          `update public.whatsapp_conversations
+              set appointment_id=null, payment_id=null, updated_at=now()
+            where id=$1`,
+          [conversationId],
+        ).catch(() => null);
         if (currentState.status === "booked") {
           currentState.status = "";
           currentState.appointmentId = "";
@@ -3610,6 +3655,7 @@ export async function handleStructuredBookingFlow({
         messageId: inboundMessageId,
         reason: "booking_followup_handoff",
         responseText,
+        pauseAi: true,
       });
       await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_followup_handoff" });
       await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
@@ -3617,6 +3663,12 @@ export async function handleStructuredBookingFlow({
     }
 
     if (isBookedFollowupQuestionChoice(text)) {
+      currentState = {
+        ...currentState,
+        followupMode: "question",
+        updatedAt: new Date().toISOString(),
+      };
+      await saveBookingState(conversationId, currentState);
       const responseText =
         "Claro 😊 Me manda sua dúvida sobre Mega Hair que eu te respondo por aqui.";
       await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_followup_question_prompt" });
@@ -3624,13 +3676,14 @@ export async function handleStructuredBookingFlow({
       return { ok: true, replied: true, reason: "booking_followup_question_prompt", conversationId };
     }
 
+    if (currentState.followupMode === "question" && !isNewBookingRequestAfterBooked(text)) {
+      // A mensagem seguinte à opção 2 é conteúdo da dúvida, mesmo quando cita
+      // nomes de serviços. Ela deve seguir para a IA, não para alteração/agendamento.
+      return null;
+    }
+
     if (isNewBookingRequestAfterBooked(text)) {
-      currentState = {
-        status: "collecting",
-        previousAppointmentId: currentState.appointmentId,
-        previousBookingCode: currentState.bookingCode || "",
-        updatedAt: new Date().toISOString(),
-      };
+      return openInitialServiceCatalog({ normalized, conversationId, base, recorded });
     } else if (asksAboutExistingBooking(text) || isAffirmativeBookingConfirmation(text)) {
       const responseText = buildAlreadyBookedResponse(currentState);
       await sendTextAndRecord({ normalized, conversationId, text: responseText, reason: "booking_already_created" });
@@ -4120,6 +4173,20 @@ export async function handleStructuredBookingFlow({
       phoneNumber: normalized.phoneNumber,
       state,
     });
+    if (!appointment?.id || appointment.persisted !== true) {
+      throw new Error("O agendamento não foi confirmado no banco de dados.");
+    }
+    const bookedState = {
+      ...state,
+      status: "booked",
+      appointmentId: appointment.id,
+      bookingCode: appointment.bookingCode || state.bookingCode || "",
+      paymentId: appointment.paymentId || state.paymentId || "",
+      paymentUrl: appointment.paymentUrl || state.paymentUrl || "",
+      followupMode: "",
+      updatedAt: new Date().toISOString(),
+    };
+    await saveBookingState(conversationId, bookedState);
     const accessText = appointment.access?.temporaryPassword
       ? [
           "Cadastro realizado com sucesso.",

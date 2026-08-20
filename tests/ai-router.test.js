@@ -778,6 +778,7 @@ test("processIncomingWhatsAppWebhook creates a real appointment for confirmed Wh
   let appointmentCreated = false;
   let paymentCreated = false;
   let conversationLinked = false;
+  let orphanAppointmentCleared = false;
   const sentTexts = [];
   const queue = [];
   const ids = {
@@ -791,6 +792,7 @@ test("processIncomingWhatsAppWebhook creates a real appointment for confirmed Wh
     location: "88888888-8888-4888-8888-888888888888",
     appointment: "99999999-9999-4999-8999-999999999999",
     payment: "abababab-abab-4bab-8bab-abababababab",
+    orphanAppointment: "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd",
   };
   const bookingState = {
     status: "awaiting_confirmation",
@@ -867,7 +869,7 @@ test("processIncomingWhatsAppWebhook creates a real appointment for confirmed Wh
           ai_enabled: true,
           booking_state: bookingState,
           client_id: null,
-          appointment_id: null,
+          appointment_id: ids.orphanAppointment,
         }],
       };
     }
@@ -875,12 +877,19 @@ test("processIncomingWhatsAppWebhook creates a real appointment for confirmed Wh
       return { rowCount: 1, rows: [{ id: ids.conversation }] };
     }
     if (text.includes("select id,appointment_id from public.whatsapp_conversations")) {
-      return { rowCount: 1, rows: [{ id: ids.conversation, appointment_id: null }] };
+      return { rowCount: 1, rows: [{ id: ids.conversation, appointment_id: ids.orphanAppointment }] };
+    }
+    if (text.includes("from public.appointments") && text.includes("where id = $1")) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (text.includes("select id, booking_code") && text.includes("from public.appointments")) {
+      return { rowCount: 0, rows: [] };
     }
     if (text.includes("insert into public.whatsapp_messages")) {
       return { rowCount: 1, rows: [{ id: ids.inbound }] };
     }
     if (text.includes("update public.whatsapp_conversations")) {
+      if (text.includes("appointment_id=null")) orphanAppointmentCleared = true;
       if (text.includes("appointment_id=$4")) {
         conversationLinked = true;
         assert.equal(params[4], ids.payment);
@@ -1026,6 +1035,7 @@ test("processIncomingWhatsAppWebhook creates a real appointment for confirmed Wh
   assert.equal(appointmentCreated, true);
   assert.equal(paymentCreated, true);
   assert.equal(conversationLinked, true);
+  assert.equal(orphanAppointmentCleared, true);
   assert.equal(openAiCalled, false);
   assert.equal(sentTexts.some(text => /Sinal:.*R\$\s*30,00 para pagamento no portal\./s.test(text)), true);
   assert.equal(sentTexts.some(text => text.includes("Fatura:")), false);
@@ -1316,6 +1326,7 @@ test("processIncomingWhatsAppWebhook requests contact data before booking confir
 
 test("processIncomingWhatsAppWebhook handles post-booking option with stale confirmation state", async () => {
   let handoffCreated = false;
+  let aiPausedForHuman = false;
   const sentTexts = [];
   const queue = [];
   const ids = {
@@ -1387,7 +1398,10 @@ test("processIncomingWhatsAppWebhook handles post-booking option with stale conf
       handoffCreated = true;
       return { rowCount: 1, rows: [{ id: "ticket-stale-option" }] };
     }
-    if (text.includes("update public.whatsapp_conversations")) return { rowCount: 1, rows: [] };
+    if (text.includes("update public.whatsapp_conversations")) {
+      if (text.includes("status='human'") && text.includes("ai_enabled=false")) aiPausedForHuman = true;
+      return { rowCount: 1, rows: [] };
+    }
     if (text.includes("select s.id,s.name") && text.includes("ai_service_settings")) return { rowCount: 0, rows: [] };
     if (text.includes("from public.ai_automation_flows") && text.includes("order by name")) return { rowCount: 0, rows: [] };
     if (text.includes("from public.knowledge_articles")) return { rowCount: 0, rows: [] };
@@ -1420,6 +1434,7 @@ test("processIncomingWhatsAppWebhook handles post-booking option with stale conf
   assert.equal(result.ok, true);
   assert.equal(result.reason, "booking_followup_handoff");
   assert.equal(handoffCreated, true);
+  assert.equal(aiPausedForHuman, true);
   assert.equal(sentTexts.some(text => text.includes("Vou chamar a equipe")), true);
   assert.equal(sentTexts.some(text => text.includes("Resumo do pré-agendamento")), false);
 });
