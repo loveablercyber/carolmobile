@@ -4809,7 +4809,7 @@ async function recordAiInteraction({ conversationId, messageId, model, inputSumm
       model || null,
       clean(inputSummary).slice(0, 1000),
       clean(outputSummary).slice(0, 1000),
-      JSON.stringify(usage ? [{ tool: "openai", usage }] : []),
+      JSON.stringify(usage ? [{ tool: "ai_provider", usage }] : []),
       status,
       errorMessage,
     ],
@@ -5913,7 +5913,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
 
   let finalResponse = null;
   const primaryProvider = normalizeAiProvider(
-    settings.primaryProvider || settings.provider || "openai",
+    settings.primaryProvider || settings.provider || "gemini",
   );
   let finalProvider = primaryProvider;
   let finalModel = null;

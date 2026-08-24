@@ -769,25 +769,19 @@ Trabalhar somente em **validação real do fallback Groq no WhatsApp**: enviar u
 - **Histórico descontaminado:** a mensagem atual deixou de ser duplicada no histórico enviado ao provedor e mensagens temporárias de espera deixaram de entrar no contexto.
 - **Regra local preservada:** somente a consulta de disponibilidade para hoje continua com resposta determinística, para não inventar vagas sem consultar uma agenda real.
 
-## Resultado desta etapa (OpenAI como único provedor do WhatsApp)
+## Resultado desta etapa (Gemini + Groq no WhatsApp)
 
-- **Migração concluída para Responses API:** o motor generativo agora chama somente `https://api.openai.com/v1/responses`, com `instructions`, `input`, limite de saída e `store=false`.
-- **Modelo ativo:** `gpt-5.4-mini`, configurado por `OPENAI_MODEL` para equilibrar qualidade, latência e custo no atendimento pelo WhatsApp.
-- **Segredo protegido:** `OPENAI_API_KEY` foi validada e armazenada como variável sensível no Vercel Production; a chave não foi adicionada ao frontend, banco, logs ou repositório.
-- **Provedores antigos desativados:** `GEMINI_ENABLED=false` e `GROQ_ENABLED=false` no Vercel. O runtime não importa nem chama os clientes Gemini/Groq.
-- **Conteúdo preservado:** Baileys, histórico, fila, base de conhecimento, serviços reais, regras médicas, handoff e contingência continuam ativos sem recriação do módulo.
-- **Painel atualizado:** indicadores, teste seguro e configurações agora mostram somente OpenAI; fallback externo permanece desabilitado.
-- **Persistência migrada:** registros existentes de `ai_settings` são convertidos para `provider='openai'`, `gpt-5.4-mini` e `fallback_enabled=false` durante a garantia de schema.
-- **Validação técnica:** chave/modelo responderam em chamada real; `npm test` passou com 95/95, `npm run lint` passou e `npm run build` passou.
-
-## Próxima etapa recomendada (Módulo específico)
-
-Trabalhar somente em **validação operacional OpenAI no inbound privado**: enviar perguntas diferentes pelo WhatsApp, confirmar `provider='openai'` e `status='success'` em `ai_request_logs`, revisar qualidade contextual e ajustar apenas o prompt se necessário.
+- **OpenAI removida:** não existe mais cliente, chave, variável, opção de painel ou rota operacional da OpenAI.
+- **Provedor principal:** Gemini `gemini-3.5-flash-lite`.
+- **Fallback:** Groq `openai/gpt-oss-20b`, autenticado exclusivamente pela API do Groq.
+- **Atendimento retomado:** a migração transfere as conversas pausadas para a IA uma única vez; assumir manualmente uma conversa continua pausando o bot.
+- **Conteúdo preservado:** Baileys, histórico, fila, base de conhecimento, serviços reais, regras médicas, handoff e contingência continuam ativos.
+- **Painel atualizado:** indicadores, teste seguro e configurações mostram somente Gemini e Groq.
 
 ## Resultado desta etapa (Progressão para pré-agendamento sem repetição)
 
 - **Causa da repetição corrigida:** o contexto era cortado nos primeiros 4.000 caracteres; quando catálogo, artigo e histórico eram longos, a mensagem atual podia ficar fora da requisição. O novo orçamento preserva sempre a mensagem atual e as regras críticas, limitando somente os contextos opcionais.
-- **Bloqueio contraditório removido:** saíram as instruções que proibiam avançar para agendamento. A OpenAI agora pode conduzir o pré-agendamento sem inventar disponibilidade.
+- **Bloqueio contraditório removido:** saíram as instruções que proibiam avançar para agendamento. O provedor de IA ativo agora pode conduzir o pré-agendamento sem inventar disponibilidade.
 - **Progressão orientada por histórico:** após intenção de agendar, a IA identifica o que já foi respondido e pergunta somente um dado faltante por vez: serviço, data, período/horário e nome quando necessário.
 - **Confirmação explícita:** com os dados completos, a IA deve mostrar resumo e pedir confirmação, sem declarar horário confirmado.
 - **Persistência antes da resposta:** quando a cliente confirma explicitamente o resumo, o backend cria uma solicitação `booking_request` em `human_handoff_tickets` antes de enviar a mensagem de sucesso. A conversa continua com `ai_enabled=true` e a equipe confirma a disponibilidade.
@@ -818,14 +812,14 @@ Trabalhar somente em **validação final do pareamento por número**: após o co
 ## Resultado desta etapa (Agenda real do WhatsApp IA)
 
 - **Logs de produção verificados:** o painel admin mostrou a conversa recente `5bdd6a34` com IA ativa, 90 respostas automáticas registradas e avisos repetidos `auto_message_limit_reached`; no mesmo período, `/api/data?resource=appointments` retornou 0 agendamentos em julho, confirmando que o fluxo não gravava na agenda.
-- **Causa confirmada:** o fluxo anterior chamava OpenAI para conduzir o pré-agendamento e, na confirmação, abria somente `human_handoff_tickets` com motivo `booking_request`. Nenhuma linha era criada em `public.appointments`, por isso não aparecia no painel admin nem profissional.
+- **Causa confirmada:** o fluxo anterior chamava o provedor de IA para conduzir o pré-agendamento e, na confirmação, abria somente `human_handoff_tickets` com motivo `booking_request`. Nenhuma linha era criada em `public.appointments`, por isso não aparecia no painel admin nem profissional.
 - **Persistência real adicionada:** o motor do WhatsApp agora usa uma máquina de estados em `whatsapp_conversations.booking_state`, consulta disponibilidade real em `professional_availability`, `appointments` e `blocked_schedule`, oferece opções numeradas de data/horário e cria `appointments` somente após confirmação explícita.
 - **Sem sucesso visual falso:** a resposta “registrei sua solicitação” só é enviada depois do insert transacional em `appointments`, histórico de status, notificações e vínculo `whatsapp_conversations.appointment_id`.
 - **Recuperação do loop atual:** conversas antigas sem `booking_state` também são reconhecidas quando a última mensagem da IA já pedia data/horário, evitando cair novamente na pergunta repetida.
 - **Cliente via WhatsApp:** quando o telefone ainda não existe em `clients`, o backend cria um cadastro mínimo seguro com origem `WhatsApp IA`, sem senha e sem expor dados sensíveis no frontend.
 - **Tratamento de falha:** se o horário ficar indisponível ou a criação falhar, o estado anterior não vira sucesso; o erro é logado em `whatsapp_message_logs`, a equipe recebe ticket humano e a cliente recebe mensagem de encaminhamento manual.
 - **Schema atualizado:** adicionada a coluna `booking_state jsonb not null default '{}'` em `whatsapp_conversations`, tanto na garantia de schema runtime quanto na migração SQL estática.
-- **Validação técnica:** `npm test` passou com 100/100, incluindo regressão que confirma criação real de `appointments` sem chamar OpenAI; `node --check server/lib/whatsapp-ai-engine.js` passou; `npm run build` passou.
+- **Validação técnica:** `npm test` passou com 100/100, incluindo regressão que confirma criação real de `appointments` sem chamar o provedor de texto; `node --check server/lib/whatsapp-ai-engine.js` passou; `npm run build` passou.
 
 ## Próxima etapa recomendada (Módulo específico)
 

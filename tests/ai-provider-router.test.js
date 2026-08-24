@@ -10,9 +10,6 @@ import {
 } from "../server/lib/ai-provider-router.js";
 
 const AI_ENV_KEYS = [
-  "OPENAI_ENABLED",
-  "OPENAI_API_KEY",
-  "OPENAI_MODEL",
   "GEMINI_ENABLED",
   "GEMINI_API_KEY",
   "GEMINI_MODEL",
@@ -38,7 +35,6 @@ afterEach(() => {
 
 test("uses current production defaults for each AI provider", () => {
   const status = aiProvidersPublicStatus();
-  assert.equal(status.openai.model, AI_PROVIDER_DEFAULT_MODELS.openai);
   assert.equal(status.gemini.model, "gemini-3.5-flash-lite");
   assert.equal(status.groq.model, "openai/gpt-oss-20b");
 });
@@ -57,26 +53,27 @@ test("recognizes provider configuration stored in the admin panel", () => {
 
 test("fallback candidates include every distinct provider", () => {
   const candidates = buildAiProviderCandidates({
-    primaryProvider: "openai",
-    primaryModel: "gpt-5.4-mini",
+    primaryProvider: "gemini",
+    primaryModel: "gemini-3.5-flash-lite",
     fallbackEnabled: true,
-    fallbackProvider: "gemini",
-    fallbackModel: "gemini-3.5-flash-lite",
+    fallbackProvider: "groq",
+    fallbackModel: "openai/gpt-oss-20b",
   });
 
   assert.deepEqual(
     candidates.map((candidate) => candidate.provider),
-    ["openai", "gemini", "groq"],
+    ["gemini", "groq"],
   );
   assert.deepEqual(
     candidates.map((candidate) => candidate.isFallback),
-    [false, true, true],
+    [false, true],
   );
 });
 
 test("normalizes Grok typo and rejects unknown providers safely", () => {
   assert.equal(normalizeAiProvider("grok"), "groq");
-  assert.equal(normalizeAiProvider("unknown"), "openai");
+  assert.equal(normalizeAiProvider("openai"), "gemini");
+  assert.equal(normalizeAiProvider("unknown"), "gemini");
 });
 
 test("does not retry permanent provider errors before falling back", () => {

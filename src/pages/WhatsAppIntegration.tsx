@@ -40,7 +40,7 @@ type PersonalityMode = {
   description: string;
 };
 
-type AiProvider = "openai" | "gemini" | "groq";
+type AiProvider = "gemini" | "groq";
 
 type AiProviderStatus = {
   provider: AiProvider;
@@ -52,20 +52,17 @@ type AiProviderStatus = {
 };
 
 const AI_PROVIDER_LABELS: Record<AiProvider, string> = {
-  openai: "OpenAI",
   gemini: "Google Gemini",
   groq: "Groq",
 };
 
 const AI_PROVIDER_MODELS: Record<AiProvider, string> = {
-  openai: "gpt-5.4-mini",
   gemini: "gemini-3.5-flash-lite",
   groq: "openai/gpt-oss-20b",
 };
 
 function asAiProvider(value: string | undefined): AiProvider {
-  if (value === "gemini" || value === "groq") return value;
-  return "openai";
+  return value === "groq" ? "groq" : "gemini";
 }
 
 type AiSettings = {
@@ -114,10 +111,8 @@ type AiSettings = {
   circuitBreakerCooldownSeconds: number;
   geminiCircuitBreakerUntil: string | null;
   groqCircuitBreakerUntil: string | null;
-  openaiApiKey?: string;
   geminiApiKey?: string;
   groqApiKey?: string;
-  openaiEnabled?: boolean;
   geminiEnabled?: boolean;
   groqEnabled?: boolean;
   updatedAt?: string;
@@ -125,7 +120,6 @@ type AiSettings = {
 
 type AiPanelData = {
   status: {
-    openai: AiProviderStatus;
     gemini: AiProviderStatus;
     groq: AiProviderStatus;
     database: { configured: boolean };
@@ -601,7 +595,7 @@ function AiAdminPanel({
         action === "restore_defaults"
           ? "Configuração padrão restaurada."
           : action === "activate"
-            ? "Atendimento IA ativado."
+            ? "Atendimento IA ativado e conversas transferidas para o bot."
             : "Atendimento IA pausado.",
       );
     } catch (error) {
@@ -690,8 +684,8 @@ function AiAdminPanel({
           <div>
             <SectionHeading title="Atendimento IA" />
             <p className="muted max-w-2xl text-sm">
-              Configurações salvas no Supabase/Neon. A chave da OpenAI permanece
-              somente no backend.
+              Configurações salvas no Supabase/Neon. As chaves Gemini e Groq
+              permanecem somente no backend.
             </p>
           </div>
           <Badge tone={panel.status.ai.active ? "green" : "amber"}>
@@ -701,14 +695,14 @@ function AiAdminPanel({
 
         <div className="grid gap-3 sm:grid-cols-3">
           <Info
-            label="OpenAI"
-            value={panel.status.openai.configured ? "configurada" : "sem chave"}
+            label="Provedor principal"
+            value={AI_PROVIDER_LABELS[asAiProvider(form.primaryProvider)]}
           />
           <Info
             label="Ambiente"
-            value={panel.status.openai.enabled ? "habilitado" : "desativado"}
+            value={panel.status[asAiProvider(form.primaryProvider)].enabled ? "habilitado" : "desativado"}
           />
-          <Info label="Modelo" value={panel.status.openai.model} />
+          <Info label="Modelo" value={form.primaryModel || form.model} />
         </div>
 
         <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -726,7 +720,7 @@ function AiAdminPanel({
               onChange={(event) => updateField("salonName", event.target.value)}
             />
           </Field>
-          <Field label="Modelo OpenAI">
+          <Field label="Modelo principal">
             <input
               className="field"
               value={form.model}
@@ -1357,7 +1351,7 @@ function ScopeGuardTab() {
       <section className="surface p-6">
         <SectionHeading title="Escopo automático" />
         <p className="muted max-w-2xl text-sm">
-          O backend bloqueia mensagens fora do universo do salão antes de chamar a OpenAI.
+          O backend bloqueia mensagens fora do universo do salão antes de chamar Gemini ou Groq.
         </p>
         <div className="mt-5 grid gap-3 md:grid-cols-2">
           {allowed.map((item) => (
@@ -1377,7 +1371,7 @@ function ScopeGuardTab() {
           ))}
         </div>
         <div className="mt-5 rounded-2xl bg-warm p-4 text-xs font-semibold text-stone-600">
-          Exemplo: pedido de receita de bolo recebe resposta curta local e não consome geração da OpenAI.
+          Exemplo: pedido de receita de bolo recebe resposta curta local e não consome geração externa.
         </div>
       </aside>
     </div>
@@ -1424,7 +1418,6 @@ function PerformanceSettingsTab({
                     updateField("primaryModel", model);
                   }}
                 >
-                  <option value="openai">OpenAI (GPT)</option>
                   <option value="gemini">Google Gemini</option>
                   <option value="groq">Groq (Llama / Grok)</option>
                 </select>
@@ -1458,7 +1451,6 @@ function PerformanceSettingsTab({
                       updateField("fallbackModel", AI_PROVIDER_MODELS[provider]);
                     }}
                   >
-                    <option value="openai">OpenAI (GPT)</option>
                     <option value="gemini">Google Gemini</option>
                     <option value="groq">Groq</option>
                   </select>
@@ -1495,27 +1487,6 @@ function PerformanceSettingsTab({
           <div className="space-y-4">
             <h4 className="text-sm font-semibold text-stone-700 font-bold uppercase tracking-wide text-stone-400">Provedores e Chaves de API</h4>
             
-            {/* OpenAI Card */}
-            <div className="border border-black/5 rounded-2xl p-4 bg-white space-y-3 shadow-sm">
-              <div className="flex justify-between items-center">
-                <span className="font-semibold text-stone-700 text-xs">OpenAI</span>
-                <CheckField
-                  label="Habilitar OpenAI"
-                  checked={!!form.openaiEnabled}
-                  onChange={(checked) => updateField("openaiEnabled", checked)}
-                />
-              </div>
-              <Field label="Chave de API OpenAI">
-                <input
-                  type="password"
-                  className="field"
-                  value={form.openaiApiKey || ""}
-                  onChange={(e) => updateField("openaiApiKey", e.target.value)}
-                  placeholder={form.openaiApiKey ? "••••••••••••" : "Cole sua API key da OpenAI (ex: sk-...)"}
-                />
-              </Field>
-            </div>
-
             {/* Gemini Card */}
             <div className="border border-black/5 rounded-2xl p-4 bg-white space-y-3 shadow-sm">
               <div className="flex justify-between items-center">
@@ -1654,7 +1625,7 @@ function PerformanceSettingsTab({
         <section className="surface p-6">
           <SectionHeading title="Status do provedor" />
           <div className="space-y-3 mt-4">
-            {(["openai", "gemini", "groq"] as AiProvider[]).map((provider) => {
+            {(["gemini", "groq"] as AiProvider[]).map((provider) => {
               const status = panel.status[provider];
               const active = status.configured && status.enabled;
               return (
@@ -1711,7 +1682,7 @@ function LogsAndPerformanceTab({
     alerts.push({ text: "Latência média de resposta está acima de 8 segundos nos últimos 7 dias!", type: "warning" });
   }
   if (rateLimitCount > 3) {
-    alerts.push({ text: "Mais de 3 erros OpenAI 429 detectados nos últimos 7 dias. Verifique limites e faturamento!", type: "rose" });
+    alerts.push({ text: "Mais de 3 erros 429 detectados nos últimos 7 dias. Verifique os limites de Gemini e Groq!", type: "rose" });
   }
 
   return (
@@ -1760,8 +1731,6 @@ function LogsAndPerformanceTab({
         <section className="surface p-6 self-start">
           <SectionHeading title="Diagnóstico dos Provedores" />
           <div className="space-y-3 mt-4">
-            <StatusLine label="OpenAI configurada" ok={panel.status.openai.configured} />
-            <StatusLine label="OpenAI habilitada" ok={panel.status.openai.enabled} />
             <StatusLine label="Gemini configurado" ok={panel.status.gemini.configured} />
             <StatusLine label="Gemini habilitado" ok={panel.status.gemini.enabled} />
             <StatusLine label="Groq configurado" ok={panel.status.groq.configured} />

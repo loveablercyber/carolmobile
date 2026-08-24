@@ -24,7 +24,6 @@ beforeEach(() => {
   const envKeys = [
     "GEMINI_API_KEY", "GEMINI_ENABLED", "GEMINI_MODEL",
     "GROQ_API_KEY", "GROQ_ENABLED", "GROQ_MODEL",
-    "OPENAI_API_KEY", "OPENAI_ENABLED", "OPENAI_MODEL",
     "GEMINI_API_KEY_1", "GEMINI_API_KEY_2",
     "GROQ_API_KEY_1", "GROQ_API_KEY_2"
   ];
@@ -75,9 +74,11 @@ test("generateGroqText rotates numbered keys between calls", async () => {
   process.env.GROQ_API_KEY = "gkey-primary";
   process.env.GROQ_API_KEY_1 = "gkey-secondary";
   const authorizations = [];
+  const requestBodies = [];
 
   globalThis.fetch = async (_url, options) => {
     authorizations.push(options.headers.Authorization);
+    requestBodies.push(JSON.parse(options.body));
     return new Response(
       JSON.stringify({ choices: [{ message: { content: "Resposta Groq" } }] }),
       { status: 200, headers: { "content-type": "application/json" } },
@@ -88,6 +89,8 @@ test("generateGroqText rotates numbered keys between calls", async () => {
   await generateGroqText({ systemPrompt: "Sistema", message: "Mensagem" });
 
   assert.equal(new Set(authorizations).size, 2);
+  assert.equal(requestBodies[0].max_completion_tokens, 220);
+  assert.equal("max_tokens" in requestBodies[0], false);
 });
 
 test("processIncomingWhatsAppWebhook answers a greeting before offering the service catalog", async () => {
@@ -397,7 +400,6 @@ test("processIncomingWhatsAppWebhook pauses booking for hair information and res
 test("processIncomingWhatsAppWebhook uses the configured fallback provider after a primary failure", async () => {
   let geminiCalled = false;
   let groqCalled = false;
-  let openAiCalled = false;
 
   const mockSettings = {
     id: "settings-123",
@@ -500,15 +502,6 @@ test("processIncomingWhatsAppWebhook uses the configured fallback provider after
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
-    if (url.includes("api.openai.com/v1/chat/completions")) {
-      openAiCalled = true;
-      return new Response(JSON.stringify({
-        id: "resp_test",
-        choices: [{ message: { role: "assistant", content: "Resposta inteligente da OpenAI." } }],
-        usage: { prompt_tokens: 10, completion_tokens: 5 }
-      }), { status: 200, headers: { "content-type": "application/json" } });
-    }
-
     return new Response(JSON.stringify({ success: false }));
   };
 
@@ -530,12 +523,11 @@ test("processIncomingWhatsAppWebhook uses the configured fallback provider after
   assert.equal(result.ok, true);
   assert.equal(result.replied, true);
   assert.equal(result.reason, "groq_reply");
-  assert.equal(openAiCalled, false);
   assert.equal(geminiCalled, true);
   assert.equal(groqCalled, true);
 });
 
-test("processIncomingWhatsAppWebhook blocks out-of-scope questions before OpenAI", async () => {
+test("processIncomingWhatsAppWebhook blocks out-of-scope questions before external AI", async () => {
   let openAiCalled = false;
   const sentTexts = [];
   const mockSettings = {
@@ -633,7 +625,6 @@ test("processIncomingWhatsAppWebhook blocks out-of-scope questions before OpenAI
 test("processIncomingWhatsAppWebhook persists a booking request before replying to confirmation", async () => {
   let geminiCalled = false;
   let groqCalled = false;
-  let openAiCalled = false;
   let bookingTicketCreated = false;
 
   // Set Circuit Breaker active until a future date
@@ -648,10 +639,10 @@ test("processIncomingWhatsAppWebhook persists a booking request before replying 
     cache_enabled: true,
     max_auto_messages: 10,
     grouping_window_ms: 1,
-    primary_provider: "openai",
-    primary_model: "gpt-5.4-mini",
+    primary_provider: "gemini",
+    primary_model: "gemini-3.5-flash-lite",
     fallback_provider: "groq",
-    fallback_model: "llama-3.1-8b-instant",
+    fallback_model: "openai/gpt-oss-20b",
     fallback_enabled: true,
     max_retries: 0,
     timeout_ms: 1000,
@@ -732,7 +723,9 @@ test("processIncomingWhatsAppWebhook persists a booking request before replying 
 
     if (url.includes("generativelanguage.googleapis.com")) {
       geminiCalled = true;
-      return new Response(JSON.stringify({ text: "Should not be called" }), { status: 200 });
+      return new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: "Solicitação registrada. A equipe confirmará a disponibilidade." }] } }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
     if (url.includes("api.groq.com")) {
@@ -740,21 +733,14 @@ test("processIncomingWhatsAppWebhook persists a booking request before replying 
       return new Response(JSON.stringify({ success: false }), { status: 500 });
     }
 
-    if (url.includes("api.openai.com/v1/chat/completions")) {
-      openAiCalled = true;
-      return new Response(JSON.stringify({
-        choices: [{ message: { role: "assistant", content: "Solicitação registrada. A equipe confirmará a disponibilidade." } }]
-      }), { status: 200, headers: { "content-type": "application/json" } });
-    }
-
     return new Response(JSON.stringify({ success: false }));
   };
 
   process.env.BAILEYS_API_URL = "https://baileys.example.com";
   process.env.BAILEYS_API_KEY = "test-key";
-  process.env.OPENAI_ENABLED = "true";
-  process.env.OPENAI_API_KEY = "openai-key";
-  process.env.OPENAI_MODEL = "gpt-5.4-mini";
+  process.env.GEMINI_ENABLED = "true";
+  process.env.GEMINI_API_KEY = "gemini-key";
+  process.env.GEMINI_MODEL = "gemini-3.5-flash-lite";
 
   const payload = {
     from: "5511999999999@s.whatsapp.net",
@@ -766,10 +752,9 @@ test("processIncomingWhatsAppWebhook persists a booking request before replying 
   const result = await processIncomingWhatsAppWebhook(payload);
   assert.equal(result.ok, true);
   assert.equal(result.replied, true);
-  assert.equal(result.reason, "openai_reply");
-  assert.equal(openAiCalled, true);
+  assert.equal(result.reason, "gemini_reply");
   assert.equal(bookingTicketCreated, true);
-  assert.equal(geminiCalled, false);
+  assert.equal(geminiCalled, true);
   assert.equal(groqCalled, false);
 });
 
@@ -1440,7 +1425,7 @@ test("processIncomingWhatsAppWebhook handles post-booking option with stale conf
 });
 
 test("processIncomingWhatsAppWebhook lets questions continue after a booked pre-booking", async () => {
-  let openAiCalled = false;
+  let geminiCalled = false;
   let alreadyCreatedSent = false;
   const sentTexts = [];
   const queue = [];
@@ -1471,10 +1456,10 @@ test("processIncomingWhatsAppWebhook lets questions continue after a booked pre-
     allow_existing_clients: true,
     allow_auto_booking: true,
     require_booking_confirmation: true,
-    primary_provider: "openai",
-    primary_model: "gpt-5.4-mini",
-    fallback_provider: "openai",
-    fallback_model: "gpt-5.4-mini",
+    primary_provider: "gemini",
+    primary_model: "gemini-3.5-flash-lite",
+    fallback_provider: "groq",
+    fallback_model: "openai/gpt-oss-20b",
     fallback_enabled: false,
     max_retries: 0,
     timeout_ms: 1000,
@@ -1578,12 +1563,11 @@ test("processIncomingWhatsAppWebhook lets questions continue after a booked pre-
     if (url.includes("/api/presence")) {
       return new Response(JSON.stringify({ success: true }));
     }
-    if (url.includes("api.openai.com/v1/chat/completions")) {
-      openAiCalled = true;
+    if (url.includes("generativelanguage.googleapis.com")) {
+      geminiCalled = true;
       return new Response(JSON.stringify({
-        id: "resp_followup",
-        choices: [{ message: { role: "assistant", content: "Pode sim. O cuidado principal é manter a manutenção em dia e pentear com delicadeza." } }],
-        usage: { prompt_tokens: 12, completion_tokens: 8 },
+        candidates: [{ content: { parts: [{ text: "Pode sim. O cuidado principal é manter a manutenção em dia e pentear com delicadeza." }] } }],
+        usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 8 },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
     return new Response(JSON.stringify({ success: true, status: "ready" }));
@@ -1591,9 +1575,9 @@ test("processIncomingWhatsAppWebhook lets questions continue after a booked pre-
 
   process.env.BAILEYS_API_URL = "https://baileys.example.com";
   process.env.BAILEYS_API_KEY = "test-key";
-  process.env.OPENAI_ENABLED = "true";
-  process.env.OPENAI_API_KEY = "openai-key";
-  process.env.OPENAI_MODEL = "gpt-5.4-mini";
+  process.env.GEMINI_ENABLED = "true";
+  process.env.GEMINI_API_KEY = "gemini-key";
+  process.env.GEMINI_MODEL = "gemini-3.5-flash-lite";
 
   const result = await processIncomingWhatsAppWebhook({
     from: "5511999999999@s.whatsapp.net",
@@ -1603,8 +1587,8 @@ test("processIncomingWhatsAppWebhook lets questions continue after a booked pre-
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.reason, "openai_reply");
-  assert.equal(openAiCalled, true);
+  assert.equal(result.reason, "gemini_reply");
+  assert.equal(geminiCalled, true);
   assert.equal(alreadyCreatedSent, false);
   assert.equal(sentTexts.some(text => text.includes("Pode sim.")), true);
 });

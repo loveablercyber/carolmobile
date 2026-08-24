@@ -169,6 +169,10 @@ async function setup() {
     resolve("database/neon-appointment-automation.sql"),
     "utf8",
   );
+  const geminiGroqOnlyMigration = await readFile(
+    resolve("database/neon-gemini-groq-only.sql"),
+    "utf8",
+  );
 
   await client.query("begin");
   try {
@@ -317,6 +321,15 @@ async function setup() {
       await client.query(appointmentAutomationMigration);
       await client.query(
         "insert into public._luxe_migrations(version, description) values ('014_appointment_automation', 'Agendamentos idempotentes, notificações, lembretes e Google Calendar')",
+      );
+    }
+    const { rowCount: geminiGroqOnlyApplied } = await client.query(
+      "select 1 from public._luxe_migrations where version = '015_gemini_groq_only'",
+    );
+    if (!geminiGroqOnlyApplied) {
+      await client.query(geminiGroqOnlyMigration);
+      await client.query(
+        "insert into public._luxe_migrations(version, description) values ('015_gemini_groq_only', 'Remove OpenAI e transfere atendimento para Gemini/Groq')",
       );
     }
     await client.query("commit");

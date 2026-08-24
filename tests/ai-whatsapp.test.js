@@ -10,7 +10,6 @@ import {
   normalizeAiServiceSettingsInput,
   normalizeAiSettingsInput,
 } from "../server/lib/ai-whatsapp.js";
-import { openAiPublicStatus } from "../server/lib/openai-client.js";
 
 test("static AI WhatsApp migration includes runtime hardening tables and router columns", () => {
   const migration = readFileSync(
@@ -19,6 +18,10 @@ test("static AI WhatsApp migration includes runtime hardening tables and router 
   );
   const adminScript = readFileSync(
     new URL("../scripts/neon-admin.mjs", import.meta.url),
+    "utf8",
+  );
+  const providerMigration = readFileSync(
+    new URL("../database/neon-gemini-groq-only.sql", import.meta.url),
     "utf8",
   );
   for (const table of [
@@ -47,8 +50,11 @@ test("static AI WhatsApp migration includes runtime hardening tables and router 
       new RegExp(`add column if not exists ${column}\\b`, "i"),
     );
   }
-  assert.match(migration, /provider text not null default 'openai'/i);
-  assert.match(migration, /model text not null default 'gpt-5\.4-mini'/i);
+  assert.match(migration, /provider text not null default 'gemini'/i);
+  assert.match(migration, /model text not null default 'gemini-3\.5-flash-lite'/i);
+  assert.match(providerMigration, /set status='ai', ai_enabled=true/i);
+  assert.match(providerMigration, /drop column if exists openai_api_key/i);
+  assert.match(adminScript, /015_gemini_groq_only/i);
 });
 
 test("normalizes AI WhatsApp settings and preserves explicit false values", () => {
@@ -74,10 +80,10 @@ test("normalizes AI WhatsApp settings and preserves explicit false values", () =
   assert.equal(normalized.maxIdleMinutes, 5);
   assert.equal(normalized.aiStartTime, "08:30");
   assert.equal(normalized.aiEndTime, "18:00");
-  assert.equal(normalized.primaryProvider, "openai");
+  assert.equal(normalized.primaryProvider, "gemini");
   assert.equal(normalized.primaryModel, normalized.model);
-  assert.equal(normalized.fallbackProvider, "openai");
-  assert.equal(normalized.fallbackEnabled, false);
+  assert.equal(normalized.fallbackProvider, "groq");
+  assert.equal(normalized.fallbackEnabled, true);
 });
 
 test("preserves the configured fallback model independently from the primary model", () => {
@@ -122,32 +128,6 @@ test("builds runtime prompt with anti-hallucination rules and no secrets", () =>
   assert.doesNotMatch(prompt, /Se o usuário digitar a opção "3"/);
   assert.doesNotMatch(prompt, /GEMINI_API_KEY/i);
   assert.doesNotMatch(prompt, /apiKey/i);
-});
-
-test("OpenAI public status never exposes API key", () => {
-  const previousKey = process.env.OPENAI_API_KEY;
-  const previousEnabled = process.env.OPENAI_ENABLED;
-  const previousModel = process.env.OPENAI_MODEL;
-
-  process.env.OPENAI_API_KEY = "secret-test-key";
-  process.env.OPENAI_ENABLED = "true";
-  process.env.OPENAI_MODEL = "gpt-5.4-mini";
-
-  try {
-    const status = openAiPublicStatus();
-    assert.equal(status.configured, true);
-    assert.equal(status.enabled, true);
-    assert.equal(status.model, "gpt-5.4-mini");
-    assert.equal("apiKey" in status, false);
-    assert.equal(JSON.stringify(status).includes("secret-test-key"), false);
-  } finally {
-    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = previousKey;
-    if (previousEnabled === undefined) delete process.env.OPENAI_ENABLED;
-    else process.env.OPENAI_ENABLED = previousEnabled;
-    if (previousModel === undefined) delete process.env.OPENAI_MODEL;
-    else process.env.OPENAI_MODEL = previousModel;
-  }
 });
 
 test("normalizes AI service settings using real service fallbacks", () => {

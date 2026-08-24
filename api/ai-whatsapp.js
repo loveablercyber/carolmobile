@@ -22,6 +22,7 @@ import {
   methodNotAllowed,
   send,
 } from "../server/lib/http.js";
+import { query } from "../server/lib/db.js";
 
 const clean = (value) => String(value ?? "").trim();
 
@@ -63,6 +64,18 @@ async function mutate(user, resource, body) {
         ...current,
         enabled: action === "activate",
       });
+      if (action === "activate") {
+        await query(
+          `update public.whatsapp_conversations
+              set status='ai',ai_enabled=true,assigned_to=null,updated_at=now()
+            where ai_enabled=false or status<>'ai'`,
+        );
+        await query(
+          `update public.human_handoff_tickets
+              set status='closed',resolved_at=coalesce(resolved_at,now()),updated_at=now()
+            where status in ('pending','open')`,
+        );
+      }
       return { settings, panel: await getAiPanel() };
     }
     throw appError("Ação inválida.");

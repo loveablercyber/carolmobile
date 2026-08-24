@@ -316,8 +316,8 @@ create table if not exists public.ai_settings (
   id uuid primary key default uuid_generate_v4(),
   business_id text not null default 'default',
   enabled boolean not null default false,
-  provider text not null default 'openai',
-  model text not null default 'gpt-5.4-mini',
+  provider text not null default 'gemini',
+  model text not null default 'gemini-3.5-flash-lite',
   assistant_name text not null default 'Carol',
   salon_name text not null default 'Carol Sol Mega Hair',
   personality_mode text not null default 'simpatica_acolhedora',
@@ -343,10 +343,8 @@ create table if not exists public.ai_settings (
   resume_keyword text not null default 'voltar ao bot',
   stop_keyword text not null default 'parar',
   timezone text not null default 'America/Sao_Paulo',
-  openai_api_key text,
   gemini_api_key text,
   groq_api_key text,
-  openai_enabled boolean not null default false,
   gemini_enabled boolean not null default false,
   groq_enabled boolean not null default false,
   updated_by uuid references public.profiles(id),
@@ -631,8 +629,8 @@ export function maskApiKey(key) {
 function defaultSettingsInput() {
   return {
     enabled: false,
-    provider: "openai",
-    model: AI_PROVIDER_DEFAULT_MODELS.openai,
+    provider: "gemini",
+    model: AI_PROVIDER_DEFAULT_MODELS.gemini,
     assistantName: "Carol",
     salonName: "Carol Sol Mega Hair",
     personalityMode: "simpatica_acolhedora",
@@ -655,26 +653,24 @@ function defaultSettingsInput() {
     resumeKeyword: "voltar ao bot",
     stopKeyword: "parar",
     timezone: "America/Sao_Paulo",
-    primaryProvider: "openai",
-    primaryModel: AI_PROVIDER_DEFAULT_MODELS.openai,
-    fallbackProvider: "openai",
-    fallbackModel: AI_PROVIDER_DEFAULT_MODELS.openai,
+    primaryProvider: "gemini",
+    primaryModel: AI_PROVIDER_DEFAULT_MODELS.gemini,
+    fallbackProvider: "groq",
+    fallbackModel: AI_PROVIDER_DEFAULT_MODELS.groq,
     timeoutMs: 7000,
     maxRetries: 2,
     groupingWindowMs: 1500,
     contextLimit: 8,
     maxResponseTokens: 220,
-    fallbackEnabled: false,
+    fallbackEnabled: true,
     contingencyEnabled: true,
     cacheEnabled: true,
     humanTransferEnabled: true,
     circuitBreakerCooldownSeconds: 60,
     geminiCircuitBreakerUntil: null,
     groqCircuitBreakerUntil: null,
-    openaiApiKey: null,
     geminiApiKey: null,
     groqApiKey: null,
-    openaiEnabled: false,
     geminiEnabled: false,
     groqEnabled: false,
   };
@@ -698,7 +694,7 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
     inputPrimaryModel ||
     inputModel ||
     clean(fallback.primaryModel || fallback.model);
-  const model = requestedModel || AI_PROVIDER_DEFAULT_MODELS.openai;
+  const model = requestedModel || AI_PROVIDER_DEFAULT_MODELS.gemini;
   const fallbackModel = clean(
     input.fallbackModel ?? input.fallback_model ?? fallback.fallbackModel,
   ) || model;
@@ -712,7 +708,8 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
   if (systemPrompt.length < 80)
     throw appError("O prompt base precisa ter pelo menos 80 caracteres.");
 
-  const provider = clean(input.provider || fallback.provider) || "openai";
+  const requestedProvider = clean(input.provider || fallback.provider);
+  const provider = requestedProvider === "groq" ? "groq" : "gemini";
 
   const handleKeyUpdate = (newKey, oldKey) => {
     const cleaned = clean(newKey);
@@ -721,11 +718,9 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
     return cleaned;
   };
 
-  const openaiApiKey = handleKeyUpdate(input.openaiApiKey ?? input.openai_api_key, fallback.openaiApiKey);
   const geminiApiKey = handleKeyUpdate(input.geminiApiKey ?? input.gemini_api_key, fallback.geminiApiKey);
   const groqApiKey = handleKeyUpdate(input.groqApiKey ?? input.groq_api_key, fallback.groqApiKey);
 
-  const openaiEnabled = bool(input.openaiEnabled ?? input.openai_enabled, fallback.openaiEnabled);
   const geminiEnabled = bool(input.geminiEnabled ?? input.gemini_enabled, fallback.geminiEnabled);
   const groqEnabled = bool(input.groqEnabled ?? input.groq_enabled, fallback.groqEnabled);
 
@@ -770,9 +765,9 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
       clean(input.resumeKeyword || fallback.resumeKeyword) || "voltar ao bot",
     stopKeyword: clean(input.stopKeyword || fallback.stopKeyword) || "parar",
     timezone: clean(input.timezone || fallback.timezone) || "America/Sao_Paulo",
-    primaryProvider: clean(input.primaryProvider || provider),
+    primaryProvider: clean(input.primaryProvider || provider) === "groq" ? "groq" : "gemini",
     primaryModel: model,
-    fallbackProvider: clean(input.fallbackProvider || provider),
+    fallbackProvider: clean(input.fallbackProvider || "groq") === "gemini" ? "gemini" : "groq",
     fallbackModel,
     timeoutMs: intRange(input.timeoutMs ?? input.timeout_ms, fallback.timeoutMs, 1000, 30000),
     maxRetries: intRange(input.maxRetries ?? input.max_retries, fallback.maxRetries, 0, 5),
@@ -786,10 +781,8 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
     circuitBreakerCooldownSeconds: intRange(input.circuitBreakerCooldownSeconds ?? input.circuit_breaker_cooldown_seconds, fallback.circuitBreakerCooldownSeconds, 5, 3600),
     geminiCircuitBreakerUntil: input.geminiCircuitBreakerUntil ?? fallback.geminiCircuitBreakerUntil ?? null,
     groqCircuitBreakerUntil: input.groqCircuitBreakerUntil ?? fallback.groqCircuitBreakerUntil ?? null,
-    openaiApiKey,
     geminiApiKey,
     groqApiKey,
-    openaiEnabled,
     geminiEnabled,
     groqEnabled,
   };
@@ -952,10 +945,8 @@ function dbToSettings(row) {
     circuitBreakerCooldownSeconds: row.circuit_breaker_cooldown_seconds,
     geminiCircuitBreakerUntil: row.gemini_circuit_breaker_until,
     groqCircuitBreakerUntil: row.groq_circuit_breaker_until,
-    openaiApiKey: row.openai_api_key,
     geminiApiKey: row.gemini_api_key,
     groqApiKey: row.groq_api_key,
-    openaiEnabled: row.openai_enabled || false,
     geminiEnabled: row.gemini_enabled || false,
     groqEnabled: row.groq_enabled || false,
     updatedAt: row.updated_at,
@@ -1124,26 +1115,29 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
 
   // Add new columns to existing tables
   await query(`
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_provider text not null default 'openai';
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_model text not null default 'gpt-5.4-mini';
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_provider text not null default 'openai';
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_model text not null default 'gpt-5.4-mini';
+    CREATE TABLE IF NOT EXISTS public._luxe_migrations (
+      version text primary key,
+      description text not null,
+      applied_at timestamptz not null default now()
+    );
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_provider text not null default 'gemini';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_model text not null default 'gemini-3.5-flash-lite';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_provider text not null default 'groq';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_model text not null default 'openai/gpt-oss-20b';
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS timeout_ms integer not null default 7000;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS max_retries integer not null default 2;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS grouping_window_ms integer not null default 1500;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS context_limit integer not null default 8;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS max_response_tokens integer not null default 220;
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_enabled boolean not null default false;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_enabled boolean not null default true;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS contingency_enabled boolean not null default true;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS cache_enabled boolean not null default true;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS human_transfer_enabled boolean not null default true;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS circuit_breaker_cooldown_seconds integer not null default 60;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS gemini_circuit_breaker_until timestamptz;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS groq_circuit_breaker_until timestamptz;
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS openai_api_key text;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS gemini_api_key text;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS groq_api_key text;
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS openai_enabled boolean not null default false;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS gemini_enabled boolean not null default false;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS groq_enabled boolean not null default false;
     UPDATE public.ai_settings
@@ -1164,6 +1158,34 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
     UPDATE public.ai_settings
        SET fallback_model='openai/gpt-oss-20b'
      WHERE fallback_provider='groq' AND fallback_model='llama-3.1-8b-instant';
+    SELECT pg_advisory_xact_lock(hashtext('015_gemini_groq_only'));
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM public._luxe_migrations WHERE version='015_gemini_groq_only'
+      ) THEN
+        UPDATE public.ai_settings
+           SET provider='gemini',
+               model='gemini-3.5-flash-lite',
+               primary_provider='gemini',
+               primary_model='gemini-3.5-flash-lite',
+               fallback_provider='groq',
+               fallback_model='openai/gpt-oss-20b',
+               fallback_enabled=true,
+               gemini_enabled=true,
+               groq_enabled=true,
+               enabled=true;
+        UPDATE public.whatsapp_conversations
+           SET status='ai', ai_enabled=true, assigned_to=null, updated_at=now();
+        UPDATE public.human_handoff_tickets
+           SET status='closed', resolved_at=coalesce(resolved_at,now()), updated_at=now()
+         WHERE status IN ('pending','open');
+        INSERT INTO public._luxe_migrations(version,description)
+        VALUES('015_gemini_groq_only','Remove OpenAI e transfere atendimento para Gemini/Groq');
+      END IF;
+    END $$;
+    ALTER TABLE public.ai_settings DROP COLUMN IF EXISTS openai_api_key;
+    ALTER TABLE public.ai_settings DROP COLUMN IF EXISTS openai_enabled;
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS booking_state jsonb not null default '{}';
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS session_started_at timestamptz;
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS conversation_attempt_id uuid;
@@ -1233,7 +1255,7 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
 
   await query(
     `insert into public._luxe_migrations(version, description)
-     values ('011_ai_whatsapp', 'Atendimento IA WhatsApp OpenAI')
+     values ('011_ai_whatsapp', 'Atendimento IA WhatsApp')
      on conflict(version) do nothing`,
   ).catch(() => null);
   schemaEnsured = true;
@@ -1308,10 +1330,10 @@ export async function saveAiSettings(user, input) {
         primary_provider,primary_model,fallback_provider,fallback_model,timeout_ms,max_retries,grouping_window_ms,
         context_limit,max_response_tokens,fallback_enabled,contingency_enabled,cache_enabled,human_transfer_enabled,
         circuit_breaker_cooldown_seconds,gemini_circuit_breaker_until,groq_circuit_breaker_until,
-        openai_api_key,gemini_api_key,groq_api_key,openai_enabled,gemini_enabled,groq_enabled,updated_by,updated_at
+        gemini_api_key,groq_api_key,gemini_enabled,groq_enabled,updated_by,updated_at
       ) values(
         'default',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,
-        $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,now()
+        $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,now()
       ) on conflict(business_id) do update set
         enabled=excluded.enabled,provider=excluded.provider,model=excluded.model,assistant_name=excluded.assistant_name,
         salon_name=excluded.salon_name,personality_mode=excluded.personality_mode,system_prompt=excluded.system_prompt,
@@ -1333,10 +1355,8 @@ export async function saveAiSettings(user, input) {
         circuit_breaker_cooldown_seconds=excluded.circuit_breaker_cooldown_seconds,
         gemini_circuit_breaker_until=excluded.gemini_circuit_breaker_until,
         groq_circuit_breaker_until=excluded.groq_circuit_breaker_until,
-        openai_api_key=excluded.openai_api_key,
         gemini_api_key=excluded.gemini_api_key,
         groq_api_key=excluded.groq_api_key,
-        openai_enabled=excluded.openai_enabled,
         gemini_enabled=excluded.gemini_enabled,
         groq_enabled=excluded.groq_enabled,
         updated_by=excluded.updated_by,updated_at=now()
@@ -1386,10 +1406,8 @@ export async function saveAiSettings(user, input) {
         value.circuitBreakerCooldownSeconds,
         value.geminiCircuitBreakerUntil,
         value.groqCircuitBreakerUntil,
-        value.openaiApiKey,
         value.geminiApiKey,
         value.groqApiKey,
-        value.openaiEnabled,
         value.geminiEnabled,
         value.groqEnabled,
         user.id,
@@ -1414,7 +1432,6 @@ export async function saveAiSettings(user, input) {
         JSON.stringify({
           ...value,
           systemPrompt: "[stored]",
-          openaiApiKey: value.openaiApiKey ? "[stored]" : null,
           geminiApiKey: value.geminiApiKey ? "[stored]" : null,
           groqApiKey: value.groqApiKey ? "[stored]" : null,
         }),
@@ -1835,7 +1852,6 @@ export async function getAiPanel() {
   
   const maskedSettings = {
     ...settings,
-    openaiApiKey: settings.openaiApiKey ? maskApiKey(settings.openaiApiKey) : "",
     geminiApiKey: settings.geminiApiKey ? maskApiKey(settings.geminiApiKey) : "",
     groqApiKey: settings.groqApiKey ? maskApiKey(settings.groqApiKey) : "",
   };

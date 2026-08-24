@@ -39,7 +39,6 @@ const groups = [
   {
     name: "Provedores de IA (tambem podem ser configurados no painel admin)",
     optional: [
-      "OPENAI_ENABLED", "OPENAI_API_KEY", "OPENAI_MODEL",
       "GEMINI_ENABLED", "GEMINI_API_KEY", "GEMINI_MODEL",
       "GROQ_ENABLED", "GROQ_API_KEY", "GROQ_MODEL",
     ],

@@ -1,25 +1,22 @@
-import { generateOpenAiText, openAiPublicStatus } from "./openai-client.js";
 import { generateGeminiText, geminiPublicStatus } from "./gemini-client.js";
 import { generateGroqText, groqPublicStatus } from "./groq-client.js";
 
 export const AI_PROVIDER_DEFAULT_MODELS = Object.freeze({
-  openai: "gpt-5.4-mini",
   gemini: "gemini-3.5-flash-lite",
   groq: "openai/gpt-oss-20b",
 });
 
-const PROVIDERS = Object.freeze(["openai", "gemini", "groq"]);
+const PROVIDERS = Object.freeze(["gemini", "groq"]);
 
 export function normalizeAiProvider(value) {
-  const provider = String(value || "openai").toLowerCase().trim();
+  const provider = String(value || "gemini").toLowerCase().trim();
   if (provider === "grok") return "groq";
-  return PROVIDERS.includes(provider) ? provider : "openai";
+  return PROVIDERS.includes(provider) ? provider : "gemini";
 }
 
 function providerEnvironmentStatus(provider) {
   if (provider === "gemini") return geminiPublicStatus();
-  if (provider === "groq") return groqPublicStatus();
-  return openAiPublicStatus();
+  return groqPublicStatus();
 }
 
 function panelProviderConfig(provider, settings = {}) {
@@ -29,15 +26,9 @@ function panelProviderConfig(provider, settings = {}) {
       apiKey: settings.geminiApiKey || null,
     };
   }
-  if (provider === "groq") {
-    return {
-      enabled: Boolean(settings.groqEnabled),
-      apiKey: settings.groqApiKey || null,
-    };
-  }
   return {
-    enabled: Boolean(settings.openaiEnabled),
-    apiKey: settings.openaiApiKey || null,
+    enabled: Boolean(settings.groqEnabled),
+    apiKey: settings.groqApiKey || null,
   };
 }
 
@@ -88,13 +79,12 @@ export function aiProvidersPublicStatus(settings = {}) {
 export async function generateAiProviderText({ provider, ...input }) {
   const normalized = normalizeAiProvider(provider);
   if (normalized === "gemini") return generateGeminiText(input);
-  if (normalized === "groq") return generateGroqText(input);
-  return generateOpenAiText(input);
+  return generateGroqText(input);
 }
 
 export function buildAiProviderCandidates(settings = {}) {
   const primaryProvider = normalizeAiProvider(
-    settings.primaryProvider || settings.provider || "openai",
+    settings.primaryProvider || settings.provider || "gemini",
   );
   const candidates = [
     {

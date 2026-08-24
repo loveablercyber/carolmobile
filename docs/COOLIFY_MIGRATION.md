@@ -124,12 +124,15 @@ BAILEYS_WEBHOOK_SECRET=...
 BAILEYS_DEFAULT_INSTANCE=carol-sol
 ```
 
-OpenAI:
+Gemini e Groq:
 
 ```env
-OPENAI_ENABLED=true
-OPENAI_API_KEY=...
-OPENAI_MODEL=gpt-5.4-mini
+GEMINI_ENABLED=true
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-3.5-flash-lite
+GROQ_ENABLED=true
+GROQ_API_KEY=...
+GROQ_MODEL=openai/gpt-oss-20b
 ```
 
 SumUp:

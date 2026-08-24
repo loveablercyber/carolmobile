@@ -45,7 +45,12 @@ import {
   methodNotAllowed,
   send,
 } from "../server/lib/http.js";
-import { generateOpenAiText } from "../server/lib/openai-client.js";
+import { getAiSettings } from "../server/lib/ai-whatsapp.js";
+import {
+  aiProviderRuntime,
+  buildAiProviderCandidates,
+  generateAiProviderText,
+} from "../server/lib/ai-provider-router.js";
 import {
   bookableDiscoveryServices,
   fallbackDiscoveryRecommendation,
@@ -198,30 +203,40 @@ async function createDiscoveryRecommendation(res, user, body) {
   let inventoryItem = fallback.inventoryItem;
   let personalizedMessage = fallback.personalizedMessage;
   try {
-    const aiSettingsResult = await query(
-      `select primary_model,model,openai_api_key,openai_enabled
-       from public.ai_settings
-       where business_id='default'
-       limit 1`,
-    ).catch(() => ({ rows: [] }));
-    const aiSettings = aiSettingsResult.rows[0] || null;
-    const result = await generateOpenAiText({
-      systemPrompt: [
-        "Voce e uma especialista em Mega Hair. Responda somente JSON valido, sem markdown.",
-        "Escolha exatamente um serviceId do catalogo fornecido.",
-        "Para servicos com offer_inventory_items=true, escolha um inventoryItemId daquele mesmo servico quando houver uma opcao adequada.",
-        "Nunca invente servico, item, preco, comprimento, gramatura, disponibilidade ou tecnica.",
-        "A mensagem deve ter no maximo dois paragrafos curtos, em portugues do Brasil, sem valores, medidas ou diagnostico medico.",
-        'Formato: {"serviceId":"...","inventoryItemId":"... ou vazio","personalizedMessage":"..."}.',
-      ].join("\n"),
-      message: JSON.stringify({
-        answers,
-        services: discoveryAiCatalog(services, inventory),
-      }),
-      model: aiSettings?.primary_model || aiSettings?.model || undefined,
-      apiKey: aiSettings?.openai_enabled ? aiSettings.openai_api_key || null : null,
-      maxTokens: 360,
-    });
+    const aiSettings = await getAiSettings();
+    let result = null;
+    for (const candidate of buildAiProviderCandidates(aiSettings)) {
+      const runtime = aiProviderRuntime(candidate.provider, aiSettings);
+      if (!runtime.enabled || !runtime.configured) continue;
+      try {
+        result = await generateAiProviderText({
+          provider: runtime.provider,
+          systemPrompt: [
+            "Voce e uma especialista em Mega Hair. Responda somente JSON valido, sem markdown.",
+            "Escolha exatamente um serviceId do catalogo fornecido.",
+            "Para servicos com offer_inventory_items=true, escolha um inventoryItemId daquele mesmo servico quando houver uma opcao adequada.",
+            "Nunca invente servico, item, preco, comprimento, gramatura, disponibilidade ou tecnica.",
+            "A mensagem deve ter no maximo dois paragrafos curtos, em portugues do Brasil, sem valores, medidas ou diagnostico medico.",
+            'Formato: {"serviceId":"...","inventoryItemId":"... ou vazio","personalizedMessage":"..."}.',
+          ].join("\n"),
+          message: JSON.stringify({
+            answers,
+            services: discoveryAiCatalog(services, inventory),
+          }),
+          model: candidate.model || runtime.defaultModel,
+          apiKey: runtime.apiKey,
+          maxTokens: 360,
+        });
+        break;
+      } catch (providerError) {
+        console.error("Discovery recommendation provider failed", {
+          provider: runtime.provider,
+          message: providerError.message,
+          code: providerError.code,
+        });
+      }
+    }
+    if (!result) throw new Error("Nenhum provedor Gemini/Groq disponível.");
     const parsed = parseDiscoveryRecommendationJson(result.text);
     const aiService = services.find((item) => item.id === parsed?.serviceId);
     if (aiService) {

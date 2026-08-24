@@ -103,7 +103,7 @@ export async function generateGroqText({
           { role: "user", content: String(message || "") },
         ],
         temperature: Number(temperature || 0.4),
-        max_tokens: Number(maxTokens || 220),
+        max_completion_tokens: Number(maxTokens || 220),
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
