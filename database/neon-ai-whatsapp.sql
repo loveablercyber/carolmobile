@@ -63,6 +63,26 @@ set provider='openai',
     fallback_model='gpt-5.4-mini',
     fallback_enabled=false;
 
+-- Mantém instalações novas alinhadas aos modelos de produção atuais.
+update public.ai_settings
+set model='gemini-3.5-flash-lite'
+where provider='gemini' and model='gemini-2.5-flash-lite';
+update public.ai_settings
+set primary_model='gemini-3.5-flash-lite'
+where primary_provider='gemini' and primary_model='gemini-2.5-flash-lite';
+update public.ai_settings
+set fallback_model='gemini-3.5-flash-lite'
+where fallback_provider='gemini' and fallback_model='gemini-2.5-flash-lite';
+update public.ai_settings
+set model='openai/gpt-oss-20b'
+where provider='groq' and model='llama-3.1-8b-instant';
+update public.ai_settings
+set primary_model='openai/gpt-oss-20b'
+where primary_provider='groq' and primary_model='llama-3.1-8b-instant';
+update public.ai_settings
+set fallback_model='openai/gpt-oss-20b'
+where fallback_provider='groq' and fallback_model='llama-3.1-8b-instant';
+
 create table if not exists public.ai_prompt_versions (
   id uuid primary key default uuid_generate_v4(),
   settings_id uuid references public.ai_settings(id) on delete cascade,

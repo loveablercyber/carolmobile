@@ -7,6 +7,13 @@ import {
   getAiCommercialBase,
   getAiSettings,
 } from "./ai-whatsapp.js";
+import {
+  aiProviderRuntime,
+  buildAiProviderCandidates,
+  generateAiProviderText,
+  normalizeAiProvider,
+  shouldRetryAiProviderError,
+} from "./ai-provider-router.js";
 import { createSumupCheckout, sumupConfig } from "./sumup.js";
 import {
   schedulePeriod,
@@ -15,9 +22,6 @@ import {
   periodFitsSchedule,
   weekdayForDate,
 } from "./availability-rules.js";
-import { generateOpenAiText, openAiPublicStatus } from "./openai-client.js";
-import { generateGeminiText, geminiPublicStatus } from "./gemini-client.js";
-import { generateGroqText, groqPublicStatus } from "./groq-client.js";
 import { sendBaileysTextMessage, sendBaileysPresence } from "./baileys-client.js";
 import { notifyAppointment, sendEmail } from "./integrations.js";
 import {
@@ -4994,58 +4998,6 @@ function getRetryDelay(retryCount) {
   return 1000 + jitter;
 }
 
-function normalizedAiProvider(value) {
-  const provider = String(value || "openai").toLowerCase().trim();
-  return provider === "grok" ? "groq" : provider;
-}
-
-function aiProviderRuntime(providerValue, settings = {}) {
-  const provider = normalizedAiProvider(providerValue);
-  if (provider === "gemini") {
-    const status = geminiPublicStatus();
-    return {
-      provider,
-      enabled: Boolean(status.enabled || settings.geminiEnabled),
-      configured: Boolean(status.configured || settings.geminiApiKey),
-      defaultModel: status.model || "gemini-2.5-flash-lite",
-      apiKey: settings.geminiApiKey || null,
-    };
-  }
-  if (provider === "groq") {
-    const status = groqPublicStatus();
-    return {
-      provider,
-      enabled: Boolean(status.enabled || settings.groqEnabled),
-      configured: Boolean(status.configured || settings.groqApiKey),
-      defaultModel: status.model || "llama-3.1-8b-instant",
-      apiKey: settings.groqApiKey || null,
-    };
-  }
-  const status = openAiPublicStatus();
-  return {
-    provider: "openai",
-    enabled: Boolean(status.enabled || settings.openaiEnabled),
-    configured: Boolean(status.configured || settings.openaiApiKey),
-    defaultModel: status.model || "gpt-4o-mini",
-    apiKey: settings.openaiApiKey || null,
-  };
-}
-
-async function generateTextWithConfiguredProvider({
-  provider,
-  systemPrompt,
-  message,
-  model,
-  timeoutMs,
-  maxTokens,
-  apiKey,
-}) {
-  const input = { systemPrompt, message, model, timeoutMs, maxTokens, apiKey };
-  if (provider === "gemini") return generateGeminiText(input);
-  if (provider === "groq") return generateGroqText(input);
-  return generateOpenAiText(input);
-}
-
 async function logAiRequest({
   conversationId,
   messageId,
@@ -5960,7 +5912,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   });
 
   let finalResponse = null;
-  const primaryProvider = normalizedAiProvider(
+  const primaryProvider = normalizeAiProvider(
     settings.primaryProvider || settings.provider || "openai",
   );
   let finalProvider = primaryProvider;
@@ -5972,22 +5924,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   let errorCode = null;
   const providerStartedAt = new Date();
   let providerFinishedAt = providerStartedAt;
-  const candidates = [{
-    provider: primaryProvider,
-    model: settings.primaryModel || settings.model || "",
-    isFallback: false,
-  }];
-  if (settings.fallbackEnabled) {
-    const fallbackCandidate = {
-      provider: normalizedAiProvider(settings.fallbackProvider || primaryProvider),
-      model: settings.fallbackModel || "",
-      isFallback: true,
-    };
-    const duplicatesPrimary =
-      fallbackCandidate.provider === candidates[0].provider &&
-      (!fallbackCandidate.model || fallbackCandidate.model === candidates[0].model);
-    if (!duplicatesPrimary) candidates.push(fallbackCandidate);
-  }
+  const candidates = buildAiProviderCandidates(settings);
 
   for (const candidate of candidates) {
     if (finalResponse) break;
@@ -6014,7 +5951,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
           retryCountTotal += 1;
           await delay(getRetryDelay(currentAttempt));
         }
-        const result = await generateTextWithConfiguredProvider({
+        const result = await generateAiProviderText({
           provider: runtime.provider,
           systemPrompt,
           message: promptMessage,
@@ -6033,7 +5970,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
         );
         errorMsg = err.message;
         errorCode = err.code || String(err.status || "") || null;
-        if (err.code === "RESOURCE_EXHAUSTED" || err.status === 429 || err.status === 401) break;
+        if (!shouldRetryAiProviderError(err)) break;
         currentAttempt += 1;
       }
     }
@@ -6046,7 +5983,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
     try {
       const loopPrompt = `${systemPrompt}\n\nATENÇÃO: Sua resposta gerada foi exatamente idêntica à última resposta enviada: "${finalResponse}". Para evitar repetição e loops, gere uma resposta diferente, mais natural e contextualizada.`;
       const runtime = aiProviderRuntime(finalProvider, settings);
-      const result = await generateTextWithConfiguredProvider({
+      const result = await generateAiProviderText({
         provider: finalProvider,
         systemPrompt: loopPrompt,
         message: promptMessage,

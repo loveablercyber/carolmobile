@@ -30,7 +30,7 @@ export function getGroqKeys() {
 export function groqConfig() {
   const keys = getGroqKeys();
   const apiKey = keys[0] || "";
-  const model = String(process.env.GROQ_MODEL || "llama-3.1-8b-instant").trim();
+  const model = String(process.env.GROQ_MODEL || "openai/gpt-oss-20b").trim();
   const enabled = ["1", "true", "yes", "on"].includes(
     String(process.env.GROQ_ENABLED || "").toLowerCase(),
   );

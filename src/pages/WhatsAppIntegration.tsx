@@ -40,6 +40,34 @@ type PersonalityMode = {
   description: string;
 };
 
+type AiProvider = "openai" | "gemini" | "groq";
+
+type AiProviderStatus = {
+  provider: AiProvider;
+  configured: boolean;
+  enabled: boolean;
+  model: string;
+  keyCount?: number;
+  source?: "environment" | "panel" | "environment_and_panel" | "none";
+};
+
+const AI_PROVIDER_LABELS: Record<AiProvider, string> = {
+  openai: "OpenAI",
+  gemini: "Google Gemini",
+  groq: "Groq",
+};
+
+const AI_PROVIDER_MODELS: Record<AiProvider, string> = {
+  openai: "gpt-5.4-mini",
+  gemini: "gemini-3.5-flash-lite",
+  groq: "openai/gpt-oss-20b",
+};
+
+function asAiProvider(value: string | undefined): AiProvider {
+  if (value === "gemini" || value === "groq") return value;
+  return "openai";
+}
+
 type AiSettings = {
   id?: string;
   enabled: boolean;
@@ -97,12 +125,9 @@ type AiSettings = {
 
 type AiPanelData = {
   status: {
-    openai: {
-      provider: string;
-      configured: boolean;
-      enabled: boolean;
-      model: string;
-    };
+    openai: AiProviderStatus;
+    gemini: AiProviderStatus;
+    groq: AiProviderStatus;
     database: { configured: boolean };
     ai: { enabled: boolean; active: boolean };
   };
@@ -130,6 +155,7 @@ type AiPanelResponse = { data: AiPanelData };
 type AiMutationResponse = { data: { settings: AiSettings; panel: AiPanelData } };
 type AiTestResponse = {
   data: {
+    provider: AiProvider;
     model: string;
     response: string;
     usage?: Record<string, any> | null;
@@ -590,23 +616,31 @@ function AiAdminPanel({
     }
   };
 
-  const testOpenAi = async (event: FormEvent) => {
+  const testAiProvider = async (event: FormEvent) => {
     event.preventDefault();
     setSaving("test");
     setTestResult("");
     try {
       const result = await apiFetch<AiTestResponse>(
         "/api/ai-whatsapp?resource=test",
-        { method: "POST", body: JSON.stringify({ message: testMessage }) },
+        {
+          method: "POST",
+          body: JSON.stringify({
+            message: testMessage,
+            provider: panel?.settings.primaryProvider || panel?.settings.provider,
+          }),
+        },
       );
-      setTestResult(result.data.response);
-      notify("Teste da OpenAI concluído.");
+      setTestResult(
+        `${AI_PROVIDER_LABELS[result.data.provider]} • ${result.data.model}\n\n${result.data.response}`,
+      );
+      notify(`Teste do ${AI_PROVIDER_LABELS[result.data.provider]} concluído.`);
     } catch (error) {
       console.error("AI WhatsApp test error", error);
       notify(
         error instanceof Error
           ? error.message
-          : "Não foi possível testar a OpenAI.",
+          : "Não foi possível testar o provedor de IA.",
       );
     } finally {
       setSaving("");
@@ -895,24 +929,31 @@ function AiAdminPanel({
       <aside className="space-y-5">
         <section className="surface p-6">
           <SectionHeading title="Teste seguro" />
-          <form onSubmit={testOpenAi}>
+          <form onSubmit={testAiProvider}>
             <textarea
               className="field min-h-28"
               value={testMessage}
               onChange={(event) => setTestMessage(event.target.value)}
             />
             <button
-              disabled={!!saving || !panel.status.openai.configured}
+              disabled={
+                !!saving ||
+                !panel.status[asAiProvider(panel.settings.primaryProvider)].configured ||
+                !panel.status[asAiProvider(panel.settings.primaryProvider)].enabled
+              }
               className="btn-primary mt-3 w-full"
             >
               <Send size={15} />
-              {saving === "test" ? "Testando…" : "Testar OpenAI"}
+              {saving === "test"
+                ? "Testando…"
+                : `Testar ${AI_PROVIDER_LABELS[asAiProvider(panel.settings.primaryProvider)]}`}
             </button>
           </form>
-          {!panel.status.openai.configured && (
+          {(!panel.status[asAiProvider(panel.settings.primaryProvider)].configured ||
+            !panel.status[asAiProvider(panel.settings.primaryProvider)].enabled) && (
             <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs font-semibold text-amber-800">
-              Configure OPENAI_API_KEY no ambiente do Vercel para liberar o
-              teste real.
+              Habilite o provedor principal e configure sua chave no painel ou
+              no ambiente do Coolify para liberar o teste real.
             </p>
           )}
           {testResult && (
@@ -1362,7 +1403,7 @@ function PerformanceSettingsTab({
         <div className="mb-5">
           <SectionHeading title="Configurações de Provedor e Performance" />
           <p className="muted text-sm">
-            Configure a OpenAI, os limites de tokens, timeouts e a política de contingência.
+            Configure os provedores, os limites de tokens, timeouts e a política de contingência.
           </p>
         </div>
 
@@ -1378,16 +1419,9 @@ function PerformanceSettingsTab({
                     const prov = e.target.value;
                     updateField("provider", prov);
                     updateField("primaryProvider", prov);
-                    if (prov === "gemini") {
-                      updateField("model", "gemini-2.5-flash-lite");
-                      updateField("primaryModel", "gemini-2.5-flash-lite");
-                    } else if (prov === "groq") {
-                      updateField("model", "llama-3.1-8b-instant");
-                      updateField("primaryModel", "llama-3.1-8b-instant");
-                    } else {
-                      updateField("model", "gpt-4o-mini");
-                      updateField("primaryModel", "gpt-4o-mini");
-                    }
+                    const model = AI_PROVIDER_MODELS[asAiProvider(prov)];
+                    updateField("model", model);
+                    updateField("primaryModel", model);
                   }}
                 >
                   <option value="openai">OpenAI (GPT)</option>
@@ -1403,14 +1437,58 @@ function PerformanceSettingsTab({
                     updateField("model", e.target.value);
                     updateField("primaryModel", e.target.value);
                   }}
-                  placeholder="ex: gpt-4o-mini"
+                  placeholder={`ex: ${AI_PROVIDER_MODELS[asAiProvider(form.provider)]}`}
                 />
               </Field>
             </div>
+            <CheckField
+              label="Habilitar fallback automático entre provedores"
+              checked={form.fallbackEnabled}
+              onChange={(checked) => updateField("fallbackEnabled", checked)}
+            />
+            {form.fallbackEnabled ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Primeiro provedor de fallback">
+                  <select
+                    className="field"
+                    value={form.fallbackProvider}
+                    onChange={(event) => {
+                      const provider = asAiProvider(event.target.value);
+                      updateField("fallbackProvider", provider);
+                      updateField("fallbackModel", AI_PROVIDER_MODELS[provider]);
+                    }}
+                  >
+                    <option value="openai">OpenAI (GPT)</option>
+                    <option value="gemini">Google Gemini</option>
+                    <option value="groq">Groq</option>
+                  </select>
+                </Field>
+                <Field label="Modelo de fallback">
+                  <input
+                    className="field"
+                    value={form.fallbackModel}
+                    onChange={(event) => updateField("fallbackModel", event.target.value)}
+                    placeholder={AI_PROVIDER_MODELS[asAiProvider(form.fallbackProvider)]}
+                  />
+                </Field>
+              </div>
+            ) : null}
             <div className="flex gap-2 flex-wrap">
-              <span className="text-[10px] bg-black/5 text-stone-500 rounded px-2 py-0.5 cursor-pointer hover:bg-black/10" onClick={() => { updateField("model", "gpt-4o-mini"); updateField("primaryModel", "gpt-4o-mini"); }}>gpt-4o-mini</span>
-              <span className="text-[10px] bg-black/5 text-stone-500 rounded px-2 py-0.5 cursor-pointer hover:bg-black/10" onClick={() => { updateField("model", "gemini-2.5-flash-lite"); updateField("primaryModel", "gemini-2.5-flash-lite"); }}>gemini-2.5-flash-lite</span>
-              <span className="text-[10px] bg-black/5 text-stone-500 rounded px-2 py-0.5 cursor-pointer hover:bg-black/10" onClick={() => { updateField("model", "llama-3.1-8b-instant"); updateField("primaryModel", "llama-3.1-8b-instant"); }}>llama-3.1-8b-instant</span>
+              {(Object.entries(AI_PROVIDER_MODELS) as Array<[AiProvider, string]>).map(([provider, model]) => (
+                <button
+                  key={provider}
+                  type="button"
+                  className="rounded bg-black/5 px-2 py-0.5 text-[10px] text-stone-500 hover:bg-black/10"
+                  onClick={() => {
+                    updateField("provider", provider);
+                    updateField("primaryProvider", provider);
+                    updateField("model", model);
+                    updateField("primaryModel", model);
+                  }}
+                >
+                  {model}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -1576,24 +1654,35 @@ function PerformanceSettingsTab({
         <section className="surface p-6">
           <SectionHeading title="Status do provedor" />
           <div className="space-y-3 mt-4">
-            <div className="flex items-center justify-between rounded-2xl bg-warm p-4 text-xs font-bold text-stone-600">
-              <span>OpenAI API</span>
-              <Badge tone={panel.status.openai.configured && panel.status.openai.enabled ? "green" : "rose"}>
-                {panel.status.openai.configured && panel.status.openai.enabled ? "ATIVA" : "INATIVA"}
-              </Badge>
-            </div>
-            <div className="flex items-center justify-between rounded-2xl bg-warm p-4 text-xs font-bold text-stone-600">
-              <span>Modelo</span>
-              <b>{panel.status.openai.model}</b>
-            </div>
+            {(["openai", "gemini", "groq"] as AiProvider[]).map((provider) => {
+              const status = panel.status[provider];
+              const active = status.configured && status.enabled;
+              return (
+                <div
+                  key={provider}
+                  className="rounded-2xl bg-warm p-4 text-xs text-stone-600"
+                >
+                  <div className="flex items-center justify-between font-bold">
+                    <span>{AI_PROVIDER_LABELS[provider]}</span>
+                    <Badge tone={active ? "green" : "rose"}>
+                      {active ? "ATIVO" : "INATIVO"}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 break-all text-[11px] text-stone-500">
+                    {status.model} • origem: {status.source === "panel" ? "painel" : status.source === "environment" ? "Coolify" : status.source === "environment_and_panel" ? "painel + Coolify" : "não configurado"}
+                  </p>
+                </div>
+              );
+            })}
           </div>
         </section>
         <section className="surface p-6">
           <SectionHeading title="Instruções de Roteamento" />
           <ul className="space-y-3 text-xs text-stone-600">
             <li>• <b>Agrupamento:</b> Une mensagens da cliente na mesma janela (ex: 1,5s) em uma única requisição.</li>
-            <li>• <b>Provedor único:</b> Todas as respostas generativas usam somente a OpenAI.</li>
-            <li>• <b>Contingência:</b> Se a OpenAI falhar, o bot mantém a conversa ativa e envia a mensagem local de instabilidade.</li>
+            <li>• <b>Roteamento:</b> Usa o provedor principal e, quando habilitado, tenta o fallback escolhido e os demais provedores configurados.</li>
+            <li>• <b>Erros permanentes:</b> Chave inválida, quota esgotada ou modelo removido avançam imediatamente para o próximo provedor.</li>
+            <li>• <b>Contingência:</b> Se todos falharem, o bot mantém a conversa ativa e envia a mensagem local de instabilidade.</li>
           </ul>
         </section>
       </aside>
@@ -1673,6 +1762,10 @@ function LogsAndPerformanceTab({
           <div className="space-y-3 mt-4">
             <StatusLine label="OpenAI configurada" ok={panel.status.openai.configured} />
             <StatusLine label="OpenAI habilitada" ok={panel.status.openai.enabled} />
+            <StatusLine label="Gemini configurado" ok={panel.status.gemini.configured} />
+            <StatusLine label="Gemini habilitado" ok={panel.status.gemini.enabled} />
+            <StatusLine label="Groq configurado" ok={panel.status.groq.configured} />
+            <StatusLine label="Groq habilitado" ok={panel.status.groq.enabled} />
             <StatusLine label="IA ativa" ok={panel.status.ai.active} />
           </div>
           <button onClick={reload} className="btn-secondary mt-5 w-full">

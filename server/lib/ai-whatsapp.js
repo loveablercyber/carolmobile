@@ -1,6 +1,9 @@
 import { query, transaction } from "./db.js";
 import { appError } from "./http.js";
-import { openAiPublicStatus } from "./openai-client.js";
+import {
+  AI_PROVIDER_DEFAULT_MODELS,
+  aiProvidersPublicStatus,
+} from "./ai-provider-router.js";
 
 let settingsCache = null;
 let settingsCacheTime = 0;
@@ -314,7 +317,7 @@ create table if not exists public.ai_settings (
   business_id text not null default 'default',
   enabled boolean not null default false,
   provider text not null default 'openai',
-  model text not null default 'gpt-4o-mini',
+  model text not null default 'gpt-5.4-mini',
   assistant_name text not null default 'Carol',
   salon_name text not null default 'Carol Sol Mega Hair',
   personality_mode text not null default 'simpatica_acolhedora',
@@ -629,7 +632,7 @@ function defaultSettingsInput() {
   return {
     enabled: false,
     provider: "openai",
-    model: "gpt-4o-mini",
+    model: AI_PROVIDER_DEFAULT_MODELS.openai,
     assistantName: "Carol",
     salonName: "Carol Sol Mega Hair",
     personalityMode: "simpatica_acolhedora",
@@ -653,9 +656,9 @@ function defaultSettingsInput() {
     stopKeyword: "parar",
     timezone: "America/Sao_Paulo",
     primaryProvider: "openai",
-    primaryModel: "gpt-4o-mini",
+    primaryModel: AI_PROVIDER_DEFAULT_MODELS.openai,
     fallbackProvider: "openai",
-    fallbackModel: "gpt-4o-mini",
+    fallbackModel: AI_PROVIDER_DEFAULT_MODELS.openai,
     timeoutMs: 7000,
     maxRetries: 2,
     groupingWindowMs: 1500,
@@ -695,7 +698,7 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
     inputPrimaryModel ||
     inputModel ||
     clean(fallback.primaryModel || fallback.model);
-  const model = requestedModel || "gpt-4o-mini";
+  const model = requestedModel || AI_PROVIDER_DEFAULT_MODELS.openai;
   const fallbackModel = clean(
     input.fallbackModel ?? input.fallback_model ?? fallback.fallbackModel,
   ) || model;
@@ -1122,9 +1125,9 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
   // Add new columns to existing tables
   await query(`
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_provider text not null default 'openai';
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_model text not null default 'gpt-4o-mini';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS primary_model text not null default 'gpt-5.4-mini';
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_provider text not null default 'openai';
-    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_model text not null default 'gpt-4o-mini';
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS fallback_model text not null default 'gpt-5.4-mini';
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS timeout_ms integer not null default 7000;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS max_retries integer not null default 2;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS grouping_window_ms integer not null default 1500;
@@ -1143,6 +1146,24 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS openai_enabled boolean not null default false;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS gemini_enabled boolean not null default false;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS groq_enabled boolean not null default false;
+    UPDATE public.ai_settings
+       SET model='gemini-3.5-flash-lite'
+     WHERE provider='gemini' AND model='gemini-2.5-flash-lite';
+    UPDATE public.ai_settings
+       SET primary_model='gemini-3.5-flash-lite'
+     WHERE primary_provider='gemini' AND primary_model='gemini-2.5-flash-lite';
+    UPDATE public.ai_settings
+       SET fallback_model='gemini-3.5-flash-lite'
+     WHERE fallback_provider='gemini' AND fallback_model='gemini-2.5-flash-lite';
+    UPDATE public.ai_settings
+       SET model='openai/gpt-oss-20b'
+     WHERE provider='groq' AND model='llama-3.1-8b-instant';
+    UPDATE public.ai_settings
+       SET primary_model='openai/gpt-oss-20b'
+     WHERE primary_provider='groq' AND primary_model='llama-3.1-8b-instant';
+    UPDATE public.ai_settings
+       SET fallback_model='openai/gpt-oss-20b'
+     WHERE fallback_provider='groq' AND fallback_model='llama-3.1-8b-instant';
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS booking_state jsonb not null default '{}';
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS session_started_at timestamptz;
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS conversation_attempt_id uuid;
@@ -1387,7 +1408,17 @@ export async function saveAiSettings(user, input) {
     await client.query(
       `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
        values($1,'update','ai_settings',$2,$3)`,
-      [user.id, rows[0].id, JSON.stringify({ ...value, systemPrompt: "[stored]" })],
+      [
+        user.id,
+        rows[0].id,
+        JSON.stringify({
+          ...value,
+          systemPrompt: "[stored]",
+          openaiApiKey: value.openaiApiKey ? "[stored]" : null,
+          geminiApiKey: value.geminiApiKey ? "[stored]" : null,
+          groqApiKey: value.groqApiKey ? "[stored]" : null,
+        }),
+      ],
     ).catch(() => null);
     invalidateAiSettingsCache();
     invalidateAiBaseCache();
@@ -1800,7 +1831,7 @@ export async function deleteKnowledgeArticle(user, id) {
 
 export async function getAiPanel() {
   const [settings, base] = await Promise.all([getAiSettings(), getAiBase()]);
-  const openai = openAiPublicStatus();
+  const providers = aiProvidersPublicStatus(settings);
   
   const maskedSettings = {
     ...settings,
@@ -1811,11 +1842,15 @@ export async function getAiPanel() {
 
   return {
     status: {
-      openai,
+      ...providers,
       database: { configured: true },
       ai: {
         enabled: settings.enabled,
-        active: settings.enabled && (openai.enabled || settings.geminiEnabled || settings.groqEnabled),
+        active:
+          settings.enabled &&
+          Object.values(providers).some(
+            (provider) => provider.enabled && provider.configured,
+          ),
       },
     },
     personalityModes,

@@ -10,7 +10,11 @@ import {
   deleteKnowledgeArticle,
   updateAiConversationStatus,
 } from "../server/lib/ai-whatsapp.js";
-import { generateOpenAiText } from "../server/lib/openai-client.js";
+import {
+  aiProviderRuntime,
+  generateAiProviderText,
+  normalizeAiProvider,
+} from "../server/lib/ai-provider-router.js";
 import {
   appError,
   getBody,
@@ -65,17 +69,35 @@ async function mutate(user, resource, body) {
   }
   if (resource === "test") {
     const settings = await getAiSettings();
+    const provider = normalizeAiProvider(
+      body.provider || settings.primaryProvider || settings.provider,
+    );
+    const runtime = aiProviderRuntime(provider, settings);
+    if (!runtime.enabled || !runtime.configured) {
+      throw appError(
+        `Provedor ${provider} não está habilitado/configurado no ambiente ou painel.`,
+        503,
+      );
+    }
     const message =
       clean(body.message) ||
       "Oi, gostaria de saber quais serviços de Mega Hair vocês oferecem.";
-    const result = await generateOpenAiText({
-      model: settings.primaryModel || settings.model,
+    const result = await generateAiProviderText({
+      provider,
+      model:
+        provider === normalizeAiProvider(settings.primaryProvider || settings.provider)
+          ? settings.primaryModel || settings.model || runtime.defaultModel
+          : runtime.defaultModel,
       systemPrompt: buildRuntimePrompt(settings),
       message:
         `${message}\n\nResponda sem citar preços, horários ou disponibilidade. ` +
         "Explique que essas informações precisam ser consultadas nas ferramentas reais do sistema.",
+      timeoutMs: settings.timeoutMs || 12000,
+      maxTokens: settings.maxResponseTokens || 300,
+      apiKey: runtime.apiKey,
     });
     return {
+      provider,
       model: result.model,
       response: result.text,
       usage: result.usage,

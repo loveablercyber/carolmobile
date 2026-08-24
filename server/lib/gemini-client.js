@@ -30,7 +30,7 @@ export function getGeminiKeys() {
 export function geminiConfig() {
   const keys = getGeminiKeys();
   const apiKey = keys[0] || "";
-  const model = String(process.env.GEMINI_MODEL || "gemini-2.5-flash-lite").trim();
+  const model = String(process.env.GEMINI_MODEL || "gemini-3.5-flash-lite").trim();
   const enabled = ["1", "true", "yes", "on"].includes(
     String(process.env.GEMINI_ENABLED || "").toLowerCase(),
   );
