@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test, { afterEach, beforeEach } from "node:test";
 import {
+  compactOllamaInput,
   generateOllamaText,
   ollamaConfig,
   ollamaResponseText,
@@ -38,6 +39,20 @@ test("reads Ollama chat response text", () => {
   assert.equal(ollamaResponseText({ message: { content: " Olá! " } }), "Olá!");
 });
 
+test("compacts the production prompt while preserving commercial and current-message context", () => {
+  const compact = compactOllamaInput({
+    systemPrompt: "x".repeat(9000),
+    message: `${"catálogo ".repeat(600)}\n\nMensagem atual da cliente:\nQuero fita adesiva\n${"regra ".repeat(800)}`,
+  });
+
+  assert.ok(compact.systemPrompt.length < 1200);
+  assert.ok(compact.message.length < 5500);
+  assert.match(compact.message, /catálogo/);
+  assert.match(compact.message, /Mensagem atual da cliente:/);
+  assert.match(compact.message, /Quero fita adesiva/);
+  assert.match(compact.message, /contexto compactado/);
+});
+
 test("sends a low-memory non-thinking chat request to Ollama", async () => {
   let requestUrl = "";
   let requestBody = null;
@@ -67,5 +82,7 @@ test("sends a low-memory non-thinking chat request to Ollama", async () => {
   assert.equal(requestBody.keep_alive, "30m");
   assert.equal(requestBody.options.num_ctx, 4096);
   assert.equal(requestBody.options.num_predict, 120);
+  assert.match(requestBody.messages[0].content, /assistente virtual da Carol Sol/);
+  assert.equal(requestBody.messages[1].content, "Olá");
   assert.equal(result.text, "Como posso ajudar?");
 });
