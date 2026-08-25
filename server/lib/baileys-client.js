@@ -81,7 +81,13 @@ function reconnectAllowed(status, forceReconnect) {
 }
 
 function friendlyProviderError(response, data) {
-  const providerMessage = String(data?.message || data?.error || "").trim();
+  const nestedMessage = data?.error?.message || data?.response?.message || data?.details;
+  const providerMessage = [data?.message, typeof data?.error === "string" ? data.error : "", nestedMessage]
+    .flat()
+    .filter(Boolean)
+    .map((item) => typeof item === "string" ? item : JSON.stringify(item))
+    .join(" — ")
+    .trim();
   if (response.status === 401)
     return new BaileysClientError(
       "A credencial do servidor WhatsApp foi recusada.",
@@ -245,9 +251,6 @@ export async function getBaileysStatus() {
 
 export async function configureBaileysWebhook() {
   const config = baileysConfig();
-  if (config.provider !== "evolution") {
-    return { ok: true, skipped: true, reason: "provider_not_evolution" };
-  }
   if (falsey(process.env.BAILEYS_AUTO_CONFIGURE_WEBHOOK)) {
     return { ok: true, skipped: true, reason: "disabled" };
   }

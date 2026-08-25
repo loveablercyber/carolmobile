@@ -354,7 +354,17 @@ async function action(user, body) {
     if (["connect", "qr"].includes(action)) {
       result = { data: await startBaileysQr({ resetFirst: false }) };
     }
-    else if (action === "status") result = await getBaileysStatus();
+    else if (action === "status") {
+      const health = await ensureBaileysReady({
+        source: "panel_status",
+        reconnect: true,
+      });
+      return {
+        ok: true,
+        session: await saveSession(ctx, health.data || { status: health.status }),
+        provider: health,
+      };
+    }
     else if (action === "keepalive") {
       const health = await ensureBaileysReady({
         source: "panel_keepalive",

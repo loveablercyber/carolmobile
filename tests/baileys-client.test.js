@@ -195,6 +195,33 @@ test("ready Evolution keepalive configures the webhook target", async () => {
   ]);
 });
 
+test("ready wrapper keepalive configures its webhook endpoint", async () => {
+  configure();
+  process.env.BAILEYS_PROVIDER = "wrapper";
+  process.env.APP_URL = "https://agenda.carolsol.com.br";
+  process.env.BAILEYS_WEBHOOK_SECRET = "webhook-secret";
+
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    const data = String(url).endsWith("/api/status")
+      ? { success: true, status: "ready" }
+      : { success: true, status: "configured" };
+    return new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const result = await ensureBaileysReady({ source: "test_wrapper_keepalive" });
+
+  assert.equal(result.ready, true);
+  assert.equal(calls[1].url, "https://whatsapp.example.test/api/webhook");
+  assert.deepEqual(JSON.parse(calls[1].options.body), {
+    url: "https://agenda.carolsol.com.br/api/whatsapp?resource=webhook&secret=webhook-secret",
+  });
+});
+
 test("keepalive does not restart a QR pairing state without force", async () => {
   configure();
   process.env.BAILEYS_ENABLED = "true";

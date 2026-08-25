@@ -261,6 +261,13 @@ export function WhatsAppIntegrationPage() {
           current ? { ...current, session: result.data.session } : current,
         );
       else if (action !== "diagnose_phone") await load();
+      if (["status", "keepalive"].includes(action)) await load();
+      if (action === "status" && provider?.webhook?.ok === false) {
+        notify(
+          `WhatsApp conectado, mas o webhook falhou: ${provider.webhook.message || provider.webhook.code || "erro desconhecido"}`,
+        );
+        return;
+      }
       notify(
         action === "test"
           ? "Mensagem de teste enviada."
