@@ -64,7 +64,8 @@ test("sends a low-memory non-thinking chat request to Ollama", async () => {
   assert.equal(requestUrl, "http://ollama:11434/api/chat");
   assert.equal(requestBody.stream, false);
   assert.equal(requestBody.think, false);
+  assert.equal(requestBody.keep_alive, "30m");
   assert.equal(requestBody.options.num_ctx, 4096);
-  assert.equal(requestBody.options.num_predict, 180);
+  assert.equal(requestBody.options.num_predict, 120);
   assert.equal(result.text, "Como posso ajudar?");
 });

@@ -66,6 +66,8 @@ export async function generateOllamaText({
   }
 
   const selectedModel = String(model || config.model).trim();
+  const outputTokenLimit = Math.min(120, Math.max(32, Number(maxTokens || 220)));
+  const effectiveTimeoutMs = Math.max(60000, Number(timeoutMs || 60000));
   let response;
   try {
     response = await fetch(`${config.baseUrl}/api/chat`, {
@@ -75,21 +77,30 @@ export async function generateOllamaText({
         model: selectedModel,
         stream: false,
         think: false,
-        keep_alive: "10m",
+        keep_alive: "30m",
         messages: [
           { role: "system", content: String(systemPrompt || "") },
           { role: "user", content: String(message || "") },
         ],
         options: {
           num_ctx: config.contextSize,
-          num_predict: Math.max(32, Number(maxTokens || 220)),
+          num_predict: outputTokenLimit,
           temperature: Number(temperature || 0.4),
         },
       }),
-      signal: AbortSignal.timeout(Math.max(5000, Number(timeoutMs || 30000))),
+      signal: AbortSignal.timeout(effectiveTimeoutMs),
     });
   } catch (error) {
     console.error("Ollama network error", { message: error.message });
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+      throw new OllamaClientError(
+        `Ollama excedeu ${Math.round(effectiveTimeoutMs / 1000)} segundos para responder.`,
+        {
+          status: 504,
+          code: "OLLAMA_TIMEOUT",
+        },
+      );
+    }
     throw new OllamaClientError("Não foi possível conectar ao Ollama.", {
       status: 503,
       code: "OLLAMA_NETWORK_ERROR",
