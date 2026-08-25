@@ -80,6 +80,8 @@ export async function generateGeminiText({
   const idx = apiKeyIndex !== null ? apiKeyIndex % keys.length : Math.floor(Math.random() * keys.length);
   const activeKey = keys[idx];
   const selectedModel = String(model || config.model).trim();
+  const isGemini3 = /^gemini-3(?:\.|-|$)/i.test(selectedModel);
+  const effectiveTimeoutMs = Math.max(GEMINI_TIMEOUT_MS, Number(timeoutMs || 0));
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     selectedModel,
   )}:generateContent?key=${encodeURIComponent(activeKey)}`;
@@ -100,18 +102,27 @@ export async function generateGeminiText({
           },
         ],
         generationConfig: {
-          temperature: Number(temperature || 0.4),
-          maxOutputTokens: Number(maxTokens || 220),
+          ...(!isGemini3 ? { temperature: Number(temperature || 0.4) } : {}),
+          maxOutputTokens: Math.max(512, Number(maxTokens || 220)),
+          ...(isGemini3
+            ? { thinkingConfig: { thinkingLevel: "minimal", includeThoughts: false } }
+            : {}),
         },
       }),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: AbortSignal.timeout(effectiveTimeoutMs),
     });
   } catch (error) {
-    console.error("Gemini network error", { message: error.message });
-    throw new GeminiClientError("Não foi possível conectar ao Gemini.", {
-      status: 503,
-      code: "GEMINI_NETWORK_ERROR",
-    });
+    const timeout = error?.name === "TimeoutError" || error?.name === "AbortError";
+    console.error("Gemini network error", { message: error.message, timeout });
+    throw new GeminiClientError(
+      timeout
+        ? "O Gemini excedeu o tempo de resposta. Tente novamente."
+        : "Não foi possível conectar ao Gemini.",
+      {
+        status: timeout ? 504 : 503,
+        code: timeout ? "GEMINI_TIMEOUT" : "GEMINI_NETWORK_ERROR",
+      },
+    );
   }
 
   const data = await response.json().catch(() => ({}));

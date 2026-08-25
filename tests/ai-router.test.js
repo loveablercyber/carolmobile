@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { afterEach, beforeEach } from "node:test";
-import { getGeminiKeys } from "../server/lib/gemini-client.js";
-import { generateGroqText, getGroqKeys } from "../server/lib/groq-client.js";
+import { generateGeminiText, getGeminiKeys } from "../server/lib/gemini-client.js";
+import { generateGroqText, getGroqKeys, groqResponseText } from "../server/lib/groq-client.js";
 import { pool } from "../server/lib/db.js";
 import { processIncomingWhatsAppWebhook } from "../server/lib/whatsapp-ai-engine.js";
 import { invalidateAiBaseCache, invalidateAiSettingsCache } from "../server/lib/ai-whatsapp.js";
@@ -89,8 +89,60 @@ test("generateGroqText rotates numbered keys between calls", async () => {
   await generateGroqText({ systemPrompt: "Sistema", message: "Mensagem" });
 
   assert.equal(new Set(authorizations).size, 2);
-  assert.equal(requestBodies[0].max_completion_tokens, 220);
+  assert.equal(requestBodies[0].max_completion_tokens, 1024);
   assert.equal("max_tokens" in requestBodies[0], false);
+  assert.equal(requestBodies[0].reasoning_effort, "low");
+  assert.equal(requestBodies[0].include_reasoning, false);
+  assert.equal(requestBodies[0].messages.length, 1);
+  assert.equal(requestBodies[0].messages[0].role, "user");
+});
+
+test("generateGeminiText uses Gemini 3 chat settings and enough output budget", async () => {
+  process.env.GEMINI_ENABLED = "true";
+  process.env.GEMINI_API_KEY = "gemini-key";
+  process.env.GEMINI_MODEL = "gemini-3.5-flash-lite";
+  let requestBody = null;
+
+  globalThis.fetch = async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: "Resposta Gemini" }] } }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+
+  const result = await generateGeminiText({
+    systemPrompt: "Sistema",
+    message: "Mensagem",
+    maxTokens: 300,
+  });
+
+  assert.equal(result.text, "Resposta Gemini");
+  assert.equal(requestBody.generationConfig.maxOutputTokens, 512);
+  assert.equal("temperature" in requestBody.generationConfig, false);
+  assert.deepEqual(requestBody.generationConfig.thinkingConfig, {
+    thinkingLevel: "minimal",
+    includeThoughts: false,
+  });
+});
+
+test("groqResponseText accepts content-part arrays", () => {
+  assert.equal(groqResponseText({
+    choices: [{ message: { content: [{ type: "text", text: "Resposta em partes" }] } }],
+  }), "Resposta em partes");
+});
+
+test("generateGroqText reports when reasoning consumes the output budget", async () => {
+  process.env.GROQ_ENABLED = "true";
+  process.env.GROQ_API_KEY = "groq-key";
+  process.env.GROQ_MODEL = "openai/gpt-oss-20b";
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    choices: [{ finish_reason: "length", message: { content: "" } }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  await assert.rejects(
+    () => generateGroqText({ systemPrompt: "Sistema", message: "Mensagem", maxTokens: 300 }),
+    (error) => error.code === "GROQ_OUTPUT_LIMIT" && /limite de saída/i.test(error.message),
+  );
 });
 
 test("processIncomingWhatsAppWebhook answers a greeting before offering the service catalog", async () => {

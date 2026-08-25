@@ -54,6 +54,19 @@ export function groqPublicStatus() {
   };
 }
 
+export function groqResponseText(data = {}) {
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => typeof part === "string" ? part : part?.text || part?.content || "")
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+  }
+  return "";
+}
+
 export async function generateGroqText({
   systemPrompt,
   message,
@@ -86,6 +99,24 @@ export async function generateGroqText({
   }
   const activeKey = keys[idx];
   const selectedModel = String(model || config.model).trim();
+  const isGptOss = /^openai\/gpt-oss-/i.test(selectedModel);
+  const completionTokenLimit = isGptOss
+    ? Math.max(1024, Number(maxTokens || 220))
+    : Number(maxTokens || 220);
+  const messages = isGptOss
+    ? [{
+        role: "user",
+        content: [
+          String(systemPrompt || "").trim()
+            ? `Instruções do atendimento:\n${String(systemPrompt).trim()}`
+            : "",
+          `Mensagem da cliente:\n${String(message || "")}`,
+        ].filter(Boolean).join("\n\n"),
+      }]
+    : [
+        { role: "system", content: String(systemPrompt || "") },
+        { role: "user", content: String(message || "") },
+      ];
   const endpoint = "https://api.groq.com/openai/v1/chat/completions";
 
   let response;
@@ -98,12 +129,10 @@ export async function generateGroqText({
       },
       body: JSON.stringify({
         model: selectedModel,
-        messages: [
-          { role: "system", content: String(systemPrompt || "") },
-          { role: "user", content: String(message || "") },
-        ],
+        messages,
         temperature: Number(temperature || 0.4),
-        max_completion_tokens: Number(maxTokens || 220),
+        max_completion_tokens: completionTokenLimit,
+        ...(isGptOss ? { reasoning_effort: "low", include_reasoning: false } : {}),
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -125,13 +154,20 @@ export async function generateGroqText({
     });
   }
 
-  const text = String(data?.choices?.[0]?.message?.content || "").trim();
+  const text = groqResponseText(data);
 
-  if (!text)
-    throw new GroqClientError("Groq não retornou uma resposta de texto.", {
-      status: 502,
-      code: "GROQ_EMPTY_RESPONSE",
-    });
+  if (!text) {
+    const finishReason = String(data?.choices?.[0]?.finish_reason || "").trim();
+    throw new GroqClientError(
+      finishReason === "length"
+        ? "O Groq consumiu o limite de saída antes de concluir a resposta."
+        : "Groq não retornou uma resposta de texto.",
+      {
+        status: 502,
+        code: finishReason === "length" ? "GROQ_OUTPUT_LIMIT" : "GROQ_EMPTY_RESPONSE",
+      },
+    );
+  }
 
   return {
     model: selectedModel,
