@@ -1,22 +1,26 @@
 import { generateGeminiText, geminiPublicStatus } from "./gemini-client.js";
 import { generateGroqText, groqPublicStatus } from "./groq-client.js";
+import { generateOllamaText, ollamaPublicStatus } from "./ollama-client.js";
 
 export const AI_PROVIDER_DEFAULT_MODELS = Object.freeze({
   gemini: "gemini-3.5-flash-lite",
   groq: "openai/gpt-oss-20b",
+  ollama: "qwen3:4b",
 });
 
-const PROVIDERS = Object.freeze(["gemini", "groq"]);
+const PROVIDERS = Object.freeze(["gemini", "groq", "ollama"]);
 
 export function normalizeAiProvider(value) {
   const provider = String(value || "gemini").toLowerCase().trim();
   if (provider === "grok") return "groq";
+  if (provider === "qwen" || provider === "local") return "ollama";
   return PROVIDERS.includes(provider) ? provider : "gemini";
 }
 
 function providerEnvironmentStatus(provider) {
   if (provider === "gemini") return geminiPublicStatus();
-  return groqPublicStatus();
+  if (provider === "groq") return groqPublicStatus();
+  return ollamaPublicStatus();
 }
 
 function panelProviderConfig(provider, settings = {}) {
@@ -25,6 +29,9 @@ function panelProviderConfig(provider, settings = {}) {
       enabled: Boolean(settings.geminiEnabled),
       apiKey: settings.geminiApiKey || null,
     };
+  }
+  if (provider === "ollama") {
+    return { enabled: false, apiKey: null };
   }
   return {
     enabled: Boolean(settings.groqEnabled),
@@ -79,7 +86,8 @@ export function aiProvidersPublicStatus(settings = {}) {
 export async function generateAiProviderText({ provider, ...input }) {
   const normalized = normalizeAiProvider(provider);
   if (normalized === "gemini") return generateGeminiText(input);
-  return generateGroqText(input);
+  if (normalized === "groq") return generateGroqText(input);
+  return generateOllamaText(input);
 }
 
 export function buildAiProviderCandidates(settings = {}) {

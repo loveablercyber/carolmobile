@@ -3,6 +3,7 @@ import { appError } from "./http.js";
 import {
   AI_PROVIDER_DEFAULT_MODELS,
   aiProvidersPublicStatus,
+  normalizeAiProvider,
 } from "./ai-provider-router.js";
 
 let settingsCache = null;
@@ -715,7 +716,7 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
     throw appError("O prompt base precisa ter pelo menos 80 caracteres.");
 
   const requestedProvider = clean(input.provider || fallback.provider);
-  const provider = requestedProvider === "groq" ? "groq" : "gemini";
+  const provider = normalizeAiProvider(requestedProvider);
 
   const handleKeyUpdate = (newKey, oldKey) => {
     const cleaned = clean(newKey);
@@ -781,9 +782,9 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
       clean(input.resumeKeyword || fallback.resumeKeyword) || "voltar ao bot",
     stopKeyword: clean(input.stopKeyword || fallback.stopKeyword) || "parar",
     timezone: clean(input.timezone || fallback.timezone) || "America/Sao_Paulo",
-    primaryProvider: clean(input.primaryProvider || provider) === "groq" ? "groq" : "gemini",
+    primaryProvider: normalizeAiProvider(input.primaryProvider || provider),
     primaryModel: model,
-    fallbackProvider: clean(input.fallbackProvider || "groq") === "gemini" ? "gemini" : "groq",
+    fallbackProvider: normalizeAiProvider(input.fallbackProvider || "groq"),
     fallbackModel,
     timeoutMs: intRange(input.timeoutMs ?? input.timeout_ms, fallback.timeoutMs, 1000, 30000),
     maxRetries: intRange(input.maxRetries ?? input.max_retries, fallback.maxRetries, 0, 5),

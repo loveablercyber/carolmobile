@@ -16,6 +16,10 @@ const AI_ENV_KEYS = [
   "GROQ_ENABLED",
   "GROQ_API_KEY",
   "GROQ_MODEL",
+  "OLLAMA_ENABLED",
+  "OLLAMA_BASE_URL",
+  "OLLAMA_MODEL",
+  "OLLAMA_NUM_CTX",
 ];
 const originalEnv = {};
 
@@ -37,6 +41,7 @@ test("uses current production defaults for each AI provider", () => {
   const status = aiProvidersPublicStatus();
   assert.equal(status.gemini.model, "gemini-3.5-flash-lite");
   assert.equal(status.groq.model, "openai/gpt-oss-20b");
+  assert.equal(status.ollama.model, "qwen3:4b");
 });
 
 test("recognizes provider configuration stored in the admin panel", () => {
@@ -62,16 +67,18 @@ test("fallback candidates include every distinct provider", () => {
 
   assert.deepEqual(
     candidates.map((candidate) => candidate.provider),
-    ["gemini", "groq"],
+    ["gemini", "groq", "ollama"],
   );
   assert.deepEqual(
     candidates.map((candidate) => candidate.isFallback),
-    [false, true],
+    [false, true, true],
   );
 });
 
 test("normalizes Grok typo and rejects unknown providers safely", () => {
   assert.equal(normalizeAiProvider("grok"), "groq");
+  assert.equal(normalizeAiProvider("qwen"), "ollama");
+  assert.equal(normalizeAiProvider("local"), "ollama");
   assert.equal(normalizeAiProvider("openai"), "gemini");
   assert.equal(normalizeAiProvider("unknown"), "gemini");
 });

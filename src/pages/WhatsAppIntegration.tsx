@@ -31,6 +31,19 @@ type Result = {
     session: Record<string, any>;
     liveStatus?: string;
     error?: string;
+    provider?: {
+      status?: string;
+      webhook?: {
+        configured?: boolean;
+        target?: string | null;
+        lastIncomingMessageAt?: string | null;
+        lastIncomingFrom?: string | null;
+        lastIncomingFromMe?: boolean | null;
+        lastIncomingHasText?: boolean | null;
+        lastWebhookStatus?: number | string | null;
+        lastWebhookError?: string | null;
+      } | null;
+    } | null;
   };
 };
 
@@ -40,7 +53,7 @@ type PersonalityMode = {
   description: string;
 };
 
-type AiProvider = "gemini" | "groq";
+type AiProvider = "gemini" | "groq" | "ollama";
 
 type AiProviderStatus = {
   provider: AiProvider;
@@ -54,15 +67,17 @@ type AiProviderStatus = {
 const AI_PROVIDER_LABELS: Record<AiProvider, string> = {
   gemini: "Google Gemini",
   groq: "Groq",
+  ollama: "Ollama local",
 };
 
 const AI_PROVIDER_MODELS: Record<AiProvider, string> = {
   gemini: "gemini-3.5-flash-lite",
   groq: "openai/gpt-oss-20b",
+  ollama: "qwen3:4b",
 };
 
 function asAiProvider(value: string | undefined): AiProvider {
-  return value === "groq" ? "groq" : "gemini";
+  return value === "groq" || value === "ollama" ? value : "gemini";
 }
 
 type AiSettings = {
@@ -124,6 +139,7 @@ type AiPanelData = {
   status: {
     gemini: AiProviderStatus;
     groq: AiProviderStatus;
+    ollama: AiProviderStatus;
     database: { configured: boolean };
     ai: { enabled: boolean; active: boolean };
   };
@@ -358,6 +374,7 @@ function ConnectionPanel({
     : qr.startsWith("iVBOR")
       ? `data:image/png;base64,${qr}`
       : "";
+  const webhook = data.provider?.webhook;
 
   return (
     <>
@@ -511,6 +528,31 @@ function ConnectionPanel({
           </form>
         </aside>
       </div>
+      <section className="surface mt-5 p-6">
+        <SectionHeading title="Diagnóstico de recebimento" />
+        <p className="muted mb-4 text-xs">
+          O teste de envio não confirma a chegada das mensagens das clientes. Estes dados mostram o último webhook realmente recebido pelo bot.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Info label="Webhook configurado" value={webhook?.configured ? "Sim" : "Não"} />
+          <Info
+            label="Última mensagem recebida"
+            value={webhook?.lastIncomingMessageAt ? formatDate(webhook.lastIncomingMessageAt) : "Nenhuma"}
+          />
+          <Info label="Origem" value={webhook?.lastIncomingFrom || "—"} />
+          <Info
+            label="Classificação"
+            value={webhook?.lastIncomingFromMe === true ? "Número conectado (fromMe)" : webhook?.lastIncomingFromMe === false ? "Cliente externo" : "—"}
+          />
+          <Info label="Continha texto" value={webhook?.lastIncomingHasText === true ? "Sim" : webhook?.lastIncomingHasText === false ? "Não" : "—"} />
+          <Info label="Status do encaminhamento" value={String(webhook?.lastWebhookStatus || "—")} />
+        </div>
+        {webhook?.lastWebhookError ? (
+          <div className="mt-4 rounded-xl bg-rose-50 p-3 text-xs text-rose-800">
+            {webhook.lastWebhookError}
+          </div>
+        ) : null}
+      </section>
     </>
   );
 }
@@ -1447,6 +1489,7 @@ function PerformanceSettingsTab({
                 >
                   <option value="gemini">Google Gemini</option>
                   <option value="groq">Groq (Llama / Grok)</option>
+                  <option value="ollama">Ollama local</option>
                 </select>
               </Field>
               <Field label="Modelo Principal">
@@ -1480,6 +1523,7 @@ function PerformanceSettingsTab({
                   >
                     <option value="gemini">Google Gemini</option>
                     <option value="groq">Groq</option>
+                    <option value="ollama">Ollama local</option>
                   </select>
                 </Field>
                 <Field label="Modelo de fallback">
@@ -1554,6 +1598,18 @@ function PerformanceSettingsTab({
                   placeholder={form.groqApiKey ? "••••••••••••" : "Cole sua API key do Groq (ex: gsk-...)"}
                 />
               </Field>
+            </div>
+
+            <div className="border border-black/5 rounded-2xl p-4 bg-white space-y-3 shadow-sm">
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-stone-700 text-xs">Ollama local</span>
+                <Badge tone={panel.status.ollama.configured && panel.status.ollama.enabled ? "green" : "amber"}>
+                  {panel.status.ollama.configured && panel.status.ollama.enabled ? "ATIVO" : "CONFIGURE NO COOLIFY"}
+                </Badge>
+              </div>
+              <p className="text-[11px] text-stone-500">
+                Sem chave de API. Usa OLLAMA_BASE_URL e OLLAMA_MODEL somente no backend. Modelo atual: {panel.status.ollama.model}.
+              </p>
             </div>
           </div>
         </div>
@@ -1652,7 +1708,7 @@ function PerformanceSettingsTab({
         <section className="surface p-6">
           <SectionHeading title="Status do provedor" />
           <div className="space-y-3 mt-4">
-            {(["gemini", "groq"] as AiProvider[]).map((provider) => {
+            {(["gemini", "groq", "ollama"] as AiProvider[]).map((provider) => {
               const status = panel.status[provider];
               const active = status.configured && status.enabled;
               return (
@@ -1762,6 +1818,8 @@ function LogsAndPerformanceTab({
             <StatusLine label="Gemini habilitado" ok={panel.status.gemini.enabled} />
             <StatusLine label="Groq configurado" ok={panel.status.groq.configured} />
             <StatusLine label="Groq habilitado" ok={panel.status.groq.enabled} />
+            <StatusLine label="Ollama configurado" ok={panel.status.ollama.configured} />
+            <StatusLine label="Ollama habilitado" ok={panel.status.ollama.enabled} />
             <StatusLine label="IA ativa" ok={panel.status.ai.active} />
           </div>
           <button onClick={reload} className="btn-secondary mt-5 w-full">
