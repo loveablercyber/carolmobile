@@ -12,6 +12,9 @@ const maxBodyBytes = Number(process.env.MAX_BODY_BYTES || 5 * 1024 * 1024)
 const internalCronEnabled = ['1', 'true', 'yes', 'sim'].includes(
   String(process.env.INTERNAL_CRON_ENABLED || '').toLowerCase(),
 )
+const aiHumanResumeSchedulerEnabled = !['0', 'false', 'no', 'nao', 'não'].includes(
+  String(process.env.AI_HUMAN_RESUME_SCHEDULER_ENABLED ?? 'true').toLowerCase(),
+)
 
 const mime = {
   '.html': 'text/html; charset=utf-8',
@@ -194,7 +197,7 @@ async function runInternalCronJob(job) {
 }
 
 function startInternalCronScheduler() {
-  if (!internalCronEnabled) return
+  if (!internalCronEnabled && !aiHumanResumeSchedulerEnabled) return
   if (!process.env.CRON_SECRET) {
     console.warn('[cron] INTERNAL_CRON_ENABLED=true, mas CRON_SECRET nao esta configurado.')
     return
@@ -206,19 +209,21 @@ function startInternalCronScheduler() {
     Boolean(process.env.BAILEYS_API_URL && process.env.BAILEYS_API_KEY)
   const emailConfigured = Boolean(process.env.RESEND_API_KEY)
   const jobs = []
-  if (whatsappConfigured || emailConfigured) {
+  if (aiHumanResumeSchedulerEnabled && whatsappConfigured) {
+    jobs.push({
+      name: 'ai-human-resume',
+      everyMs: 60 * 1000,
+      url: () => `${baseUrl}/api/cron-ai-human-resume`,
+    })
+  }
+  if (internalCronEnabled && (whatsappConfigured || emailConfigured)) {
     jobs.push({
       name: 'reminders',
       everyMs: 10 * 60 * 1000,
       url: () => `${baseUrl}/api/cron-reminders?execute=1`,
     })
   }
-  if (whatsappConfigured) {
-    jobs.push({
-      name: 'ai-human-resume',
-      everyMs: 60 * 1000,
-      url: () => `${baseUrl}/api/cron-ai-human-resume`,
-    })
+  if (internalCronEnabled && whatsappConfigured) {
     jobs.push({
       name: 'billing-whatsapp',
       everyMs: 5 * 60 * 1000,
@@ -231,11 +236,13 @@ function startInternalCronScheduler() {
     },
     )
   }
-  jobs.push({
-    name: 'renewals-dry-run',
-    everyMs: 24 * 60 * 60 * 1000,
-    url: () => `${baseUrl}/api/cron-renewals`,
-  })
+  if (internalCronEnabled) {
+    jobs.push({
+      name: 'renewals-dry-run',
+      everyMs: 24 * 60 * 60 * 1000,
+      url: () => `${baseUrl}/api/cron-renewals`,
+    })
+  }
 
   for (const job of jobs) {
     job.running = false
