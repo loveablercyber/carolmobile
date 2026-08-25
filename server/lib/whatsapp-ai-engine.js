@@ -130,6 +130,7 @@ export {
 
 const MAX_AI_MESSAGE_CHARS = 6000;
 const SLOT_PAGE_SIZE = 5;
+const DIALOGUE_ACTION_TTL_MS = 30 * 60 * 1000;
 const BOOKING_FLOW_HELP_TEXT = [
   "Comandos: cancelar | voltar | menu | trocar servico | atendente",
   "Pode enviar qualquer duvida a qualquer momento. Eu respondo e continuo seu agendamento de onde parou.",
@@ -160,6 +161,120 @@ function currentFlowOptionLabels(state = {}) {
   return (Array.isArray(options) ? options : [])
     .flatMap((option) => fields.map((field) => normalizeText(option?.[field] || "")))
     .filter(Boolean);
+}
+
+function normalizedShortReply(text) {
+  return normalizeText(text)
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isShortAffirmativeReply(text) {
+  return [
+    "sim", "pode", "pode sim", "sim pode", "claro", "quero", "quero sim",
+    "com certeza", "ok", "certo", "isso", "isso mesmo", "manda", "envia",
+  ].includes(normalizedShortReply(text));
+}
+
+function isShortNegativeReply(text) {
+  return [
+    "nao", "nao quero", "agora nao", "nao agora", "deixa", "deixa pra la",
+    "depois", "mais tarde",
+  ].includes(normalizedShortReply(text));
+}
+
+function assistantDecisionSignals(text) {
+  const normalized = normalizeText(text);
+  const asksQuestion = String(text || "").includes("?");
+  const catalog = asksQuestion && includesAny(normalized, [
+    "mostrar o catalogo", "mostre o catalogo", "ver o catalogo", "catalogo completo",
+    "mostrar os servicos", "ver os servicos",
+  ]);
+  const booking = asksQuestion && includesAny(normalized, [
+    "agendar uma avaliacao", "agendar avaliacao", "marcar uma avaliacao",
+    "prefere agendar", "quer agendar", "gostaria de agendar",
+  ]);
+  return { catalog, booking };
+}
+
+export function prepareAssistantDialogueResponse(text, now = new Date()) {
+  let finalText = String(text || "").trim();
+  let signals = assistantDecisionSignals(finalText);
+
+  // Perguntas com duas decisões tornam respostas como "sim" insolúveis. Quando
+  // a IA produzir essa construção, priorizamos uma única ação e oferecemos o
+  // agendamento somente depois que o catálogo for apresentado.
+  if (signals.catalog && signals.booking) {
+    const questionEnd = finalText.lastIndexOf("?");
+    const beforeQuestion = finalText.slice(0, Math.max(0, questionEnd));
+    const separators = ["\n\n", "\n", ". ", "! "];
+    const questionStart = separators.reduce((start, separator) => {
+      const index = beforeQuestion.lastIndexOf(separator);
+      return index >= 0 ? Math.max(start, index + separator.length) : start;
+    }, 0);
+    const questionText = finalText.slice(questionStart, questionEnd + 1);
+    const questionSignals = assistantDecisionSignals(questionText);
+    if (questionSignals.catalog && questionSignals.booking) {
+      finalText = [
+        finalText.slice(0, questionStart),
+        "Quer que eu te mostre o catálogo completo de serviços?",
+        finalText.slice(questionEnd + 1),
+      ].join("").trim();
+      signals = assistantDecisionSignals(finalText);
+    }
+  }
+
+  const type = signals.catalog && !signals.booking
+    ? "show_catalog"
+    : signals.booking && !signals.catalog
+      ? "start_booking"
+      : "";
+  if (!type) return { text: finalText, pendingAction: null };
+
+  const createdAt = now instanceof Date ? now : new Date(now);
+  return {
+    text: finalText,
+    pendingAction: {
+      type,
+      expectedReply: "yes_no",
+      createdAt: createdAt.toISOString(),
+      expiresAt: new Date(createdAt.getTime() + DIALOGUE_ACTION_TTL_MS).toISOString(),
+    },
+  };
+}
+
+export function resolvePendingDialogueReply(text, dialogueState = {}, now = new Date()) {
+  const pendingAction = parseJsonObject(dialogueState).pendingAction;
+  if (!pendingAction?.type) return { matched: false, expired: false, action: "" };
+  const expiresAt = pendingAction.expiresAt ? new Date(pendingAction.expiresAt) : null;
+  if (expiresAt && Number.isFinite(expiresAt.getTime()) && expiresAt.getTime() <= now.getTime()) {
+    return { matched: false, expired: true, action: "" };
+  }
+  if (isShortAffirmativeReply(text)) {
+    return { matched: true, expired: false, action: pendingAction.type, accepted: true };
+  }
+  if (isShortNegativeReply(text)) {
+    return { matched: true, expired: false, action: pendingAction.type, accepted: false };
+  }
+  return { matched: false, expired: false, action: pendingAction.type };
+}
+
+export function recoverDialogueStateFromHistory(dialogueState = {}, history = [], now = new Date()) {
+  const storedState = parseJsonObject(dialogueState);
+  if (storedState.pendingAction?.type) return storedState;
+  const lastAssistantMessage = [...(history || [])]
+    .reverse()
+    .find((item) => item?.sender_type === "ai" && clean(item?.body));
+  if (!lastAssistantMessage) return {};
+  const messageDate = lastAssistantMessage.created_at
+    ? new Date(lastAssistantMessage.created_at)
+    : now;
+  const validDate = Number.isFinite(messageDate.getTime()) ? messageDate : now;
+  const recovered = prepareAssistantDialogueResponse(lastAssistantMessage.body, validDate);
+  return recovered.pendingAction
+    ? { pendingAction: { ...recovered.pendingAction, recoveredFromHistory: true } }
+    : {};
 }
 
 function isExplicitCurrentFlowSelection(text, state = {}) {
@@ -4614,7 +4729,7 @@ export function buildAiConversationMessage({
     "A mensagem atual é a prioridade. Use o histórico apenas para continuidade; se a cliente mudar de assunto, responda ao novo assunto sem repetir o serviço anterior. Não presuma que a dúvida é sobre Fibra Russa quando a mensagem atual não mencionar esse material nem for uma continuação inequívoca dele.",
     "REGRA DE PAPÉIS: você representa o salão e conversa com a cliente. Nunca devolva a pergunta como se a cliente fosse o salão (por exemplo, nunca responda 'Você trabalha com...'). Quando o catálogo confirmar um serviço, responda diretamente 'Sim, trabalhamos com...'.",
     "REGRA DE TERMINOLOGIA: Fibra Russa é um material sintético, não uma técnica. Os métodos de colocação são Fita Adesiva, Ponto Americano Invisível, Entrelace e Microcápsula de Queratina, conforme opções ativas do catálogo.",
-    "REGRA DE RESPOSTA ÚTIL: responda o que já for possível antes de pedir esclarecimento e faça no máximo uma pergunta por mensagem.",
+    "REGRA DE RESPOSTA ÚTIL: responda o que já for possível antes de pedir esclarecimento e faça no máximo uma pergunta por mensagem. Nunca ofereça catálogo e agendamento na mesma pergunta; apresente uma única decisão por vez.",
     "Responda em até 700 caracteres, em português do Brasil, sem inventar dados. Não repita uma pergunta cuja resposta já esteja no histórico. Se a cliente quiser agendar, avance pelo fluxo de pré-agendamento. Nunca diga que um horário foi confirmado sem persistência real no backend.",
   ]
     .filter(Boolean)
@@ -4629,6 +4744,15 @@ export function buildAiConversationMessage({
     .join("\n\n");
   const optionalBudget = Math.max(0, MAX_AI_MESSAGE_CHARS - requiredContext.length - 4);
   return `${optionalContext.slice(0, optionalBudget)}\n\n${requiredContext}`.trim();
+}
+
+async function saveDialogueState(conversationId, state) {
+  await query(
+    `update public.whatsapp_conversations
+        set dialogue_state=$2, updated_at=now()
+      where id=$1`,
+    [conversationId, JSON.stringify(parseJsonObject(state))],
+  );
 }
 
 export function enforceAiResponseQuality({
@@ -4765,7 +4889,13 @@ async function recordInboundMessage(normalized) {
   });
 }
 
-async function recordOutboundAiMessage({ conversationId, providerMessageId, text, payload = {} }) {
+async function recordOutboundAiMessage({
+  conversationId,
+  providerMessageId,
+  text,
+  payload = {},
+  pendingDialogueAction = null,
+}) {
   return transaction(async (client) => {
     const { rows } = await client.query(
       `insert into public.whatsapp_messages(
@@ -4781,12 +4911,29 @@ async function recordOutboundAiMessage({ conversationId, providerMessageId, text
         [conversationId, providerMessageId],
       ).catch(() => null);
     }
-    await client.query(
-      `update public.whatsapp_conversations
-          set last_message_at=now(),last_message_preview=$2,updated_at=now()
-        where id=$1`,
-      [conversationId, text.slice(0, 240)],
-    );
+    const dialogueState = pendingDialogueAction
+      ? {
+          pendingAction: {
+            ...pendingDialogueAction,
+            sourceMessageId: rows[0].id,
+          },
+        }
+      : null;
+    if (dialogueState) {
+      await client.query(
+        `update public.whatsapp_conversations
+            set last_message_at=now(),last_message_preview=$2,dialogue_state=$3,updated_at=now()
+          where id=$1`,
+        [conversationId, text.slice(0, 240), JSON.stringify(dialogueState)],
+      );
+    } else {
+      await client.query(
+        `update public.whatsapp_conversations
+            set last_message_at=now(),last_message_preview=$2,updated_at=now()
+          where id=$1`,
+        [conversationId, text.slice(0, 240)],
+      );
+    }
     await logMessage(client, {
       conversationId,
       messageId: rows[0].id,
@@ -4817,7 +4964,8 @@ async function recordAiInteraction({ conversationId, messageId, model, inputSumm
 }
 
 async function performSendTextAndRecord({ normalized, conversationId, text, reason }) {
-  const finalText = withBookingFlowHelp(text, reason);
+  const prepared = prepareAssistantDialogueResponse(text);
+  const finalText = withBookingFlowHelp(prepared.text, reason);
   const result = await sendBaileysTextMessage({
     number: normalized.phoneNumber,
     text: finalText,
@@ -4827,7 +4975,8 @@ async function performSendTextAndRecord({ normalized, conversationId, text, reas
     conversationId,
     providerMessageId: result.data?.messageId || null,
     text: finalText,
-    payload: { reason, provider: result.data },
+    payload: { reason, provider: result.data, pendingAction: prepared.pendingAction },
+    pendingDialogueAction: prepared.pendingAction,
   });
   return { sent, provider: result.data };
 }
@@ -5376,6 +5525,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}, runtime = {})
   const globalBookingCommand = detectBookingGlobalCommand(concatenatedText) ||
     (isServiceCatalogMenuIntent(concatenatedText) ? "main_menu" : "");
   if (globalBookingCommand) {
+    await saveDialogueState(conversationId, {});
     return handleBookingGlobalCommand({
       command: globalBookingCommand,
       normalized,
@@ -5641,6 +5791,91 @@ export async function processIncomingWhatsAppWebhook(payload = {}, runtime = {})
   }
 
   const history = await loadRecentHistory(conversationId, inboundMessageId);
+  const effectiveDialogueState = recoverDialogueStateFromHistory(
+    recorded.conversation.dialogue_state,
+    history,
+    receivedAt,
+  );
+  const pendingDialogueReply = resolvePendingDialogueReply(
+    concatenatedText,
+    effectiveDialogueState,
+    receivedAt,
+  );
+  if (pendingDialogueReply.expired) {
+    await saveDialogueState(conversationId, {});
+    recorded.conversation.dialogue_state = {};
+    await query(
+      `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+       values($1,$2,'dialogue_action_expired','info',$3)`,
+      [conversationId, inboundMessageId, JSON.stringify({ action: pendingDialogueReply.action || null })],
+    ).catch(() => null);
+  } else if (pendingDialogueReply.matched) {
+    await saveDialogueState(conversationId, {});
+    recorded.conversation.dialogue_state = {};
+    await query(
+      `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+       values($1,$2,'dialogue_action_resolved','success',$3)`,
+      [conversationId, inboundMessageId, JSON.stringify({
+        action: pendingDialogueReply.action,
+        accepted: pendingDialogueReply.accepted,
+        resolution: "deterministic_short_reply",
+      })],
+    ).catch(() => null);
+
+    if (!pendingDialogueReply.accepted) {
+      const responseText = "Sem problemas 😊 Posso te ajudar com alguma outra dúvida sobre nossos serviços?";
+      await sendTextAndRecord({
+        normalized,
+        conversationId,
+        text: responseText,
+        reason: "dialogue_action_declined",
+      });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      return { ok: true, replied: true, reason: "dialogue_action_declined", conversationId };
+    }
+
+    if (["show_catalog", "start_booking"].includes(pendingDialogueReply.action)) {
+      const actionText = pendingDialogueReply.action === "show_catalog"
+        ? "serviços"
+        : "agendar uma avaliação";
+      const structuredAction = await handleStructuredBookingFlow({
+        normalized,
+        conversationId,
+        inboundMessageId,
+        text: actionText,
+        settings,
+        base,
+        recorded,
+        queueLatencyMs,
+        receivedAt,
+        history,
+        forceCatalogFlow: true,
+      });
+      if (structuredAction) return structuredAction;
+
+      const responseText = pendingDialogueReply.action === "show_catalog"
+        ? "Claro 😊 Envie “serviços” para eu abrir o catálogo completo para você."
+        : "Claro 😊 Envie “agendar” para começarmos sua avaliação.";
+      await sendTextAndRecord({
+        normalized,
+        conversationId,
+        text: responseText,
+        reason: "dialogue_action_fallback",
+      });
+      await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+      return { ok: true, replied: true, reason: "dialogue_action_fallback", conversationId };
+    }
+  } else if (effectiveDialogueState.pendingAction) {
+    // A nova mensagem tem prioridade quando não é uma confirmação curta.
+    const discardedAction = effectiveDialogueState.pendingAction?.type || null;
+    await saveDialogueState(conversationId, {});
+    recorded.conversation.dialogue_state = {};
+    await query(
+      `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+       values($1,$2,'dialogue_action_discarded','info',$3)`,
+      [conversationId, inboundMessageId, JSON.stringify({ action: discardedAction, reason: "subject_changed" })],
+    ).catch(() => null);
+  }
   const contextualReference = resolveContextualServiceReference({
     incomingText: concatenatedText,
     history,
@@ -5933,28 +6168,8 @@ export async function processIncomingWhatsAppWebhook(payload = {}, runtime = {})
     return { ok: true, replied: true, reason: "out_of_scope_guard", conversationId };
   }
 
-  // 8. Start Placeholder typing indicator timer (4 seconds)
-  let typingPlaceholderSent = false;
-  const placeholderTimer = setTimeout(async () => {
-    typingPlaceholderSent = true;
-    try {
-      await sendBaileysTextMessage({
-        number: normalized.phoneNumber,
-        text: "Só um instante, estou verificando isso para você 😊",
-        skipStatusCheck: true,
-      });
-      await recordOutboundAiMessage({
-        conversationId,
-        providerMessageId: null,
-        text: "Só um instante, estou verificando isso para você 😊",
-        payload: { reason: "typing_placeholder" },
-      });
-    } catch (e) {
-      console.error("Failed to send typing placeholder", e.message);
-    }
-  }, 4000);
-
-  // 9. Load AI Context & Prompt
+  // 8. Load AI Context & Prompt. O indicador nativo de digitação permanece
+  // ativo; não enviamos uma segunda mensagem textual durante a geração.
   const currentState = parseJsonObject(recorded.conversation.booking_state);
   const agendaAvailabilityContext = await getAgendaAvailabilityContext(query, concatenatedText, base, currentState);
 
@@ -6087,9 +6302,6 @@ export async function processIncomingWhatsAppWebhook(payload = {}, runtime = {})
       console.error("Regenerating response to prevent loop failed:", err.message);
     }
   }
-
-  // Clear typing indicator placeholder timer
-  clearTimeout(placeholderTimer);
 
   // Turn off typing indicator
   await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });

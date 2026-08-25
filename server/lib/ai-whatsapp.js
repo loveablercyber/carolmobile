@@ -428,6 +428,7 @@ create table if not exists public.whatsapp_conversations (
   last_message_at timestamptz,
   last_message_preview text,
   booking_state jsonb not null default '{}',
+  dialogue_state jsonb not null default '{}',
   appointment_id uuid references public.appointments(id),
   payment_id uuid references public.payments(id),
   origin text not null default 'whatsapp_ai',
@@ -1206,6 +1207,7 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
     ALTER TABLE public.ai_settings DROP COLUMN IF EXISTS openai_api_key;
     ALTER TABLE public.ai_settings DROP COLUMN IF EXISTS openai_enabled;
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS booking_state jsonb not null default '{}';
+    ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS dialogue_state jsonb not null default '{}';
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS session_started_at timestamptz;
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS conversation_attempt_id uuid;
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS human_takeover_at timestamptz;

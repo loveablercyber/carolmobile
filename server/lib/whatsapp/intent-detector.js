@@ -588,6 +588,8 @@ export function isReplyingToExplanationOffer(text, history = []) {
   const lastAiBody = normalizeText(lastAiMessage.body);
   const offersExplanation = lastAiBody.includes("posso explicar") ||
                              lastAiBody.includes("posso te mostrar") ||
+                             lastAiBody.includes("gostaria que eu te mostre") ||
+                             lastAiBody.includes("quer que eu te mostre") ||
                              lastAiBody.includes("posso te informar") ||
                              lastAiBody.includes("posso detalhar") ||
                              lastAiBody.includes("quer que eu explique") ||

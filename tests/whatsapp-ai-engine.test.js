@@ -48,6 +48,9 @@ import {
   serializeBookingState,
   prepareRequiredAssessmentBooking,
   selectDisplayedBookingSlot,
+  prepareAssistantDialogueResponse,
+  resolvePendingDialogueReply,
+  recoverDialogueStateFromHistory,
 } from "../server/lib/whatsapp-ai-engine.js";
 
 const originalQuery = pool.query;
@@ -696,6 +699,85 @@ test("isReplyingToExplanationOffer detects confirmations to explanation offers",
   ];
   assert.equal(isReplyingToExplanationOffer("sim", historyOffer), true);
   assert.equal(isReplyingToExplanationOffer("sim", historyBooking), false);
+});
+
+test("recognizes the exact catalog offer wording shown to the client", () => {
+  const history = [{
+    sender_type: "ai",
+    body: "Gostaria que eu te mostre o catálogo completo de serviços?",
+  }];
+  assert.equal(isReplyingToExplanationOffer("sim", history), true);
+});
+
+test("rewrites a dual catalog and booking question into one deterministic decision", () => {
+  const response = prepareAssistantDialogueResponse([
+    "Nossos valores variam conforme a técnica escolhida.",
+    "Gostaria que eu te mostre o catálogo completo de serviços ou prefere agendar uma avaliação para definirmos o ideal para você? 😊",
+  ].join("\n\n"), new Date("2026-08-25T12:00:00.000Z"));
+
+  assert.match(response.text, /Quer que eu te mostre o catálogo completo de serviços\?/i);
+  assert.doesNotMatch(response.text, /prefere agendar/i);
+  assert.equal(response.pendingAction?.type, "show_catalog");
+  assert.equal(response.pendingAction?.expectedReply, "yes_no");
+  assert.equal(response.pendingAction?.expiresAt, "2026-08-25T12:30:00.000Z");
+});
+
+test("keeps useful content when a dual question is in the same paragraph", () => {
+  const response = prepareAssistantDialogueResponse(
+    "A aplicação custa a partir de R$ 390,00. Quer ver o catálogo ou prefere agendar uma avaliação?",
+    new Date("2026-08-25T12:00:00.000Z"),
+  );
+  assert.match(response.text, /A aplicação custa a partir de R\$ 390,00\./);
+  assert.match(response.text, /Quer que eu te mostre o catálogo completo de serviços\?/i);
+  assert.doesNotMatch(response.text, /prefere agendar/i);
+  assert.equal(response.pendingAction?.type, "show_catalog");
+});
+
+test("resolves short replies from pending dialogue state without asking the AI", () => {
+  const dialogueState = {
+    pendingAction: {
+      type: "show_catalog",
+      expiresAt: "2026-08-25T12:30:00.000Z",
+    },
+  };
+
+  assert.deepEqual(
+    resolvePendingDialogueReply("Sim", dialogueState, new Date("2026-08-25T12:05:00.000Z")),
+    { matched: true, expired: false, action: "show_catalog", accepted: true },
+  );
+  assert.deepEqual(
+    resolvePendingDialogueReply("Não", dialogueState, new Date("2026-08-25T12:05:00.000Z")),
+    { matched: true, expired: false, action: "show_catalog", accepted: false },
+  );
+  assert.deepEqual(
+    resolvePendingDialogueReply("Quanto custa?", dialogueState, new Date("2026-08-25T12:05:00.000Z")),
+    { matched: false, expired: false, action: "show_catalog" },
+  );
+});
+
+test("expires pending dialogue actions after thirty minutes", () => {
+  const result = resolvePendingDialogueReply("Sim", {
+    pendingAction: {
+      type: "show_catalog",
+      expiresAt: "2026-08-25T12:30:00.000Z",
+    },
+  }, new Date("2026-08-25T12:31:00.000Z"));
+  assert.deepEqual(result, { matched: false, expired: true, action: "" });
+});
+
+test("recovers a pending catalog action from legacy history after deployment", () => {
+  const recovered = recoverDialogueStateFromHistory({}, [{
+    sender_type: "ai",
+    body: "Gostaria que eu te mostre o catálogo completo de serviços ou prefere agendar uma avaliação?",
+    created_at: "2026-08-25T12:00:00.000Z",
+  }], new Date("2026-08-25T12:05:00.000Z"));
+
+  assert.equal(recovered.pendingAction?.type, "show_catalog");
+  assert.equal(recovered.pendingAction?.recoveredFromHistory, true);
+  assert.equal(
+    resolvePendingDialogueReply("Sim", recovered, new Date("2026-08-25T12:05:00.000Z")).accepted,
+    true,
+  );
 });
 
 test("summarizeAiCommercialContext uses service variants and never physical stock to decide service availability", () => {
