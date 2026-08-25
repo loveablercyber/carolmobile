@@ -41,7 +41,7 @@ test("uses current production defaults for each AI provider", () => {
   const status = aiProvidersPublicStatus();
   assert.equal(status.gemini.model, "gemini-3.5-flash-lite");
   assert.equal(status.groq.model, "openai/gpt-oss-20b");
-  assert.equal(status.ollama.model, "qwen3:4b");
+  assert.equal(status.ollama.model, "qwen3:1.7b");
 });
 
 test("recognizes provider configuration stored in the admin panel", () => {

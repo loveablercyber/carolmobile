@@ -5,7 +5,7 @@ import { generateOllamaText, ollamaPublicStatus } from "./ollama-client.js";
 export const AI_PROVIDER_DEFAULT_MODELS = Object.freeze({
   gemini: "gemini-3.5-flash-lite",
   groq: "openai/gpt-oss-20b",
-  ollama: "qwen3:4b",
+  ollama: "qwen3:1.7b",
 });
 
 const PROVIDERS = Object.freeze(["gemini", "groq", "ollama"]);

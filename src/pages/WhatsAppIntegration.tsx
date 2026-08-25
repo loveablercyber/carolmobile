@@ -73,7 +73,7 @@ const AI_PROVIDER_LABELS: Record<AiProvider, string> = {
 const AI_PROVIDER_MODELS: Record<AiProvider, string> = {
   gemini: "gemini-3.5-flash-lite",
   groq: "openai/gpt-oss-20b",
-  ollama: "qwen3:4b",
+  ollama: "qwen3:1.7b",
 };
 
 function asAiProvider(value: string | undefined): AiProvider {
@@ -204,6 +204,7 @@ export function WhatsAppIntegrationPage() {
   const [busy, setBusy] = useState("");
   const [phone, setPhone] = useState("");
   const [pairingCode, setPairingCode] = useState("");
+  const [phoneDiagnostic, setPhoneDiagnostic] = useState<Record<string, any> | null>(null);
   const [toast, setToast] = useState("");
   const [activeTab, setActiveTab] = useState<AdminTabId>("connection");
   const isAdmin = window.location.pathname.includes("/admin/");
@@ -248,6 +249,9 @@ export function WhatsAppIntegrationPage() {
         body: JSON.stringify({ action, phone }),
       });
       const provider = result.data?.provider || result.data?.result || {};
+      if (action === "diagnose_phone") {
+        setPhoneDiagnostic(result.data?.diagnosis || null);
+      }
       if (action === "pairing_code" && provider.pairingCode)
         setPairingCode(String(provider.pairingCode));
       else if (["connect", "qr", "restart", "disconnect"].includes(action))
@@ -256,10 +260,12 @@ export function WhatsAppIntegrationPage() {
         setData((current) =>
           current ? { ...current, session: result.data.session } : current,
         );
-      else await load();
+      else if (action !== "diagnose_phone") await load();
       notify(
         action === "test"
           ? "Mensagem de teste enviada."
+          : action === "diagnose_phone"
+            ? "Diagnóstico da conversa atualizado."
           : action === "pairing_code"
             ? "Código de pareamento gerado."
             : "Status do WhatsApp atualizado.",
@@ -338,6 +344,7 @@ export function WhatsAppIntegrationPage() {
           busy={busy}
           phone={phone}
           pairingCode={pairingCode}
+          phoneDiagnostic={phoneDiagnostic}
           setPhone={setPhone}
           act={act}
           test={test}
@@ -354,6 +361,7 @@ function ConnectionPanel({
   busy,
   phone,
   pairingCode,
+  phoneDiagnostic,
   setPhone,
   act,
   test,
@@ -362,6 +370,7 @@ function ConnectionPanel({
   busy: string;
   phone: string;
   pairingCode: string;
+  phoneDiagnostic: Record<string, any> | null;
   setPhone: (value: string) => void;
   act: (action: string) => Promise<void>;
   test: (event: FormEvent) => void;
@@ -525,6 +534,15 @@ function ConnectionPanel({
               <Send size={15} />
               Testar envio
             </button>
+            <button
+              type="button"
+              disabled={!!busy || phone.replace(/\D/g, "").length < 10}
+              onClick={() => act("diagnose_phone")}
+              className="btn-secondary mt-3 w-full"
+            >
+              <ShieldCheck size={15} />
+              {busy === "diagnose_phone" ? "Diagnosticando…" : "Diagnosticar atendimento"}
+            </button>
           </form>
         </aside>
       </div>
@@ -553,6 +571,34 @@ function ConnectionPanel({
           </div>
         ) : null}
       </section>
+      {phoneDiagnostic ? (
+        <section className="surface mt-5 p-6">
+          <SectionHeading title="Diagnóstico desta conversa" />
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Info label="Telefone" value={phoneDiagnostic.phone || "—"} />
+            <Info label="Motivo atual" value={phoneDiagnostic.reason || "—"} />
+            <Info
+              label="Estado da conversa"
+              value={phoneDiagnostic.conversation ? `${phoneDiagnostic.conversation.status} / IA ${phoneDiagnostic.conversation.ai_enabled ? "ativa" : "pausada"}` : "Não localizada"}
+            />
+            <Info label="Fila pendente" value={String(phoneDiagnostic.pendingQueueCount || 0)} />
+            <Info label="Último provedor" value={phoneDiagnostic.latestRequest?.provider || "—"} />
+            <Info label="Resultado da IA" value={phoneDiagnostic.latestRequest?.status || "—"} />
+            <Info label="Último evento" value={phoneDiagnostic.latestLog?.event_type || "—"} />
+            <Info label="Último erro" value={phoneDiagnostic.latestRequest?.error_message || phoneDiagnostic.latestLog?.error_message || "—"} />
+          </div>
+          {phoneDiagnostic.reason === "conversation_paused_for_human" ? (
+            <p className="mt-4 rounded-xl bg-amber-50 p-3 text-xs font-semibold text-amber-900">
+              Abra a aba Conversas e use “Devolver para IA” neste número.
+            </p>
+          ) : null}
+          {phoneDiagnostic.reason === "webhook_not_received_for_phone" ? (
+            <p className="mt-4 rounded-xl bg-rose-50 p-3 text-xs font-semibold text-rose-800">
+              Nenhuma conversa foi criada para este telefone. A mensagem não chegou ao webhook do bot.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
     </>
   );
 }

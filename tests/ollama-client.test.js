@@ -15,7 +15,7 @@ beforeEach(() => {
   for (const key of envKeys) originalEnv[key] = process.env[key];
   process.env.OLLAMA_ENABLED = "true";
   process.env.OLLAMA_BASE_URL = "http://ollama:11434/";
-  process.env.OLLAMA_MODEL = "qwen3:4b";
+  process.env.OLLAMA_MODEL = "qwen3:1.7b";
   process.env.OLLAMA_NUM_CTX = "4096";
 });
 
@@ -30,7 +30,7 @@ afterEach(() => {
 test("normalizes Ollama configuration for the internal Coolify service", () => {
   const config = ollamaConfig();
   assert.equal(config.baseUrl, "http://ollama:11434");
-  assert.equal(config.model, "qwen3:4b");
+  assert.equal(config.model, "qwen3:1.7b");
   assert.equal(config.contextSize, 4096);
   assert.equal(config.configured, true);
 });

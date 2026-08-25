@@ -1,4 +1,4 @@
-const GEMINI_TIMEOUT_MS = 20_000;
+const GEMINI_TIMEOUT_MS = 45_000;
 
 export class GeminiClientError extends Error {
   constructor(message, { status = 502, code = "GEMINI_ERROR", expose = true } = {}) {

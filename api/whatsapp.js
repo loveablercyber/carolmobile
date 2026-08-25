@@ -250,6 +250,97 @@ async function startBaileysQr({ resetFirst = false } = {}) {
 async function action(user, body) {
   const ctx = await context(user);
   const action = String(body.action || "");
+  if (action === "diagnose_phone") {
+    const digits = String(body.phone || "").replace(/\D/g, "");
+    const phone = digits.startsWith("55") ? digits : `55${digits}`;
+    if (!/^55\d{10,11}$/.test(phone)) {
+      throw appError("Informe um telefone brasileiro válido para o diagnóstico.");
+    }
+
+    const [settingsResult, conversationResult] = await Promise.all([
+      query(
+        `select enabled,allow_new_contacts,allow_existing_clients,primary_provider,primary_model,
+                fallback_enabled,fallback_provider,fallback_model,updated_at
+           from public.ai_settings where business_id='default' limit 1`,
+      ),
+      query(
+        `select id,phone_number,status,ai_enabled,human_takeover_at,last_message_at,
+                last_message_preview,created_at,updated_at
+           from public.whatsapp_conversations
+          where regexp_replace(phone_number,'\\D','','g')=$1
+          order by updated_at desc limit 1`,
+        [phone],
+      ),
+    ]);
+    const settings = settingsResult.rows[0] || null;
+    const conversation = conversationResult.rows[0] || null;
+    let messages = [];
+    let logs = [];
+    let requests = [];
+    let queue = [];
+    if (conversation) {
+      [messages, logs, requests, queue] = await Promise.all([
+        query(
+          `select direction,sender_type,left(coalesce(body,''),300) as body,created_at
+             from public.whatsapp_messages where conversation_id=$1
+            order by created_at desc limit 8`,
+          [conversation.id],
+        ).then((result) => result.rows),
+        query(
+          `select event_type,status,error_message,details,created_at
+             from public.whatsapp_message_logs where conversation_id=$1
+            order by created_at desc limit 12`,
+          [conversation.id],
+        ).then((result) => result.rows),
+        query(
+          `select provider,model,status,error_code,error_message,total_latency_ms,created_at
+             from public.ai_request_logs where conversation_id=$1
+            order by created_at desc limit 6`,
+          [conversation.id],
+        ).then((result) => result.rows),
+        query(
+          `select processed,left(text,200) as text,created_at,processed_at
+             from public.whatsapp_incoming_queue where phone_number=$1
+            order by created_at desc limit 8`,
+          [phone],
+        ).then((result) => result.rows),
+      ]);
+    }
+
+    const latestLog = logs[0] || null;
+    const latestRequest = requests[0] || null;
+    const latestMessage = messages[0] || null;
+    let reason = "ready_or_waiting_new_message";
+    if (!conversation) reason = "webhook_not_received_for_phone";
+    else if (settings?.enabled === false) reason = "ai_globally_disabled";
+    else if (conversation.ai_enabled === false || conversation.status === "human")
+      reason = "conversation_paused_for_human";
+    else if (latestLog?.event_type === "ai_skipped")
+      reason = String(latestLog?.details?.reason || "ai_skipped");
+    else if (latestRequest?.status && latestRequest.status !== "success")
+      reason = "ai_provider_failed";
+    else if (latestMessage?.direction === "outbound") reason = "last_reply_sent";
+    else if (queue.some((item) => item.processed === false)) reason = "incoming_message_pending";
+    else if (latestMessage?.direction === "inbound") reason = "inbound_without_reply";
+
+    return {
+      ok: true,
+      diagnosis: {
+        phone,
+        reason,
+        settings,
+        conversation,
+        latestMessage,
+        latestLog,
+        latestRequest,
+        pendingQueueCount: queue.filter((item) => item.processed === false).length,
+        messages,
+        logs,
+        requests,
+        queue,
+      },
+    };
+  }
   if (action === "test") {
     if (!body.phone) throw appError("Informe o telefone para o teste.");
     const result = await sendBaileysTextMessage({

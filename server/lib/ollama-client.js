@@ -13,7 +13,7 @@ const enabledValue = (value) =>
 
 export function ollamaConfig() {
   const baseUrl = String(process.env.OLLAMA_BASE_URL || "").trim().replace(/\/+$/, "");
-  const model = String(process.env.OLLAMA_MODEL || "qwen3:4b").trim();
+  const model = String(process.env.OLLAMA_MODEL || "qwen3:1.7b").trim();
   const enabled = enabledValue(process.env.OLLAMA_ENABLED);
   const contextSize = Math.min(
     8192,
