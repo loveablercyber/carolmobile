@@ -24,6 +24,10 @@ test("static AI WhatsApp migration includes runtime hardening tables and router 
     new URL("../database/neon-gemini-groq-only.sql", import.meta.url),
     "utf8",
   );
+  const humanResumeMigration = readFileSync(
+    new URL("../database/neon-ai-human-auto-resume.sql", import.meta.url),
+    "utf8",
+  );
   for (const table of [
     "whatsapp_incoming_queue",
     "ai_request_logs",
@@ -44,6 +48,8 @@ test("static AI WhatsApp migration includes runtime hardening tables and router 
     "circuit_breaker_cooldown_seconds",
     "gemini_circuit_breaker_until",
     "groq_circuit_breaker_until",
+    "auto_resume_after_human_enabled",
+    "human_response_timeout_minutes",
   ]) {
     assert.match(
       migration,
@@ -55,6 +61,8 @@ test("static AI WhatsApp migration includes runtime hardening tables and router 
   assert.match(providerMigration, /set status='ai', ai_enabled=true/i);
   assert.match(providerMigration, /drop column if exists openai_api_key/i);
   assert.match(adminScript, /015_gemini_groq_only/i);
+  assert.match(adminScript, /016_ai_human_auto_resume/i);
+  assert.match(humanResumeMigration, /human_takeover_at/i);
 });
 
 test("normalizes AI WhatsApp settings and preserves explicit false values", () => {
@@ -67,6 +75,8 @@ test("normalizes AI WhatsApp settings and preserves explicit false values", () =
       allowAutoBooking: "true",
       maxAutoMessages: "200",
       maxIdleMinutes: "1",
+      autoResumeAfterHumanEnabled: "true",
+      humanResponseTimeoutMinutes: "30",
       aiStartTime: "08:30",
       aiEndTime: "18:00",
     },
@@ -78,6 +88,8 @@ test("normalizes AI WhatsApp settings and preserves explicit false values", () =
   assert.equal(normalized.allowAutoBooking, true);
   assert.equal(normalized.maxAutoMessages, 80);
   assert.equal(normalized.maxIdleMinutes, 5);
+  assert.equal(normalized.autoResumeAfterHumanEnabled, true);
+  assert.equal(normalized.humanResponseTimeoutMinutes, 30);
   assert.equal(normalized.aiStartTime, "08:30");
   assert.equal(normalized.aiEndTime, "18:00");
   assert.equal(normalized.primaryProvider, "gemini");

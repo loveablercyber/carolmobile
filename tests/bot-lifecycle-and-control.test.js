@@ -5,6 +5,7 @@ import {
   findEvaluationService,
   selectBookingService,
   detectBookingGlobalCommand,
+  humanAutoResumeState,
   processIncomingWhatsAppWebhook,
 } from "../server/lib/whatsapp-ai-engine.js";
 import { updateAiConversationStatus, invalidateAiSettingsCache, invalidateAiBaseCache } from "../server/lib/ai-whatsapp.js";
@@ -19,6 +20,34 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   invalidateAiSettingsCache();
   invalidateAiBaseCache();
+});
+
+test("human auto-resume becomes due after the configured timeout", () => {
+  const now = new Date("2026-08-25T12:30:00.000Z");
+  const waiting = humanAutoResumeState(
+    { autoResumeAfterHumanEnabled: true, humanResponseTimeoutMinutes: 15 },
+    { status: "human", ai_enabled: false, human_takeover_at: "2026-08-25T12:20:00.000Z" },
+    now,
+  );
+  const due = humanAutoResumeState(
+    { autoResumeAfterHumanEnabled: true, humanResponseTimeoutMinutes: 15 },
+    { status: "human", ai_enabled: false, human_takeover_at: "2026-08-25T12:10:00.000Z" },
+    now,
+  );
+
+  assert.equal(waiting.due, false);
+  assert.equal(waiting.dueAt.toISOString(), "2026-08-25T12:35:00.000Z");
+  assert.equal(due.due, true);
+});
+
+test("human auto-resume respects the administrator disable switch", () => {
+  const state = humanAutoResumeState(
+    { autoResumeAfterHumanEnabled: false, humanResponseTimeoutMinutes: 5 },
+    { status: "human", ai_enabled: false, human_takeover_at: "2026-08-25T10:00:00.000Z" },
+    new Date("2026-08-25T12:00:00.000Z"),
+  );
+  assert.equal(state.enabled, false);
+  assert.equal(state.due, false);
 });
 
 test("findEvaluationService matches exact evaluation service names and avoids description matching or fallback", () => {

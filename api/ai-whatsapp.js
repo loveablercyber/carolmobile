@@ -67,7 +67,7 @@ async function mutate(user, resource, body) {
       if (action === "activate") {
         await query(
           `update public.whatsapp_conversations
-              set status='ai',ai_enabled=true,assigned_to=null,updated_at=now()
+              set status='ai',ai_enabled=true,assigned_to=null,human_takeover_at=null,updated_at=now()
             where ai_enabled=false or status<>'ai'`,
         );
         await query(

@@ -54,6 +54,10 @@ function applyVercelRewrite(pathname, searchParams) {
     searchParams.set('task', 'billing-whatsapp')
     return '/api/cron-tasks'
   }
+  if (pathname === '/api/cron-ai-human-resume') {
+    searchParams.set('task', 'ai-human-resume')
+    return '/api/cron-tasks'
+  }
   if (pathname === '/api/whatsapp-keepalive') {
     searchParams.set('resource', 'keepalive')
     return '/api/whatsapp'
@@ -210,6 +214,11 @@ function startInternalCronScheduler() {
     })
   }
   if (whatsappConfigured) {
+    jobs.push({
+      name: 'ai-human-resume',
+      everyMs: 60 * 1000,
+      url: () => `${baseUrl}/api/cron-ai-human-resume`,
+    })
     jobs.push({
       name: 'billing-whatsapp',
       everyMs: 5 * 60 * 1000,

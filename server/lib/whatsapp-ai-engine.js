@@ -4841,7 +4841,7 @@ async function requestHumanAttention({ conversationId, messageId, reason, respon
     if (pauseAi) {
       await client.query(
         `update public.whatsapp_conversations
-            set status='human', ai_enabled=false, updated_at=now()
+            set status='human', ai_enabled=false, human_takeover_at=now(), updated_at=now()
           where id=$1`,
         [conversationId],
       );
@@ -4987,6 +4987,50 @@ export function buildLocalIntentResponse(text, base = {}, context = {}) {
   return null;
 }
 
+async function loadQueuedConversation(conversationId) {
+  const { rows } = await query(
+    `select * from public.whatsapp_conversations where id=$1 limit 1`,
+    [conversationId],
+  );
+  const conversation = rows[0];
+  if (!conversation) throw new Error("Conversa pendente não encontrada.");
+  const latestMessage = await query(
+    `select id from public.whatsapp_messages
+      where conversation_id=$1 and direction='inbound'
+      order by created_at desc limit 1`,
+    [conversationId],
+  );
+  return {
+    conversation,
+    message: latestMessage.rows[0] || { id: null },
+    client: conversation.client_id ? { id: conversation.client_id } : null,
+  };
+}
+
+export function humanAutoResumeState(settings = {}, conversation = {}, now = new Date()) {
+  const paused = conversation.ai_enabled === false ||
+    String(conversation.status || "").toLowerCase() === "human";
+  const enabled = settings.autoResumeAfterHumanEnabled !== false;
+  const timeoutMinutes = Math.min(
+    1440,
+    Math.max(1, Number(settings.humanResponseTimeoutMinutes || 15)),
+  );
+  const takeoverAt = conversation.human_takeover_at
+    ? new Date(conversation.human_takeover_at)
+    : null;
+  const validTakeover = takeoverAt && Number.isFinite(takeoverAt.getTime());
+  const dueAt = validTakeover
+    ? new Date(takeoverAt.getTime() + timeoutMinutes * 60_000)
+    : null;
+  return {
+    paused,
+    enabled,
+    timeoutMinutes,
+    dueAt,
+    due: Boolean(paused && enabled && dueAt && dueAt.getTime() <= now.getTime()),
+  };
+}
+
 function getRetryDelay(retryCount) {
   const jitter = Math.random() * 500; // 0 to 500ms
   if (retryCount === 1) {
@@ -5127,7 +5171,7 @@ export function classifyInboundMessage(text, matchedArticle) {
   return 1; // Nível 1
 }
 
-export async function processIncomingWhatsAppWebhook(payload = {}) {
+export async function processIncomingWhatsAppWebhook(payload = {}, runtime = {}) {
   const receivedAt = new Date();
   const normalized = normalizeIncomingWhatsappPayload(payload);
 
@@ -5156,7 +5200,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       const recordedHuman = await recordInboundMessage(normalized);
       await query(
         `update public.whatsapp_conversations
-            set status='human', ai_enabled=false, updated_at=now()
+            set status='human', ai_enabled=false, human_takeover_at=now(), updated_at=now()
           where phone_number=$1`,
         [normalized.phoneNumber],
       );
@@ -5218,17 +5262,62 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   }
 
   // 2. Record Inbound message (history) and insert to incoming queue
-  const recorded = await recordInboundMessage(normalized);
+  const queuedResume = runtime.queuedResume === true && runtime.conversationId;
+  const recorded = queuedResume
+    ? await loadQueuedConversation(runtime.conversationId)
+    : await recordInboundMessage(normalized);
   const settings = await getAiSettings();
   const base = await getAiCommercialBase();
   const conversationId = recorded.conversation.id;
   const inboundMessageId = recorded.message.id;
 
-  await query(
-    `insert into public.whatsapp_incoming_queue(phone_number, message_id, text)
-     values($1, $2, $3)`,
-    [normalized.phoneNumber, normalized.messageId, normalized.text],
-  );
+  if (!queuedResume) {
+    await query(
+      `insert into public.whatsapp_incoming_queue(phone_number, message_id, text)
+       values($1, $2, $3)`,
+      [normalized.phoneNumber, normalized.messageId, normalized.text],
+    );
+  }
+
+  const autoResume = humanAutoResumeState(settings, recorded.conversation, receivedAt);
+  if (autoResume.paused && autoResume.enabled && autoResume.dueAt) {
+    if (!autoResume.due) {
+      await query(
+        `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
+         values($1,$2,'ai_waiting_human_timeout','info',$3)`,
+        [
+          conversationId,
+          inboundMessageId,
+          JSON.stringify({
+            dueAt: autoResume.dueAt?.toISOString() || null,
+            timeoutMinutes: autoResume.timeoutMinutes,
+          }),
+        ],
+      ).catch(() => null);
+      return {
+        ok: true,
+        replied: false,
+        reason: "waiting_human_timeout",
+        conversationId,
+        resumeAt: autoResume.dueAt?.toISOString() || null,
+      };
+    }
+    await query(
+      `update public.whatsapp_conversations
+          set status='ai',ai_enabled=true,assigned_to=null,human_takeover_at=null,updated_at=now()
+        where id=$1`,
+      [conversationId],
+    );
+    await query(
+      `update public.human_handoff_tickets
+          set status='closed',resolved_at=coalesce(resolved_at,now()),updated_at=now()
+        where conversation_id=$1 and status in ('pending','open')`,
+      [conversationId],
+    ).catch(() => null);
+    recorded.conversation.status = "ai";
+    recorded.conversation.ai_enabled = true;
+    recorded.conversation.human_takeover_at = null;
+  }
 
   // 3. Typing Presence Composer
   await sendBaileysPresence({ number: normalized.phoneNumber, presence: "composing" });
@@ -5302,7 +5391,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
   if (keywordInText(concatenatedText, settings.resumeKeyword)) {
     await query(
       `update public.whatsapp_conversations
-          set status='ai',ai_enabled=true,updated_at=now()
+          set status='ai',ai_enabled=true,human_takeover_at=null,updated_at=now()
         where id=$1`,
       [conversationId],
     );
@@ -6140,4 +6229,77 @@ export async function processIncomingWhatsAppWebhook(payload = {}) {
       conversationId,
     };
   }
+}
+
+export async function resumeDueHumanConversations({ limit = 25 } = {}) {
+  await ensureAiWhatsappSchema();
+  const settings = await getAiSettings();
+  if (!settings.enabled || settings.autoResumeAfterHumanEnabled === false) {
+    return { processed: 0, resumed: 0, failed: 0, disabled: true };
+  }
+
+  const timeoutMinutes = Math.min(
+    1440,
+    Math.max(1, Number(settings.humanResponseTimeoutMinutes || 15)),
+  );
+  const safeLimit = Math.min(100, Math.max(1, Number(limit || 25)));
+  const { rows } = await query(
+    `select id,phone_number,human_takeover_at
+       from public.whatsapp_conversations wc
+      where wc.status='human'
+        and wc.ai_enabled=false
+        and wc.human_takeover_at is not null
+        and wc.human_takeover_at <= now() - ($1::text || ' minutes')::interval
+        and exists (
+          select 1 from public.whatsapp_incoming_queue wiq
+           where wiq.phone_number=wc.phone_number and wiq.processed=false
+        )
+      order by wc.human_takeover_at asc
+      limit $2`,
+    [String(timeoutMinutes), safeLimit],
+  );
+
+  let resumed = 0;
+  let failed = 0;
+  for (const conversation of rows) {
+    const claimed = await query(
+      `update public.whatsapp_conversations
+          set status='ai',ai_enabled=true,assigned_to=null,human_takeover_at=null,updated_at=now()
+        where id=$1 and status='human' and ai_enabled=false
+        returning id`,
+      [conversation.id],
+    );
+    if (!claimed.rowCount) continue;
+    await query(
+      `update public.human_handoff_tickets
+          set status='closed',resolved_at=coalesce(resolved_at,now()),updated_at=now()
+        where conversation_id=$1 and status in ('pending','open')`,
+      [conversation.id],
+    ).catch(() => null);
+    try {
+      await processIncomingWhatsAppWebhook(
+        {
+          from: `${conversation.phone_number}@s.whatsapp.net`,
+          text: "Retomada automática após espera humana.",
+          isFromMe: false,
+          messageId: `tmp-auto-resume-${conversation.id}-${Date.now()}`,
+        },
+        { queuedResume: true, conversationId: conversation.id },
+      );
+      resumed += 1;
+    } catch (error) {
+      failed += 1;
+      await query(
+        `update public.whatsapp_conversations
+            set status='human',ai_enabled=false,human_takeover_at=$2,updated_at=now()
+          where id=$1`,
+        [conversation.id, conversation.human_takeover_at],
+      ).catch(() => null);
+      console.error("Automatic AI resume failed", {
+        conversationId: conversation.id,
+        message: error?.message || String(error),
+      });
+    }
+  }
+  return { processed: rows.length, resumed, failed, timeoutMinutes };
 }

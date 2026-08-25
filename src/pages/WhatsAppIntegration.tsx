@@ -80,6 +80,8 @@ type AiSettings = {
   closingMessage: string;
   maxIdleMinutes: number;
   maxAutoMessages: number;
+  autoResumeAfterHumanEnabled: boolean;
+  humanResponseTimeoutMinutes: number;
   allow24h: boolean;
   aiStartTime: string | null;
   aiEndTime: string | null;
@@ -791,7 +793,7 @@ function AiAdminPanel({
           />
         </Field>
 
-        <div className="mt-4 grid gap-4 md:grid-cols-3">
+        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Field label="Máx. mensagens automáticas">
             <input
               type="number"
@@ -816,6 +818,26 @@ function AiAdminPanel({
               }
             />
           </Field>
+          <Field label="Espera pelo atendente humano">
+            <select
+              className="field"
+              value={form.humanResponseTimeoutMinutes}
+              disabled={!form.autoResumeAfterHumanEnabled}
+              onChange={(event) =>
+                updateField("humanResponseTimeoutMinutes", Number(event.target.value))
+              }
+            >
+              <option value={5}>5 minutos</option>
+              <option value={10}>10 minutos</option>
+              <option value={15}>15 minutos</option>
+              <option value={30}>30 minutos</option>
+              <option value={60}>1 hora</option>
+              <option value={120}>2 horas</option>
+              <option value={240}>4 horas</option>
+              <option value={480}>8 horas</option>
+              <option value={1440}>24 horas</option>
+            </select>
+          </Field>
           <Field label="Fuso horário">
             <input
               className="field"
@@ -830,6 +852,11 @@ function AiAdminPanel({
             label="IA ativa no WhatsApp"
             checked={form.enabled}
             onChange={(checked) => updateField("enabled", checked)}
+          />
+          <CheckField
+            label="Retomar IA automaticamente após atendimento humano"
+            checked={form.autoResumeAfterHumanEnabled}
+            onChange={(checked) => updateField("autoResumeAfterHumanEnabled", checked)}
           />
           <CheckField
             label="Atender 24h"

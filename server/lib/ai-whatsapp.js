@@ -328,6 +328,8 @@ create table if not exists public.ai_settings (
   closing_message text not null default '',
   max_idle_minutes int not null default 30,
   max_auto_messages int not null default 12,
+  auto_resume_after_human_enabled boolean not null default true,
+  human_response_timeout_minutes int not null default 15,
   allow_24h boolean not null default true,
   ai_start_time time,
   ai_end_time time,
@@ -422,6 +424,7 @@ create table if not exists public.whatsapp_conversations (
   status text not null default 'ai',
   assigned_to uuid references public.profiles(id),
   ai_enabled boolean not null default true,
+  human_takeover_at timestamptz,
   last_message_at timestamptz,
   last_message_preview text,
   booking_state jsonb not null default '{}',
@@ -638,6 +641,8 @@ function defaultSettingsInput() {
     ...defaultMessages,
     maxIdleMinutes: 30,
     maxAutoMessages: 12,
+    autoResumeAfterHumanEnabled: true,
+    humanResponseTimeoutMinutes: 15,
     allow24h: true,
     aiStartTime: null,
     aiEndTime: null,
@@ -740,6 +745,16 @@ export function normalizeAiSettingsInput(input = {}, current = defaultSettingsIn
     closingMessage: clean(input.closingMessage || fallback.closingMessage),
     maxIdleMinutes: intRange(input.maxIdleMinutes, fallback.maxIdleMinutes, 5, 1440),
     maxAutoMessages: intRange(input.maxAutoMessages, fallback.maxAutoMessages, 1, 80),
+    autoResumeAfterHumanEnabled: bool(
+      input.autoResumeAfterHumanEnabled ?? input.auto_resume_after_human_enabled,
+      fallback.autoResumeAfterHumanEnabled,
+    ),
+    humanResponseTimeoutMinutes: intRange(
+      input.humanResponseTimeoutMinutes ?? input.human_response_timeout_minutes,
+      fallback.humanResponseTimeoutMinutes,
+      1,
+      1440,
+    ),
     allow24h: bool(input.allow24h, fallback.allow24h),
     aiStartTime: timeOrNull(input.aiStartTime ?? fallback.aiStartTime),
     aiEndTime: timeOrNull(input.aiEndTime ?? fallback.aiEndTime),
@@ -914,6 +929,8 @@ function dbToSettings(row) {
     closingMessage: row.closing_message || defaultMessages.closingMessage,
     maxIdleMinutes: row.max_idle_minutes,
     maxAutoMessages: row.max_auto_messages,
+    autoResumeAfterHumanEnabled: row.auto_resume_after_human_enabled ?? true,
+    humanResponseTimeoutMinutes: row.human_response_timeout_minutes ?? 15,
     allow24h: row.allow_24h,
     aiStartTime: row.ai_start_time ? String(row.ai_start_time).slice(0, 5) : null,
     aiEndTime: row.ai_end_time ? String(row.ai_end_time).slice(0, 5) : null,
@@ -1140,6 +1157,8 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS groq_api_key text;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS gemini_enabled boolean not null default false;
     ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS groq_enabled boolean not null default false;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS auto_resume_after_human_enabled boolean not null default true;
+    ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS human_response_timeout_minutes integer not null default 15;
     UPDATE public.ai_settings
        SET model='gemini-3.5-flash-lite'
      WHERE provider='gemini' AND model='gemini-2.5-flash-lite';
@@ -1189,6 +1208,7 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS booking_state jsonb not null default '{}';
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS session_started_at timestamptz;
     ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS conversation_attempt_id uuid;
+    ALTER TABLE public.whatsapp_conversations ADD COLUMN IF NOT EXISTS human_takeover_at timestamptz;
     ALTER TABLE public.services ADD COLUMN IF NOT EXISTS show_online_booking boolean not null default true;
     ALTER TABLE public.services ADD COLUMN IF NOT EXISTS is_free boolean not null default false;
     CREATE TABLE IF NOT EXISTS public.whatsapp_outbox_ids (
@@ -1203,6 +1223,9 @@ export async function ensureAiWhatsappSchema({ force = false } = {}) {
   await query(`
     ALTER TABLE public.whatsapp_incoming_queue ALTER COLUMN message_id DROP NOT NULL;
     CREATE INDEX IF NOT EXISTS whatsapp_conversations_phone_ai_idx ON public.whatsapp_conversations(phone_number, ai_enabled, status);
+    CREATE INDEX IF NOT EXISTS whatsapp_conversations_human_resume_idx
+      ON public.whatsapp_conversations(human_takeover_at)
+      WHERE status='human' AND ai_enabled=false AND human_takeover_at IS NOT NULL;
     CREATE INDEX IF NOT EXISTS whatsapp_incoming_queue_null_dedup_idx ON public.whatsapp_incoming_queue(phone_number, text, created_at) WHERE message_id IS NULL OR message_id LIKE 'tmp-%';
   `).catch(err => console.error("Failed schema updates in Fase 2", err));
 
@@ -1324,6 +1347,7 @@ export async function saveAiSettings(user, input) {
       `insert into public.ai_settings(
         business_id,enabled,provider,model,assistant_name,salon_name,personality_mode,system_prompt,
         welcome_message,after_hours_message,human_handoff_message,closing_message,max_idle_minutes,max_auto_messages,
+        auto_resume_after_human_enabled,human_response_timeout_minutes,
         allow_24h,ai_start_time,ai_end_time,allow_new_contacts,allow_existing_clients,allow_auto_payment_links,
         allow_auto_booking,require_booking_confirmation,handoff_on_complaint,handoff_on_payment,handoff_on_urgency,
         pause_keyword,resume_keyword,stop_keyword,timezone,
@@ -1332,14 +1356,16 @@ export async function saveAiSettings(user, input) {
         circuit_breaker_cooldown_seconds,gemini_circuit_breaker_until,groq_circuit_breaker_until,
         gemini_api_key,groq_api_key,gemini_enabled,groq_enabled,updated_by,updated_at
       ) values(
-        'default',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,
-        $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,now()
+        'default',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,
+        $32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,now()
       ) on conflict(business_id) do update set
         enabled=excluded.enabled,provider=excluded.provider,model=excluded.model,assistant_name=excluded.assistant_name,
         salon_name=excluded.salon_name,personality_mode=excluded.personality_mode,system_prompt=excluded.system_prompt,
         welcome_message=excluded.welcome_message,after_hours_message=excluded.after_hours_message,
         human_handoff_message=excluded.human_handoff_message,closing_message=excluded.closing_message,
-        max_idle_minutes=excluded.max_idle_minutes,max_auto_messages=excluded.max_auto_messages,allow_24h=excluded.allow_24h,
+        max_idle_minutes=excluded.max_idle_minutes,max_auto_messages=excluded.max_auto_messages,
+        auto_resume_after_human_enabled=excluded.auto_resume_after_human_enabled,
+        human_response_timeout_minutes=excluded.human_response_timeout_minutes,allow_24h=excluded.allow_24h,
         ai_start_time=excluded.ai_start_time,ai_end_time=excluded.ai_end_time,allow_new_contacts=excluded.allow_new_contacts,
         allow_existing_clients=excluded.allow_existing_clients,allow_auto_payment_links=excluded.allow_auto_payment_links,
         allow_auto_booking=excluded.allow_auto_booking,require_booking_confirmation=excluded.require_booking_confirmation,
@@ -1375,6 +1401,8 @@ export async function saveAiSettings(user, input) {
         value.closingMessage,
         value.maxIdleMinutes,
         value.maxAutoMessages,
+        value.autoResumeAfterHumanEnabled,
+        value.humanResponseTimeoutMinutes,
         value.allow24h,
         value.aiStartTime,
         value.aiEndTime,
@@ -1577,7 +1605,9 @@ export async function updateAiConversationStatus(user, input) {
   return transaction(async (client) => {
     const { rows } = await client.query(
       `update public.whatsapp_conversations
-          set status=$2, ai_enabled=$3, updated_at=now()
+          set status=$2, ai_enabled=$3,
+              human_takeover_at=case when $3 then null else now() end,
+              updated_at=now()
         where id=$1
         returning id,phone_number,status,ai_enabled,last_message_at,last_message_preview`,
       [conversationId, nextStatus, aiEnabled],

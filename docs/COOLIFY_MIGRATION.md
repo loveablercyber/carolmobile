@@ -16,6 +16,7 @@ Domínio final: `agenda.carolsol.com.br`
   - `/api/cron-renewals`
   - `/api/cron-reminders`
   - `/api/cron-billing-whatsapp`
+  - `/api/cron-ai-human-resume`
   - `/api/whatsapp-keepalive`
   - `/api/webhooks/baileys/carolsol`
 - O banco usa `DATABASE_URL` com `pg`.

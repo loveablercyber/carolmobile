@@ -16,6 +16,8 @@ create table if not exists public.ai_settings (
   closing_message text not null default '',
   max_idle_minutes int not null default 30,
   max_auto_messages int not null default 12,
+  auto_resume_after_human_enabled boolean not null default true,
+  human_response_timeout_minutes int not null default 15,
   allow_24h boolean not null default true,
   ai_start_time time,
   ai_end_time time,
@@ -57,6 +59,8 @@ alter table public.ai_settings add column if not exists gemini_api_key text;
 alter table public.ai_settings add column if not exists groq_api_key text;
 alter table public.ai_settings add column if not exists gemini_enabled boolean not null default false;
 alter table public.ai_settings add column if not exists groq_enabled boolean not null default false;
+alter table public.ai_settings add column if not exists auto_resume_after_human_enabled boolean not null default true;
+alter table public.ai_settings add column if not exists human_response_timeout_minutes integer not null default 15;
 
 update public.ai_settings
 set provider='gemini',
@@ -163,6 +167,7 @@ create table if not exists public.whatsapp_conversations (
   status text not null default 'ai',
   assigned_to uuid references public.profiles(id),
   ai_enabled boolean not null default true,
+  human_takeover_at timestamptz,
   last_message_at timestamptz,
   last_message_preview text,
   booking_state jsonb not null default '{}',

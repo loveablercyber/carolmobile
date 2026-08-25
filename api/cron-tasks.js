@@ -8,6 +8,7 @@ import {
   generateGoogleCalendarUrl,
   loadAppointmentAutomationContext,
 } from "../server/lib/appointment-automation.js";
+import { resumeDueHumanConversations } from "../server/lib/whatsapp-ai-engine.js";
 
 const APP_URL = process.env.APP_URL || "https://carolmobile.vercel.app";
 
@@ -291,6 +292,9 @@ export default async function handler(req, res) {
       return await handleRenewals(req, res);
     } else if (task === "billing-whatsapp") {
       return await handleBillingWhatsapp(req, res);
+    } else if (task === "ai-human-resume") {
+      const result = await resumeDueHumanConversations({ limit: 50 });
+      return send(res, 200, { ok: true, ...result });
     } else {
       return await handleReminders(req, res);
     }

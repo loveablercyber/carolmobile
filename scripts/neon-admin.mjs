@@ -173,6 +173,10 @@ async function setup() {
     resolve("database/neon-gemini-groq-only.sql"),
     "utf8",
   );
+  const aiHumanAutoResumeMigration = await readFile(
+    resolve("database/neon-ai-human-auto-resume.sql"),
+    "utf8",
+  );
 
   await client.query("begin");
   try {
@@ -330,6 +334,15 @@ async function setup() {
       await client.query(geminiGroqOnlyMigration);
       await client.query(
         "insert into public._luxe_migrations(version, description) values ('015_gemini_groq_only', 'Remove OpenAI e transfere atendimento para Gemini/Groq')",
+      );
+    }
+    const { rowCount: aiHumanAutoResumeApplied } = await client.query(
+      "select 1 from public._luxe_migrations where version = '016_ai_human_auto_resume'",
+    );
+    if (!aiHumanAutoResumeApplied) {
+      await client.query(aiHumanAutoResumeMigration);
+      await client.query(
+        "insert into public._luxe_migrations(version, description) values ('016_ai_human_auto_resume', 'Retomada automática da IA após espera pelo atendimento humano')",
       );
     }
     await client.query("commit");
