@@ -165,6 +165,15 @@ test("updateAiConversationStatus correctly sets status and ai_enabled for pause_
 
   assert.equal(resumed.status, "ai");
   assert.equal(resumed.ai_enabled, true);
+
+  const statusUpdates = calls.filter(({ text }) =>
+    text.includes("update public.whatsapp_conversations") && text.includes("set status=$2"),
+  );
+  assert.equal(statusUpdates.length, 2);
+  assert.match(
+    statusUpdates[0].text,
+    /session_started_at=case when \$3 then now\(\) else session_started_at end/i,
+  );
 });
 
 test("bot skips response when conversation is in human status", async () => {

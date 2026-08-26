@@ -4828,8 +4828,8 @@ async function recordInboundMessage(normalized) {
       (
         await client.query(
           `insert into public.whatsapp_conversations(
-            client_id,phone_number,professional_id,session_id,status,ai_enabled,last_message_at,last_message_preview,origin
-          ) values($1,$2,$3,$4,'ai',true,now(),$5,'whatsapp_ai')
+            client_id,phone_number,professional_id,session_id,status,ai_enabled,session_started_at,last_message_at,last_message_preview,origin
+          ) values($1,$2,$3,$4,'ai',true,now(),now(),$5,'whatsapp_ai')
           returning *`,
           [
             foundClient?.id || null,
@@ -5453,7 +5453,8 @@ export async function processIncomingWhatsAppWebhook(payload = {}, runtime = {})
     }
     await query(
       `update public.whatsapp_conversations
-          set status='ai',ai_enabled=true,assigned_to=null,human_takeover_at=null,updated_at=now()
+          set status='ai',ai_enabled=true,assigned_to=null,human_takeover_at=null,
+              session_started_at=now(),updated_at=now()
         where id=$1`,
       [conversationId],
     );
@@ -5541,7 +5542,7 @@ export async function processIncomingWhatsAppWebhook(payload = {}, runtime = {})
   if (keywordInText(concatenatedText, settings.resumeKeyword)) {
     await query(
       `update public.whatsapp_conversations
-          set status='ai',ai_enabled=true,human_takeover_at=null,updated_at=now()
+          set status='ai',ai_enabled=true,human_takeover_at=null,session_started_at=now(),updated_at=now()
         where id=$1`,
       [conversationId],
     );
@@ -5624,9 +5625,11 @@ export async function processIncomingWhatsAppWebhook(payload = {}, runtime = {})
   const lastMsgAt = recorded.conversation.last_message_at
     ? new Date(recorded.conversation.last_message_at)
     : (initialBookingState.updatedAt ? new Date(initialBookingState.updatedAt) : null);
+  let idleExpired = false;
   if (lastMsgAt) {
     const idleDiffMinutes = (processingStartedAt.getTime() - lastMsgAt.getTime()) / (1000 * 60);
     if (idleDiffMinutes > maxIdleMinutes) {
+      idleExpired = true;
       await saveBookingState(conversationId, {});
       recorded.conversation.booking_state = {};
       initialBookingState = {};
@@ -5636,6 +5639,15 @@ export async function processIncomingWhatsAppWebhook(payload = {}, runtime = {})
         [conversationId, inboundMessageId, JSON.stringify({ idleDiffMinutes, maxIdleMinutes })],
       ).catch(() => null);
     }
+  }
+  if (!recorded.conversation.session_started_at || idleExpired) {
+    await query(
+      `update public.whatsapp_conversations
+          set session_started_at=$2,updated_at=now()
+        where id=$1`,
+      [conversationId, processingStartedAt],
+    );
+    recorded.conversation.session_started_at = processingStartedAt;
   }
 
   const localGreetingResponse = buildLocalGreetingResponse(concatenatedText, {
@@ -5693,7 +5705,10 @@ export async function processIncomingWhatsAppWebhook(payload = {}, runtime = {})
         and wm.sender_type='ai'
         and coalesce(wm.payload->>'reason','') <> 'typing_placeholder'
         and wm.created_at >= coalesce(
-          (select resumed_at from latest_resume),
+          greatest(
+            (select resumed_at from latest_resume),
+            (select session_started_at from public.whatsapp_conversations where id=$1)
+          ),
           (select created_at from public.whatsapp_conversations where id=$1),
           '-infinity'::timestamptz
         )`,
@@ -6510,7 +6525,8 @@ export async function resumeDueHumanConversations({ limit = 25 } = {}) {
   for (const conversation of rows) {
     const claimed = await query(
       `update public.whatsapp_conversations
-          set status='ai',ai_enabled=true,assigned_to=null,human_takeover_at=null,updated_at=now()
+          set status='ai',ai_enabled=true,assigned_to=null,human_takeover_at=null,
+              session_started_at=now(),updated_at=now()
         where id=$1 and status='human' and ai_enabled=false
         returning id`,
       [conversation.id],

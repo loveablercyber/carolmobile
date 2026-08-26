@@ -1610,6 +1610,7 @@ export async function updateAiConversationStatus(user, input) {
       `update public.whatsapp_conversations
           set status=$2, ai_enabled=$3,
               human_takeover_at=case when $3 then null else now() end,
+              session_started_at=case when $3 then now() else session_started_at end,
               updated_at=now()
         where id=$1
         returning id,phone_number,status,ai_enabled,last_message_at,last_message_preview`,

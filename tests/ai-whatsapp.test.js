@@ -65,6 +65,22 @@ test("static AI WhatsApp migration includes runtime hardening tables and router 
   assert.match(humanResumeMigration, /human_takeover_at/i);
 });
 
+test("automatic message limit is scoped to the current AI session", () => {
+  const engine = readFileSync(
+    new URL("../server/lib/whatsapp-ai-engine.js", import.meta.url),
+    "utf8",
+  );
+  const api = readFileSync(
+    new URL("../api/ai-whatsapp.js", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(engine, /greatest\([\s\S]*resumed_at from latest_resume[\s\S]*session_started_at from public\.whatsapp_conversations/i);
+  assert.match(engine, /idleExpired[\s\S]*set session_started_at=\$2/i);
+  assert.match(engine, /status='ai',ai_enabled=true[\s\S]{0,140}session_started_at=now\(\)/i);
+  assert.match(api, /status='ai',ai_enabled=true[\s\S]{0,140}session_started_at=now\(\)/i);
+});
+
 test("normalizes AI WhatsApp settings and preserves explicit false values", () => {
   const base = defaultAiSettings();
   const normalized = normalizeAiSettingsInput(
