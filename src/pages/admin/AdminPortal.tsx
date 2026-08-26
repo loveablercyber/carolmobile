@@ -6,6 +6,7 @@ import {
   Archive,
   ArrowUpDown,
   BarChart3,
+  BriefcaseBusiness,
   Boxes,
   CalendarDays,
   ChevronLeft,
@@ -23,6 +24,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Scissors,
   ShieldAlert,
   Tag,
   Trash2,
@@ -41,6 +43,7 @@ import {
   Toast,
 } from "../../components/ui";
 import { AppointmentCalendar } from "../../components/AppointmentCalendar";
+import { MobileAgendaActions } from "../../components/MobileAgendaActions";
 import { apiFetch } from "../../lib/api";
 import { IntakeDetailsModal } from "../professional/ProfessionalPortal";
 
@@ -2687,6 +2690,8 @@ export function AdminAppointmentsPage() {
     clientId: "",
     search: "",
   });
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [selectedDay, setSelectedDay] = useState("");
   const [appointmentForm, setAppointmentForm] = useState({
     clientId: "",
     serviceId: "",
@@ -2775,6 +2780,9 @@ export function AdminAppointmentsPage() {
     }
     return true;
   });
+  const selectedItems = selectedDay
+    ? filteredItems.filter((item: any) => saoPauloDateKey(item.starts_at) === selectedDay)
+    : filteredItems;
   const filteredBlocked = blocked.filter((block: any) =>
     filters.professionalId ? block.professional_id === filters.professionalId : true,
   );
@@ -3018,7 +3026,7 @@ export function AdminAppointmentsPage() {
           <button
             type="button"
             onClick={() => setAnchorDate(new Date())}
-            className="btn-secondary !min-h-10 !px-4"
+            className="btn-secondary hidden !min-h-10 !px-4 sm:inline-flex"
           >
             Hoje
           </button>
@@ -3026,7 +3034,7 @@ export function AdminAppointmentsPage() {
             type="button"
             disabled={!filteredItems.length}
             onClick={exportAppointments}
-            className="btn-secondary !min-h-10 !px-4 disabled:opacity-50"
+            className="btn-secondary hidden !min-h-10 !px-4 disabled:opacity-50 sm:inline-flex"
           >
             <Download size={15} />
             Exportar CSV
@@ -3040,8 +3048,13 @@ export function AdminAppointmentsPage() {
             <ChevronRight size={15} />
           </button>
         </div>
+        <button onClick={openNewAppointment} className="btn-primary !min-h-10 !rounded-xl !px-3 sm:hidden"><Plus size={15} />Novo</button>
       </div>
-      <section className="surface mb-5 p-5">
+      <div className="no-scrollbar mb-3 flex gap-2 overflow-x-auto sm:hidden">
+        {[{ label: "Todos", value: "" }, { label: "Hoje", value: "today" }, { label: "Pendentes", value: "requested" }, { label: "Cancelados", value: "cancelled" }].map((chip) => <button key={chip.label} type="button" onClick={() => { setFilters({ ...filters, status: chip.value === "today" ? "" : chip.value }); if (chip.value === "today") setSelectedDay(dateKey()); }} className={`chip shrink-0 ${chip.value !== "today" && filters.status === chip.value ? "!bg-ink !text-white" : ""}`}>{chip.label}</button>)}
+      </div>
+      <div className="mb-3 flex gap-2 sm:hidden"><input aria-label="Pesquisar agendamentos" className="field !min-h-10" value={filters.search} placeholder="Cliente, serviço ou código..." onChange={(event) => setFilters({ ...filters, search: event.target.value })} /><button type="button" aria-label="Abrir filtros avançados" onClick={() => setFiltersOpen(true)} className="btn-secondary !min-h-10 !px-3">Filtros</button></div>
+      <section className={`surface mb-5 p-5 ${filtersOpen ? "block" : "hidden"} sm:block`}>
         <div className="grid gap-3 md:grid-cols-3">
           <label className="block">
             <span className="mb-2 block text-xs font-bold">Pesquisar</span>
@@ -3124,6 +3137,7 @@ export function AdminAppointmentsPage() {
               Limpar
             </button>
           </div>
+          <div className="flex items-end sm:hidden"><button type="button" onClick={() => setFiltersOpen(false)} className="btn-primary w-full">Aplicar filtros</button></div>
         </div>
         <p className="mt-3 text-xs text-stone-400">
           Mostrando {filteredItems.length} de {items.length} agendamentos do mês.
@@ -3142,12 +3156,22 @@ export function AdminAppointmentsPage() {
             setSelectedIntake(appointment.intake_data);
             setSelectedIntakeClient(appointment.client || "Cliente");
           }}
+          selectedDate={selectedDay}
+          onDateSelect={setSelectedDay}
         />
       </div>
+      <MobileAgendaActions items={[
+        { label: "Clientes", icon: <Users size={21} />, to: "/admin/clientes" },
+        { label: "Profissionais", icon: <BriefcaseBusiness size={21} />, to: "/admin/profissionais" },
+        { label: "Serviços", icon: <Scissors size={21} />, to: "/admin/servicos" },
+        { label: "Relatórios", icon: <BarChart3 size={21} />, to: "/admin/relatorios" },
+        { label: "Exportar CSV", icon: <Download size={21} />, onClick: exportAppointments },
+      ]} />
 
-      {filteredItems.length ? (
+      {selectedItems.length ? (
         <section className="surface overflow-hidden">
-          {filteredItems.map((a: any) => (
+          {selectedDay && <div className="border-b border-black/5 px-4 py-3 text-sm font-bold sm:hidden">Agendamentos • {new Date(`${selectedDay}T12:00:00`).toLocaleDateString("pt-BR")}</div>}
+          {selectedItems.map((a: any) => (
             <div
               key={a.id}
               className="grid grid-cols-[1fr_auto] items-center gap-3 border-b border-black/5 p-5 sm:grid-cols-[.6fr_1fr_1fr_.8fr_auto]"

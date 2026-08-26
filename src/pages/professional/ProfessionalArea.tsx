@@ -24,6 +24,7 @@ import {
   UserCheck,
   UserMinus,
   Users,
+  WalletCards,
   X,
 } from "lucide-react";
 import { AppShell } from "../../components/AppShell";
@@ -38,6 +39,7 @@ import {
   Modal,
 } from "../../components/ui";
 import { AppointmentCalendar } from "../../components/AppointmentCalendar";
+import { MobileAgendaActions } from "../../components/MobileAgendaActions";
 import { clients, images } from "../../data/mock";
 import { apiFetch } from "../../lib/api";
 import { WhatsAppIntegrationPage } from "../WhatsAppIntegration";
@@ -447,6 +449,8 @@ function ProfessionalRescheduleRequests() {
 function ProfessionalAgenda() {
   const [view, setView] = useState("Mês");
   const [anchorDate, setAnchorDate] = useState(() => new Date());
+  const [selectedDay, setSelectedDay] = useState("");
+  const [quickStatus, setQuickStatus] = useState("");
   const [updating, setUpdating] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("Agenda atualizada");
@@ -619,6 +623,11 @@ function ProfessionalAgenda() {
         value: a.value,
         photo: a.client_avatar_url,
       }));
+  const selectedAgendaItems = agendaItems.filter((item) => {
+    const day = String(item.starts_at || "").slice(0, 10);
+    const rawStatus = String(item.rawStatus || remote.find((entry) => entry.id === item.id)?.status || "");
+    return (!selectedDay || day === selectedDay) && (!quickStatus || rawStatus === quickStatus);
+  });
   const periodLabel =
     view === "Mês"
       ? anchorDate.toLocaleDateString("pt-BR", {
@@ -678,8 +687,9 @@ function ProfessionalAgenda() {
     }
   };
   return (
-    <div className="animate-fade-up">
+    <div className="agenda-mobile-page animate-fade-up">
       <Toast show={toast} message={toastMessage} />
+      <div className="hidden sm:block">
       <PageHeader
         eyebrow="GESTÃO DE TEMPO"
         title="Agenda profissional"
@@ -697,6 +707,7 @@ function ProfessionalAgenda() {
           </div>
         }
       />
+      </div>
       <ProfessionalRescheduleRequests />
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex rounded-2xl bg-warm p-1">
@@ -730,6 +741,10 @@ function ProfessionalAgenda() {
           </button>
         </div>
       </div>
+      <div className="no-scrollbar mb-3 flex gap-2 overflow-x-auto sm:hidden">
+        {[{ label: "Hoje", value: "" }, { label: "Solicitados", value: "requested" }, { label: "Confirmados", value: "confirmed" }, { label: "Cancelados", value: "cancelled" }].map((chip) => <button key={chip.label} type="button" onClick={() => { setQuickStatus(chip.value); if (!chip.value) setSelectedDay(new Date().toISOString().slice(0, 10)); }} className={`chip shrink-0 ${quickStatus === chip.value ? "!bg-ink !text-white" : ""}`}>{chip.label}</button>)}
+        <a href="/profissional/disponibilidade" className="chip shrink-0 !bg-champagne !text-white">Bloquear horário</a>
+      </div>
       <div className="mb-5">
         <AppointmentCalendar
           month={anchorDate}
@@ -744,8 +759,16 @@ function ProfessionalAgenda() {
             setSelectedIntake(item.intake_data);
             setSelectedIntakeClient(item.client || "Cliente");
           }}
+          selectedDate={selectedDay}
+          onDateSelect={setSelectedDay}
         />
       </div>
+      <MobileAgendaActions items={[
+        { label: "Minha agenda", icon: <CalendarDays size={21} />, to: "/profissional/agenda" },
+        { label: "Disponibilidade", icon: <Clock3 size={21} />, to: "/profissional/disponibilidade" },
+        { label: "Clientes", icon: <Users size={21} />, to: "/profissional/clientes" },
+        { label: "Comissões", icon: <WalletCards size={21} />, to: "/profissional/comissoes" },
+      ]} />
       <section className="surface overflow-hidden">
         <div className="grid grid-cols-[64px_1fr] border-b border-black/[.05] bg-warm/60 p-4 text-[10px] font-bold uppercase tracking-wider text-stone-400">
           <span>Hora</span>
@@ -759,8 +782,8 @@ function ProfessionalAgenda() {
           <div className="p-10 text-center text-xs font-semibold text-rose-700">
             {loadError}
           </div>
-        ) : agendaItems.length ? (
-          agendaItems.map((a, i) => {
+        ) : selectedAgendaItems.length ? (
+          selectedAgendaItems.map((a, i) => {
             const statusKey = String(a.id || i);
             const rawStatus = a.rawStatus || a.status;
             const s = a.status;

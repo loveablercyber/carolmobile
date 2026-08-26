@@ -38,6 +38,8 @@ import {
   Zap,
 } from "lucide-react";
 import { AppShell } from "../../components/AppShell";
+import { AppointmentCalendar } from "../../components/AppointmentCalendar";
+import { MobileAgendaActions } from "../../components/MobileAgendaActions";
 import {
   Avatar,
   Badge,
@@ -925,6 +927,9 @@ const nextBookingDates = () => {
 
 function ClientAgenda() {
   const location = useLocation();
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date());
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState("");
+  const [quickStatus, setQuickStatus] = useState("");
   const dates = useMemo(nextBookingDates, []);
   const discoveryDraft = useMemo(() => {
     try {
@@ -1363,9 +1368,14 @@ function ClientAgenda() {
       (a, b) =>
         new Date(b.starts_at).getTime() - new Date(a.starts_at).getTime(),
     );
+  const visibleUpcoming = upcoming.filter((item) => {
+    const matchesDay = !selectedCalendarDay || String(item.starts_at || "").slice(0, 10) === selectedCalendarDay;
+    return matchesDay && (!quickStatus || item.status === quickStatus);
+  });
   return (
-    <div className="animate-fade-up">
+    <div className="agenda-mobile-page animate-fade-up">
       <Toast show={toast} message={toastMessage} />
+      <div className="hidden sm:block">
       <PageHeader
         eyebrow="MINHA AGENDA"
         title="Seus próximos cuidados"
@@ -1383,9 +1393,26 @@ function ClientAgenda() {
           </button>
         }
       />
+      </div>
+      <div className="mb-3 flex items-center justify-between gap-2 sm:hidden">
+        <button type="button" aria-label="Mês anterior" onClick={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))} className="btn-secondary !min-h-10 !px-3">‹</button>
+        <b className="text-sm capitalize">{calendarMonth.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</b>
+        <button type="button" aria-label="Próximo mês" onClick={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))} className="btn-secondary !min-h-10 !px-3">›</button>
+        <button onClick={() => { setBooking(true); setStep(0); }} className="btn-gold !min-h-10 !rounded-xl !px-3"><Plus size={15} /><span className="sr-only">Novo agendamento</span></button>
+      </div>
+      <div className="no-scrollbar mb-3 flex gap-2 overflow-x-auto sm:hidden">
+        {[{ label: "Próximos", value: "" }, { label: "Confirmados", value: "confirmed" }, { label: "Pendentes", value: "requested" }, { label: "Cancelados", value: "cancelled" }].map((chip) => <button key={chip.label} type="button" onClick={() => { setQuickStatus(chip.value); setSelectedCalendarDay(""); }} className={`chip shrink-0 ${quickStatus === chip.value ? "!bg-ink !text-white" : ""}`}>{chip.label}</button>)}
+      </div>
+      <div className="mb-4 sm:hidden"><AppointmentCalendar month={calendarMonth} items={remoteAppointments as any} statusLabels={clientAppointmentStatus} selectedDate={selectedCalendarDay} onDateSelect={setSelectedCalendarDay} /></div>
+      <MobileAgendaActions items={[
+        { label: "Meus horários", icon: <CalendarDays size={21} />, to: "/cliente/agendamentos" },
+        { label: "Serviços", icon: <Scissors size={21} />, to: "/cliente/servicos" },
+        { label: "Descobrir", icon: <Sparkles size={21} />, to: "/cliente/descobrir" },
+        { label: "Suporte", icon: <MessageCircle size={21} />, to: "/cliente/notificacoes" },
+      ]} />
       <div className="space-y-4">
-        {upcoming.length ? (
-          upcoming.map((appointment, index) => (
+        {visibleUpcoming.length ? (
+          visibleUpcoming.map((appointment, index) => (
             <section
               key={appointment.id}
               className={`${index === 0 ? "hair-gradient text-white shadow-premium" : "surface"} relative overflow-hidden rounded-[28px] p-6 sm:p-8`}

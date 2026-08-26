@@ -37,6 +37,8 @@ type AppointmentCalendarProps = {
   onStatusChange?: (id: string, status: string) => void | Promise<void>;
   onOpenDetails?: (item: AppointmentCalendarItem) => void;
   onOpenDiagnosis?: (item: AppointmentCalendarItem) => void;
+  selectedDate?: string;
+  onDateSelect?: (date: string) => void;
 };
 
 const terminalStatuses = new Set([
@@ -151,6 +153,8 @@ export function AppointmentCalendar({
   onStatusChange,
   onOpenDetails,
   onOpenDiagnosis,
+  selectedDate,
+  onDateSelect,
 }: AppointmentCalendarProps) {
   const [selected, setSelected] = useState<AppointmentCalendarItem | null>(null);
   const days = useMemo(() => {
@@ -191,7 +195,7 @@ export function AppointmentCalendar({
 
   return (
     <section className="surface overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-black/5 p-5">
+      <div className="hidden flex-wrap items-center justify-between gap-3 border-b border-black/5 p-5 sm:flex">
         <div>
           <h2 className="font-display text-2xl font-semibold text-ink">
             Calendario visual
@@ -214,11 +218,11 @@ export function AppointmentCalendar({
           ))}
         </div>
       </div>
-      <div className="overflow-x-auto">
-        <div className="min-w-[760px]">
+      <div className="w-full overflow-hidden sm:overflow-x-auto">
+        <div className="w-full sm:min-w-[760px]">
           <div className="grid grid-cols-7 border-b border-black/5 bg-warm/70 text-center text-[10px] font-bold uppercase tracking-wider text-stone-400">
             {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"].map((day) => (
-              <div key={day} className="p-3">
+              <div key={day} className="px-0 py-2 sm:p-3">
                 {day}
               </div>
             ))}
@@ -229,17 +233,25 @@ export function AppointmentCalendar({
               const dayItems = grouped.get(key) || [];
               const currentMonth = day.getMonth() === month.getMonth();
               const today = key === dateKey(new Date());
+              const active = key === selectedDate || (!selectedDate && today);
               return (
                 <div
                   key={key}
-                  className={`min-h-32 border-b border-r border-black/5 p-2 last:border-r-0 ${
+                  onClick={() => onDateSelect?.(key)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") onDateSelect?.(key);
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${day.toLocaleDateString("pt-BR")}${dayItems.length ? `, ${dayItems.length} agendamento(s)` : ", sem agendamentos"}`}
+                  className={`min-h-[52px] min-w-0 border-b border-r border-black/5 px-0.5 py-1 text-center sm:min-h-32 sm:p-2 sm:text-left ${
                     currentMonth ? "bg-white" : "bg-stone-50/70"
                   }`}
                 >
-                  <div className="mb-2 flex items-center justify-between">
+                  <div className="flex items-center justify-center sm:mb-2 sm:justify-between">
                     <span
-                      className={`grid h-7 w-7 place-items-center rounded-full text-xs font-bold ${
-                        today
+                      className={`grid h-7 w-7 place-items-center rounded-full text-[11px] font-bold ${
+                        active
                           ? "bg-ink text-white"
                           : currentMonth
                             ? "text-ink"
@@ -249,12 +261,17 @@ export function AppointmentCalendar({
                       {day.getDate()}
                     </span>
                     {dayItems.length > 2 && (
-                      <span className="text-[9px] font-bold text-stone-400">
+                      <span className="hidden text-[9px] font-bold text-stone-400 sm:inline">
                         {dayItems.length}
                       </span>
                     )}
                   </div>
-                  <div className="space-y-1.5">
+                  <div className="mt-1 flex h-2 items-center justify-center gap-0.5 sm:hidden" aria-hidden="true">
+                    {Array.from(new Set(dayItems.map((item) => visualStatus(item).dot))).slice(0, 3).map((dot) => (
+                      <span key={dot} className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+                    ))}
+                  </div>
+                  <div className="hidden space-y-1.5 sm:block">
                     {dayItems.slice(0, 4).map((item) => {
                       const visual = visualStatus(item);
                       return (
@@ -282,6 +299,11 @@ export function AppointmentCalendar({
             })}
           </div>
         </div>
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-1 border-t border-black/5 px-3 py-2 text-[9px] font-bold text-stone-500 sm:hidden">
+        {[["bg-emerald-500", "Agendado"], ["bg-amber-500", "Pendente"], ["bg-stone-700", "Expirado"], ["bg-rose-500", "Cancelado"]].map(([color, label]) => (
+          <span key={label} className="inline-flex items-center gap-1"><span className={`h-1.5 w-1.5 rounded-full ${color}`} />{label}</span>
+        ))}
       </div>
       <Modal
         open={Boolean(selected)}

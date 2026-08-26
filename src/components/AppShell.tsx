@@ -138,7 +138,14 @@ export function AppShell({
         .then((result) => setAlertItems(result.data.items))
         .catch((error) => console.error("Notification menu error", error));
   }, [user?.id]);
-  const mobileNav = nav.slice(0, 5);
+  const mobilePaths: Record<Role, string[]> = {
+    cliente: ["/cliente/inicio", "/cliente/agendamentos", "/cliente/servicos", "/cliente/descobrir", "/cliente/perfil"],
+    profissional: ["/profissional/dashboard", "/profissional/agenda", "/profissional/clientes", "/profissional/servicos", "/profissional/comissoes"],
+    admin: ["/admin/dashboard", "/admin/agendamentos", "/admin/clientes", "/admin/profissionais", "/admin/servicos"],
+  };
+  const mobileNav = mobilePaths[role]
+    .map((path) => nav.find((item) => item.path === path))
+    .filter((item): item is (typeof nav)[number] => Boolean(item));
   const title = useMemo(
     () =>
       nav.find((n) => location.pathname.startsWith(n.path))?.label ??
@@ -208,17 +215,20 @@ export function AppShell({
         {sidebar}
       </div>
       <div className="lg:pl-[260px]">
-        <header className="glass sticky top-0 z-40 flex h-[74px] items-center border-b border-black/[.05] px-4 sm:px-7 lg:px-10">
+        <header className="glass sticky top-0 z-40 flex h-[64px] items-center border-b border-black/[.05] px-3 sm:h-[74px] sm:px-7 lg:px-10">
           <button
             aria-label="Abrir menu"
             onClick={() => setMobileMenu(true)}
-            className="mr-3 grid h-10 w-10 place-items-center rounded-xl bg-white lg:hidden"
+            className="mr-2 grid h-10 w-10 place-items-center rounded-xl bg-white lg:hidden"
           >
             <Menu size={20} />
           </button>
           <div className="lg:hidden">
             <Logo compact />
           </div>
+          <h1 className="pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap font-display text-lg font-semibold sm:text-xl lg:hidden">
+            {role === "admin" ? "Admin" : role === "profissional" ? "Profissional" : "Cliente"} <span aria-hidden="true">•</span> {title}
+          </h1>
           <div className="hidden lg:block">
             <span className="text-xs font-semibold text-stone-400">
               Carol Sol /{" "}
@@ -323,7 +333,7 @@ export function AppShell({
             </button>
           </div>
         </header>
-        <main className="safe-bottom mx-auto max-w-[1500px] p-4 sm:p-7 lg:p-10">
+        <main className="safe-bottom mx-auto max-w-[1500px] px-3 py-4 sm:p-7 lg:p-10">
           {children}
         </main>
       </div>
