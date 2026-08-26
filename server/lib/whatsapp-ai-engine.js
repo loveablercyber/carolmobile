@@ -5700,19 +5700,53 @@ export async function processIncomingWhatsAppWebhook(payload = {}, runtime = {})
     [conversationId, settings.resumeKeyword],
   );
   if (Number(count.rows[0]?.total || 0) >= settings.maxAutoMessages) {
+    const responseText =
+      "Nossa conversa atingiu o limite desta etapa automática. Vou encaminhar para a equipe continuar com você por aqui, tudo bem? 😊";
     await query(
       `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
-       values($1,$2,'auto_message_limit_reached','warning',$3)`,
+       values($1,$2,'auto_message_limit_handoff','warning',$3)`,
       [
         conversationId,
         inboundMessageId,
         JSON.stringify({
           total: Number(count.rows[0]?.total || 0),
           limit: settings.maxAutoMessages,
-          action: "continue_ai",
+          action: "reply_and_handoff",
         }),
       ],
     );
+    await sendTextAndRecord({
+      normalized,
+      conversationId,
+      text: responseText,
+      reason: "auto_message_limit_handoff",
+    });
+    await requestHumanAttention({
+      conversationId,
+      messageId: inboundMessageId,
+      reason: "auto_message_limit",
+      responseText,
+      pauseAi: true,
+    });
+    await sendBaileysPresence({ number: normalized.phoneNumber, presence: "paused" });
+    await logAiRequest({
+      conversationId,
+      messageId: inboundMessageId,
+      provider: "local_control",
+      model: "auto_message_limit",
+      status: "human_handoff",
+      retryCount: 0,
+      fallbackUsed: false,
+      queueLatencyMs,
+      providerLatencyMs: 0,
+      totalLatencyMs: Date.now() - receivedAt.getTime(),
+    });
+    return {
+      ok: true,
+      replied: true,
+      reason: "auto_message_limit_handoff",
+      conversationId,
+    };
   }
 
   // 6.5. Safety/Medical Classification Check (Nível 4)

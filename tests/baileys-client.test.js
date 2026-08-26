@@ -7,6 +7,7 @@ import {
   ensureBaileysReady,
   getBaileysQr,
   getBaileysStatus,
+  getBaileysWebhookStatus,
   logoutBaileysSession,
   normalizeBaileysStatusValue,
   normalizeBaileysNumber,
@@ -193,6 +194,28 @@ test("ready Evolution keepalive configures the webhook target", async () => {
     "CONNECTION_UPDATE",
     "QRCODE_UPDATED",
   ]);
+});
+
+test("reads the configured Evolution webhook from the provider", async () => {
+  configure();
+  process.env.BAILEYS_PROVIDER = "evolution";
+  process.env.BAILEYS_DEFAULT_INSTANCE = "carolsol";
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, "https://whatsapp.example.test/webhook/find/carolsol");
+    assert.equal(options.method, "GET");
+    return new Response(JSON.stringify({
+      enabled: true,
+      url: "https://agenda.carolsol.com.br/api/whatsapp?resource=webhook",
+      events: ["MESSAGES_UPSERT"],
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const result = await getBaileysWebhookStatus();
+  assert.equal(result.data.enabled, true);
+  assert.match(result.data.url, /agenda\.carolsol\.com\.br/);
 });
 
 test("ready wrapper keepalive configures its webhook endpoint", async () => {

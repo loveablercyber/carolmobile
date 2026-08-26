@@ -199,6 +199,12 @@ function evolutionRequestOptions(path, { method = "GET", body } = {}, config) {
       },
     };
   }
+  if (path === "/api/webhook-status") {
+    return {
+      path: `/webhook/find/${instance}`,
+      method: "GET",
+    };
+  }
   return { path, method, body };
 }
 
@@ -262,6 +268,19 @@ export async function configureBaileysWebhook() {
     method: "POST",
     body: { url: webhookUrl },
   });
+}
+
+export async function getBaileysWebhookStatus() {
+  const config = baileysConfig();
+  if (config.provider === "evolution") {
+    return request("/api/webhook-status");
+  }
+  const status = await getBaileysStatus();
+  return {
+    ok: true,
+    status: status.status,
+    data: status.data?.webhook || {},
+  };
 }
 
 export async function ensureBaileysReady({

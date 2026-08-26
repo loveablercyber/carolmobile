@@ -5,6 +5,7 @@ import {
   ensureBaileysReady,
   getBaileysQr,
   getBaileysStatus,
+  getBaileysWebhookStatus,
   logoutBaileysSession,
   requestBaileysPairingCode,
   resetBaileysSession,
@@ -165,6 +166,37 @@ async function getPanel(user) {
   if (config.configured)
     try {
       live = (await getBaileysStatus()).data;
+      try {
+        const webhookStatus = (await getBaileysWebhookStatus()).data || {};
+        const webhookUrl = webhookStatus.url || webhookStatus.webhookUrl || webhookStatus.target || "";
+        const latestInbound = await query(
+          `select wm.created_at,wc.phone_number
+             from public.whatsapp_messages wm
+             join public.whatsapp_conversations wc on wc.id=wm.conversation_id
+            where wm.direction='inbound' and wm.sender_type='client'
+            order by wm.created_at desc limit 1`,
+        ).then((result) => result.rows[0] || null).catch(() => null);
+        live.webhook = {
+          ...(live.webhook || {}),
+          ...webhookStatus,
+          configured: Boolean(webhookUrl) && webhookStatus.enabled !== false,
+          target: webhookUrl || null,
+          lastIncomingMessageAt:
+            live.webhook?.lastIncomingMessageAt || latestInbound?.created_at || null,
+          lastIncomingFrom:
+            live.webhook?.lastIncomingFrom || latestInbound?.phone_number || null,
+          lastIncomingFromMe:
+            live.webhook?.lastIncomingFromMe ?? (latestInbound ? false : null),
+          lastIncomingHasText:
+            live.webhook?.lastIncomingHasText ?? (latestInbound ? true : null),
+        };
+      } catch (webhookError) {
+        live.webhook = {
+          ...(live.webhook || {}),
+          configured: false,
+          lastWebhookError: webhookError.message,
+        };
+      }
       if (["connecting", "qrcode", "pairing_code"].includes(normalizeStatus(live))) {
         try {
           const qr = (await getBaileysQr()).data;
@@ -281,21 +313,21 @@ async function action(user, body) {
     if (conversation) {
       [messages, logs, requests, queue] = await Promise.all([
         query(
-          `select direction,sender_type,left(coalesce(body,''),300) as body,created_at
+          `select id,direction,sender_type,left(coalesce(body,''),300) as body,created_at
              from public.whatsapp_messages where conversation_id=$1
-            order by created_at desc limit 8`,
+            order by created_at desc limit 20`,
           [conversation.id],
         ).then((result) => result.rows),
         query(
-          `select event_type,status,error_message,details,created_at
+          `select message_id,event_type,status,error_message,details,created_at
              from public.whatsapp_message_logs where conversation_id=$1
-            order by created_at desc limit 12`,
+            order by created_at desc limit 30`,
           [conversation.id],
         ).then((result) => result.rows),
         query(
-          `select provider,model,status,error_code,error_message,total_latency_ms,created_at
+          `select message_id,provider,model,status,error_code,error_message,total_latency_ms,created_at
              from public.ai_request_logs where conversation_id=$1
-            order by created_at desc limit 6`,
+            order by created_at desc limit 20`,
           [conversation.id],
         ).then((result) => result.rows),
         query(
@@ -307,9 +339,23 @@ async function action(user, body) {
       ]);
     }
 
-    const latestLog = logs[0] || null;
-    const latestRequest = requests[0] || null;
     const latestMessage = messages[0] || null;
+    const latestInbound = messages.find((item) => item.direction === "inbound") || null;
+    const latestOutbound = latestInbound
+      ? messages.find(
+          (item) => item.direction === "outbound" &&
+            new Date(item.created_at).getTime() >= new Date(latestInbound.created_at).getTime(),
+        ) || null
+      : null;
+    const latestLog = latestInbound
+      ? logs.find((item) => item.message_id === latestInbound.id) || null
+      : logs[0] || null;
+    const latestRequest = latestInbound
+      ? requests.find((item) => item.message_id === latestInbound.id) || null
+      : requests[0] || null;
+    const processingAgeSeconds = latestInbound
+      ? Math.max(0, Math.round((Date.now() - new Date(latestInbound.created_at).getTime()) / 1000))
+      : null;
     let reason = "ready_or_waiting_new_message";
     if (!conversation) reason = "webhook_not_received_for_phone";
     else if (settings?.enabled === false) reason = "ai_globally_disabled";
@@ -317,11 +363,13 @@ async function action(user, body) {
       reason = "conversation_paused_for_human";
     else if (latestLog?.event_type === "ai_skipped")
       reason = String(latestLog?.details?.reason || "ai_skipped");
+    else if (latestOutbound) reason = "reply_recorded_for_latest_inbound";
     else if (latestRequest?.status && latestRequest.status !== "success")
       reason = "ai_provider_failed";
-    else if (latestMessage?.direction === "outbound") reason = "last_reply_sent";
     else if (queue.some((item) => item.processed === false)) reason = "incoming_message_pending";
-    else if (latestMessage?.direction === "inbound") reason = "inbound_without_reply";
+    else if (latestRequest?.status === "success") reason = "ai_succeeded_but_reply_not_recorded";
+    else if (latestInbound && processingAgeSeconds > 300) reason = "inbound_processing_stalled";
+    else if (latestInbound) reason = "inbound_processing";
 
     return {
       ok: true,
@@ -331,8 +379,11 @@ async function action(user, body) {
         settings,
         conversation,
         latestMessage,
+        latestInbound,
+        latestOutbound,
         latestLog,
         latestRequest,
+        processingAgeSeconds,
         pendingQueueCount: queue.filter((item) => item.processed === false).length,
         messages,
         logs,

@@ -592,6 +592,10 @@ function ConnectionPanel({
             <Info label="Último provedor" value={phoneDiagnostic.latestRequest?.provider || "—"} />
             <Info label="Resultado da IA" value={phoneDiagnostic.latestRequest?.status || "—"} />
             <Info label="Último evento" value={phoneDiagnostic.latestLog?.event_type || "—"} />
+            <Info
+              label="Tempo desde a mensagem"
+              value={phoneDiagnostic.processingAgeSeconds == null ? "—" : `${phoneDiagnostic.processingAgeSeconds}s`}
+            />
             <Info label="Último erro" value={phoneDiagnostic.latestRequest?.error_message || phoneDiagnostic.latestLog?.error_message || "—"} />
           </div>
           {phoneDiagnostic.reason === "conversation_paused_for_human" ? (
