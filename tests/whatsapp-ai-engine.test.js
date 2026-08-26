@@ -51,6 +51,9 @@ import {
   prepareAssistantDialogueResponse,
   resolvePendingDialogueReply,
   recoverDialogueStateFromHistory,
+  extractClientCpf,
+  shouldEnforceAutoMessageLimit,
+  shouldPreserveBookingStateAfterIdle,
 } from "../server/lib/whatsapp-ai-engine.js";
 
 const originalQuery = pool.query;
@@ -641,6 +644,19 @@ test("answers Fibra Russa availability from the active catalog", () => {
   assert.match(response, /^Sim, trabalhamos com Fibra Russa/i);
   assert.match(response, /fibra sintética/i);
   assert.doesNotMatch(response, /Você faz aplicação/i);
+});
+
+test("accepts CPF only as eleven digits and explains a single format", () => {
+  assert.equal(extractClientCpf("31595101829"), "31595101829");
+  assert.equal(extractClientCpf("315.951.018-29"), "");
+  assert.equal(extractClientCpf("CPF: 31595101829"), "");
+});
+
+test("keeps active booking state after idle time and bypasses the generic message limit", () => {
+  const bookingState = { status: "awaiting_contact", serviceId: "service-1" };
+  assert.equal(shouldPreserveBookingStateAfterIdle(bookingState), true);
+  assert.equal(shouldEnforceAutoMessageLimit(12, 12, bookingState), false);
+  assert.equal(shouldEnforceAutoMessageLimit(12, 12, {}), true);
 });
 
 test("does not select the first service when a commercial term matches multiple options", () => {

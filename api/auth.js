@@ -4,6 +4,7 @@ import { query, transaction } from '../server/lib/db.js'
 import { createSession, readSession, setSessionCookie, clearSessionCookie } from '../server/lib/auth.js'
 import { appError, getBody, handleError, methodNotAllowed, send } from '../server/lib/http.js'
 import { sendEmail, sendWhatsApp } from '../server/lib/integrations.js'
+import { brazilianPhoneCandidates, normalizeBrazilianPhone } from '../server/lib/phone.js'
 
 export async function processReferralCode(client, { refCode, newClientId, fullName, phone, userId }) {
   const code = String(refCode || '').trim().toUpperCase().slice(0, 80)
@@ -140,16 +141,30 @@ export default async function handler(req, res) {
     if (action === 'register') {
       const fullName = String(body.fullName || '').trim()
       const email = String(body.email || '').trim().toLowerCase()
-      const phone = String(body.phone || '').trim() || null
+      const rawPhone = String(body.phone || '').trim()
+      const phone = rawPhone ? normalizeBrazilianPhone(rawPhone) : null
       const refCode = body.refCode
       const password = String(body.password || '')
       if (fullName.length < 3) throw appError('Informe seu nome completo.')
       if (!/^\S+@\S+\.\S+$/.test(email)) throw appError('Informe um e-mail válido.')
+      if (rawPhone && !phone) throw appError('Informe o WhatsApp com DDI 55, DDD e número. Exemplo: 5514997334865.')
       if (password.length < 8) throw appError('A senha precisa ter pelo menos 8 caracteres.')
       const passwordHash = await bcrypt.hash(password, 12)
       const profile = await transaction(async client => {
         const existing = await client.query('select 1 from auth.users where lower(email) = lower($1)', [email])
         if (existing.rowCount) throw appError('Este e-mail já está cadastrado.', 409)
+        if (phone) {
+          const duplicatePhone = await client.query(
+            `select 1
+               from public.profiles p
+               left join auth.users u on u.id=p.id
+              where regexp_replace(coalesce(p.phone,''), '\\D', '', 'g')=any($1::text[])
+                 or regexp_replace(coalesce(u.phone,''), '\\D', '', 'g')=any($1::text[])
+              limit 1`,
+            [brazilianPhoneCandidates(phone)],
+          )
+          if (duplicatePhone.rowCount) throw appError('Este WhatsApp já está cadastrado.', 409)
+        }
         const { rows: users } = await client.query(`insert into auth.users(email, phone, encrypted_password, email_confirmed_at, raw_user_meta_data) values ($1,$2,$3,now(),$4) returning id`, [email, phone, passwordHash, JSON.stringify({ name: fullName })])
         const userId = users[0].id
         const { rows: profiles } = await client.query(`insert into public.profiles(id, role, full_name, phone, notification_preferences) values ($1,'client',$2,$3,'{"email":true,"whatsapp":true,"push":true}') returning id, role, full_name, phone, avatar_url`, [userId, fullName, phone])
@@ -185,12 +200,16 @@ export default async function handler(req, res) {
     const identifier = String(body.identifier || body.email || '').trim()
     const password = String(body.password || '')
     if (!identifier || !password) throw appError('Informe e-mail/telefone e senha.')
+    const identifierPhone = normalizeBrazilianPhone(identifier)
+    const phoneCandidates = identifierPhone ? brazilianPhoneCandidates(identifierPhone) : []
     const { rows } = await query(`
       select p.id, p.role, p.full_name, p.phone, p.avatar_url, p.account_status, u.email, u.encrypted_password
       from auth.users u join public.profiles p on p.id = u.id
-      where lower(u.email) = lower($1) or u.phone = $1 or p.phone = $1
+      where lower(u.email) = lower($1)
+         or regexp_replace(coalesce(u.phone,''), '\\D', '', 'g')=any($2::text[])
+         or regexp_replace(coalesce(p.phone,''), '\\D', '', 'g')=any($2::text[])
       limit 1
-    `, [identifier])
+    `, [identifier, phoneCandidates])
     const user = rows[0]
     if (user && ['blocked','anonymized','deleted'].includes(user.account_status))
       throw appError('Esta conta não possui acesso ativo.', 403)

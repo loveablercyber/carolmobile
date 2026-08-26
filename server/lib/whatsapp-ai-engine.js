@@ -2248,14 +2248,9 @@ function normalizeClientCpf(value) {
   return digits.length === 11 ? digits : "";
 }
 
-function extractClientCpf(text) {
+export function extractClientCpf(text) {
   const value = clean(text);
-  const labeled = value.match(/(?:cpf|documento)\s*:?\s*([0-9.\-]{11,14})/i);
-  if (labeled) return normalizeClientCpf(labeled[1]);
-  const formatted = value.match(/\b\d{3}\.?\d{3}\.?\d{3}-\d{2}\b/);
-  if (formatted) return normalizeClientCpf(formatted[0]);
-  const digits = value.replace(/\D/g, "");
-  if (digits.length === 11 && !/^\d{2}9\d{8}$/.test(digits)) return digits;
+  if (/^\d{11}$/.test(value) && !/^\d{2}9\d{8}$/.test(value)) return value;
   return "";
 }
 
@@ -2530,7 +2525,7 @@ function bookingContactPrompt(state, missingContact = []) {
       : next === "e-mail real"
         ? "Qual seu e-mail real? 📧"
         : next === "CPF"
-          ? "Qual seu CPF? 📄"
+          ? "Qual seu CPF? Envie somente os 11 números, sem pontos ou traço. Exemplo: 12345678900 📄"
           : next === "data de nascimento"
             ? "Qual sua data de nascimento? Pode enviar no formato 10/02/1990 📅"
             : "Qual telefone deseja usar para contato? 📱";
@@ -4746,6 +4741,14 @@ export function buildAiConversationMessage({
   return `${optionalContext.slice(0, optionalBudget)}\n\n${requiredContext}`.trim();
 }
 
+export function shouldPreserveBookingStateAfterIdle(state) {
+  return isActiveBookingState(state);
+}
+
+export function shouldEnforceAutoMessageLimit(total, limit, bookingState) {
+  return Number(total || 0) >= Number(limit || 0) && !isActiveBookingState(bookingState);
+}
+
 async function saveDialogueState(conversationId, state) {
   await query(
     `update public.whatsapp_conversations
@@ -5630,13 +5633,16 @@ export async function processIncomingWhatsAppWebhook(payload = {}, runtime = {})
     const idleDiffMinutes = (processingStartedAt.getTime() - lastMsgAt.getTime()) / (1000 * 60);
     if (idleDiffMinutes > maxIdleMinutes) {
       idleExpired = true;
-      await saveBookingState(conversationId, {});
-      recorded.conversation.booking_state = {};
-      initialBookingState = {};
+      const preserveBooking = shouldPreserveBookingStateAfterIdle(initialBookingState);
+      if (!preserveBooking) {
+        await saveBookingState(conversationId, {});
+        recorded.conversation.booking_state = {};
+        initialBookingState = {};
+      }
       await query(
         `insert into public.whatsapp_message_logs(conversation_id,message_id,event_type,status,details)
          values($1,$2,'conversation_idle_expired','info',$3)`,
-        [conversationId, inboundMessageId, JSON.stringify({ idleDiffMinutes, maxIdleMinutes })],
+        [conversationId, inboundMessageId, JSON.stringify({ idleDiffMinutes, maxIdleMinutes, bookingStatePreserved: preserveBooking })],
       ).catch(() => null);
     }
   }
@@ -5714,7 +5720,11 @@ export async function processIncomingWhatsAppWebhook(payload = {}, runtime = {})
         )`,
     [conversationId, settings.resumeKeyword],
   );
-  if (Number(count.rows[0]?.total || 0) >= settings.maxAutoMessages) {
+  if (shouldEnforceAutoMessageLimit(
+    count.rows[0]?.total,
+    settings.maxAutoMessages,
+    initialBookingState,
+  )) {
     const responseText =
       "Nossa conversa atingiu o limite desta etapa automática. Vou encaminhar para a equipe continuar com você por aqui, tudo bem? 😊";
     await query(

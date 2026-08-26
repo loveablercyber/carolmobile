@@ -26,6 +26,10 @@ import {
   loadAppointmentAutomationSettings,
   normalizeAppointmentAutomationSettings,
 } from "../server/lib/appointment-automation.js";
+import {
+  brazilianPhoneCandidates,
+  normalizeBrazilianPhone,
+} from "../server/lib/phone.js";
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -37,6 +41,25 @@ const validUuid = (value, label = "ID") => {
   return id;
 };
 const money = (value) => Number(value || 0);
+
+async function assertPhoneAvailable(client, phone, excludeProfileId = null) {
+  if (!phone) return;
+  const candidates = brazilianPhoneCandidates(phone);
+  const duplicate = await client.query(
+    `select p.id
+       from public.profiles p
+       left join auth.users u on u.id=p.id
+      where ($2::uuid is null or p.id<>$2::uuid)
+        and (
+          regexp_replace(coalesce(p.phone,''), '\\D', '', 'g')=any($1::text[])
+          or regexp_replace(coalesce(u.phone,''), '\\D', '', 'g')=any($1::text[])
+        )
+      limit 1`,
+    [candidates, excludeProfileId],
+  );
+  if (duplicate.rowCount)
+    throw appError("Este WhatsApp já está cadastrado para outra cliente.", 409);
+}
 
 async function ensureMarketingSchema() {
   await query(`
@@ -1130,12 +1153,15 @@ async function getResource(req, user, resource) {
 async function updateProfile(user, body) {
   const fullName = clean(body.fullName);
   const email = clean(body.email).toLowerCase();
-  const phone = clean(body.phone);
+  const rawPhone = clean(body.phone);
+  const phone = rawPhone ? normalizeBrazilianPhone(rawPhone) : "";
   const cpf = clean(body.cpf).replace(/\D/g, "");
   const avatarUrl = clean(body.avatarUrl);
   if (fullName.length < 3) throw appError("Informe o nome completo.");
   if (!/^\S+@\S+\.\S+$/.test(email))
     throw appError("Informe um e-mail válido.");
+  if (rawPhone && !phone)
+    throw appError("Informe o WhatsApp com DDI 55, DDD e número. Exemplo: 5514997334865.");
   if (cpf && !/^\d{11}$/.test(cpf)) throw appError("Informe um CPF valido com 11 digitos.");
   const currentProfile = await query(
     "select avatar_url from public.profiles where id=$1",
@@ -1150,6 +1176,7 @@ async function updateProfile(user, body) {
     throw appError("A foto deve ser enviada pelo upload seguro.");
   return transaction(async (client) => {
     await client.query("alter table public.profiles add column if not exists cpf text").catch(() => null);
+    await assertPhoneAvailable(client, phone, user.id);
     try {
       await client.query(
         "update auth.users set email=$1,phone=$2,updated_at=now() where id=$3",
@@ -3511,7 +3538,8 @@ async function saveAdminProfessional(user, body) {
   requireRole(user, ["admin"]);
   const fullName = clean(body.fullName);
   const email = clean(body.email).toLowerCase();
-  const phone = clean(body.phone) || null;
+  const rawPhone = clean(body.phone);
+  const phone = rawPhone ? normalizeBrazilianPhone(rawPhone) : null;
   const bio = clean(body.bio);
   const specialties = Array.isArray(body.specialties)
     ? body.specialties.map(clean).filter(Boolean)
@@ -3521,6 +3549,8 @@ async function saveAdminProfessional(user, body) {
 
   if (fullName.length < 3) throw appError("Informe o nome completo.");
   if (!/^\S+@\S+\.\S+$/.test(email)) throw appError("Informe um e-mail válido.");
+  if (rawPhone && !phone)
+    throw appError("Informe o WhatsApp com DDI 55, DDD e número. Exemplo: 5514997334865.");
 
   if (body.id) {
     const id = validUuid(body.id, "Profissional");
@@ -3531,6 +3561,7 @@ async function saveAdminProfessional(user, body) {
       );
       if (!profResult.rows[0]) throw appError("Profissional não encontrada.", 404);
       const profileId = profResult.rows[0].profile_id;
+      await assertPhoneAvailable(client, phone, profileId);
 
       const emailCheck = await client.query(
         "select id from auth.users where lower(email)=$1 and id<>$2",
@@ -3586,6 +3617,7 @@ async function saveAdminProfessional(user, body) {
     const passwordHash = await bcrypt.hash(password, 12);
 
     return transaction(async (client) => {
+      await assertPhoneAvailable(client, phone);
       const emailCheck = await client.query(
         "select 1 from auth.users where lower(email)=$1",
         [email]
@@ -3714,48 +3746,17 @@ async function saveAdminProfessionalAvailability(user, body) {
 
 async function saveAdminClient(user, body) {
   requireRole(user, ["admin", "professional"]);
-  console.log("[DEBUG saveAdminClient] Received body payload:", JSON.stringify(body));
-
-  const executeQuery = async (conn, sql, params = []) => {
-    console.log("[DEBUG SQL]:", sql);
-    console.log("[DEBUG PARAMS]:", JSON.stringify(params.map((val, idx) => ({
-      index: `$${idx + 1}`,
-      value: val,
-      type: typeof val,
-    }))));
-    try {
-      const res = await conn.query(sql, params);
-      console.log("[DEBUG SUCCESS]");
-      return res;
-    } catch (err) {
-      console.error("[DEBUG ERROR]:", err.message);
-      throw err;
-    }
-  };
-
-  const executeGlobalQuery = async (sql, params = []) => {
-    console.log("[DEBUG GLOBAL SQL]:", sql);
-    console.log("[DEBUG GLOBAL PARAMS]:", JSON.stringify(params.map((val, idx) => ({
-      index: `$${idx + 1}`,
-      value: val,
-      type: typeof val,
-    }))));
-    try {
-      const res = await query(sql, params);
-      console.log("[DEBUG GLOBAL SUCCESS]");
-      return res;
-    } catch (err) {
-      console.error("[DEBUG GLOBAL ERROR]:", err.message);
-      throw err;
-    }
-  };
+  const executeQuery = (conn, sql, params = []) => conn.query(sql, params);
+  const executeGlobalQuery = (sql, params = []) => query(sql, params);
 
   await executeGlobalQuery("alter table public.profiles add column if not exists cpf text").catch(() => null);
   const fullName = clean(body.fullName);
   const email = clean(body.email).toLowerCase();
-  const whatsapp = clean(body.whatsapp || body.phone) || null;
+  const rawWhatsapp = clean(body.whatsapp || body.phone);
+  const whatsapp = rawWhatsapp ? normalizeBrazilianPhone(rawWhatsapp) : null;
   const phone = whatsapp;
-  const cpf = clean(body.cpf) || null;
+  const cpfDigits = clean(body.cpf).replace(/\D/g, "");
+  const cpf = cpfDigits || null;
   const instagram = clean(body.instagram) || null;
   const birthDate = body.birthDate ? clean(body.birthDate) : null;
   const notes = clean(body.notes);
@@ -3763,11 +3764,16 @@ async function saveAdminClient(user, body) {
   if (fullName.length < 3) throw appError("Nome completo inválido.");
   if (!/^\S+@\S+\.\S+$/.test(email) || email.endsWith("@carolsol.local"))
     throw appError("Informe um e-mail real e válido.");
+  if (rawWhatsapp && !whatsapp)
+    throw appError("Informe o WhatsApp com DDI 55, DDD e número. Exemplo: 5514997334865.");
+  if (cpf && !/^\d{11}$/.test(cpf))
+    throw appError("Informe o CPF usando somente os 11 números.");
 
   if (!body.id) {
     const password = body.password || temporaryPassword();
     const passwordHash = await bcrypt.hash(password, 12);
     const created = await transaction(async (client) => {
+      await assertPhoneAvailable(client, whatsapp);
       const emailCheck = await executeQuery(client,
         "select id from auth.users where lower(email)=lower($1::text) limit 1",
         [email],
@@ -3883,6 +3889,7 @@ async function saveAdminClient(user, body) {
     );
     if (!clientResult.rows[0]) throw appError("Cliente não encontrada.", 404);
     const profileId = clientResult.rows[0].profile_id;
+    await assertPhoneAvailable(client, whatsapp, profileId);
 
     if (email || body.password) {
       if (email) {

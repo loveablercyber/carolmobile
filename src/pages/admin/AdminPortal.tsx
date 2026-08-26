@@ -624,9 +624,10 @@ export function AdminClientsPage() {
             set={(value) => setForm({ ...form, fullName: value })}
           />
           <Input
-            label="WhatsApp"
+            label="WhatsApp (55 + DDD + número)"
             value={form.whatsapp}
             set={(value) => setForm({ ...form, whatsapp: value })}
+            placeholder="5514997334865"
           />
           <Input
             label="E-mail"
@@ -636,9 +637,10 @@ export function AdminClientsPage() {
           />
           <div className="grid gap-3 sm:grid-cols-2">
             <Input
-              label="CPF"
+              label="CPF (somente 11 números)"
               value={form.cpf}
               set={(value) => setForm({ ...form, cpf: value })}
+              placeholder="12345678900"
             />
             <Input
               label="Data nascimento"
@@ -680,9 +682,9 @@ export function AdminClientsPage() {
         title="Remover cliente"
       >
         <p className="muted">
-          Esta ação anonimiza os dados pessoais de {removing?.name}, remove acesso,
-          notificações, fotos e cartões salvos, preservando histórico financeiro e
-          agendamentos para auditoria.
+          Esta ação exclui permanentemente {removing?.name} e todos os dados vinculados,
+          incluindo acesso, agendamentos, pagamentos, conversas, notificações, fotos e
+          cartões salvos. Não pode ser desfeita.
         </p>
         <button
           disabled={removingBusy}
