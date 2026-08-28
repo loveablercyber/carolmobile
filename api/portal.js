@@ -8,7 +8,12 @@ import {
   sendEmail,
   sendWhatsApp,
 } from "../server/lib/integrations.js";
-import { deactivateSumupPaymentInstrument, createSumupCheckout, sumupConfig } from "../server/lib/sumup.js";
+import {
+  deactivateSumupCheckout,
+  deactivateSumupPaymentInstrument,
+  createSumupCheckout,
+  sumupConfig,
+} from "../server/lib/sumup.js";
 import {
   periodFitsSchedule,
   schedulePeriod,
@@ -236,7 +241,8 @@ async function clientOverview(user) {
 
 async function paymentsResource(user, id) {
   await query("alter table public.payments add column if not exists billing_reason text");
-  let where = "true";
+  await query("alter table public.payments add column if not exists archived_at timestamptz");
+  let where = "pay.archived_at is null";
   const params = [];
   if (user.role === "client") {
     params.push(await clientIdFor(user));
@@ -2252,10 +2258,59 @@ async function markNotification(user, body) {
   return { ok: true };
 }
 
-async function updateManualPayment(user, body) {
+async function updateManualPayment(user, body, method = "PATCH") {
   requireRole(user, ["admin"]);
 
   await query("alter table public.profiles add column if not exists cpf text").catch(() => null);
+  await query("alter table public.payments add column if not exists billing_reason text");
+  await query("alter table public.payments add column if not exists archived_at timestamptz");
+
+  if (method === "DELETE") {
+    const id = validUuid(body.id, "Pagamento");
+    const current = (
+      await query(
+        "select id,status,provider,provider_checkout_id from public.payments where id=$1 and archived_at is null",
+        [id],
+      )
+    ).rows[0];
+    if (!current) throw appError("Pagamento não encontrado.", 404);
+    if (
+      current.provider === "sumup" &&
+      current.provider_checkout_id &&
+      !["paid", "refunded", "cancelled", "expired", "failed"].includes(current.status)
+    ) {
+      await deactivateSumupCheckout(current.provider_checkout_id).catch((error) => {
+        console.error("Failed to deactivate SumUp checkout before archive", error);
+      });
+    }
+    return transaction(async (client) => {
+      const archivedStatus = ["paid", "refunded"].includes(current.status)
+        ? current.status
+        : "cancelled";
+      const { rows } = await client.query(
+        `update public.payments
+         set archived_at=now(),status=$2,updated_at=now()
+         where id=$1 and archived_at is null returning *`,
+        [id, archivedStatus],
+      );
+      await client.query(
+        `insert into public.payment_status_history(payment_id,old_status,new_status,changed_by,notes)
+         values($1,$2,$3,$4,'Cobrança removida da operação pelo administrador')`,
+        [id, current.status, archivedStatus, user.id],
+      );
+      await client.query(
+        `insert into public.audit_logs(actor_id,action,entity_type,entity_id,previous_data,new_data)
+         values($1,'archive','payment',$2,$3,$4)`,
+        [
+          user.id,
+          id,
+          JSON.stringify({ status: current.status }),
+          JSON.stringify({ status: archivedStatus, archived: true }),
+        ],
+      );
+      return rows[0];
+    });
+  }
 
   if (!body.id) {
     const clientId = validUuid(body.clientId, "Cliente");
@@ -2292,10 +2347,12 @@ async function updateManualPayment(user, body) {
   }
 
   const id = validUuid(body.id, "Pagamento");
+  const editAction = clean(body.action) === "edit";
   const receiptAction = clean(body.receiptAction);
   const requestedStatus = clean(body.status);
   if (
     !receiptAction &&
+    !editAction &&
     ![
       "pending",
       "under_review",
@@ -2306,6 +2363,21 @@ async function updateManualPayment(user, body) {
     ].includes(requestedStatus)
   )
     throw appError("Status de pagamento inválido.");
+  if (requestedStatus === "cancelled") {
+    const current = (
+      await query(
+        "select status,provider,provider_checkout_id from public.payments where id=$1 and archived_at is null",
+        [id],
+      )
+    ).rows[0];
+    if (
+      current?.provider === "sumup" &&
+      current.provider_checkout_id &&
+      !["paid", "refunded", "cancelled", "expired", "failed"].includes(current.status)
+    ) {
+      await deactivateSumupCheckout(current.provider_checkout_id);
+    }
+  }
   const result = await transaction(async (client) => {
     const previous = await client.query(
       "select * from public.payments where id=$1 for update",
@@ -2313,11 +2385,31 @@ async function updateManualPayment(user, body) {
     );
     if (!previous.rows[0]) throw appError("Pagamento não encontrado.", 404);
     const payment = previous.rows[0];
-    let status = requestedStatus;
+    let status = requestedStatus || payment.status;
     let receiptUrl = clean(body.receiptUrl) || payment.receipt_url || null;
     let receipt = null;
     let activationContact = null;
     let notes = clean(body.notes) || "Atualização manual pela administração";
+    let amount = Number(payment.amount);
+    let methodName = payment.method;
+    let billingReason = payment.billing_reason || null;
+
+    if (editAction) {
+      const requestedAmount = body.amount == null ? amount : money(body.amount);
+      if (!Number.isFinite(requestedAmount) || requestedAmount <= 0)
+        throw appError("O valor da cobrança deve ser maior que zero.");
+      if (payment.provider === "sumup" && requestedAmount !== amount)
+        throw appError(
+          "O valor de uma cobrança SumUp já gerada não pode ser alterado. Remova-a e gere uma nova cobrança.",
+          409,
+        );
+      amount = requestedAmount;
+      if (!["sumup", "pix_manual"].includes(payment.provider)) {
+        methodName = clean(body.method) || payment.method;
+      }
+      billingReason = clean(body.billingReason) || payment.billing_reason || null;
+      notes = clean(body.notes) || payment.notes || "Cobrança editada pela administração";
+    }
 
     if (receiptAction) {
       const receiptId = validUuid(body.receiptId, "Comprovante");
@@ -2350,30 +2442,51 @@ async function updateManualPayment(user, body) {
         ],
       );
     } else {
-      if (payment.status === status && (body.paidAmount == null || money(body.paidAmount) === Number(payment.paid_amount)))
+      if (
+        !editAction &&
+        payment.status === status &&
+        (body.paidAmount == null || money(body.paidAmount) === Number(payment.paid_amount))
+      )
         return { payment, contact: null, idempotent: true };
       if (payment.status === "paid" && status !== "refunded" && status !== "paid")
         throw appError("Um pagamento confirmado não pode regredir de status.", 409);
-      if (status === "paid" && payment.provider === "sumup")
+      if (requestedStatus && status === "paid" && payment.provider === "sumup")
         throw appError("Sincronize este pagamento diretamente com a SumUp.", 409);
-      if (status === "paid" && payment.provider === "pix_manual")
+      if (requestedStatus && status === "paid" && payment.provider === "pix_manual")
         throw appError("Aprove o comprovante antes de confirmar este Pix.", 409);
+      if (requestedStatus && status === "refunded" && payment.provider === "sumup")
+        throw appError(
+          "O reembolso SumUp precisa ser executado e confirmado no gateway antes da atualização local.",
+          409,
+        );
     }
 
     const paidAmount =
       status === "paid"
-        ? payment.amount
+        ? amount
         : body.paidAmount == null
           ? payment.paid_amount
           : money(body.paidAmount);
+    if (!Number.isFinite(Number(paidAmount)) || Number(paidAmount) < 0 || Number(paidAmount) > amount)
+      throw appError("O valor pago deve estar entre zero e o total da cobrança.");
     const { rows } = await client.query(
-      `update public.payments set status=$1,paid_amount=$2,receipt_url=$3,notes=$4,confirmed_by=case when $1='paid' then $5 else confirmed_by end,paid_at=case when $1='paid' then coalesce(paid_at,now()) else paid_at end,updated_at=now() where id=$6 returning *`,
+      `update public.payments
+       set status=$1,paid_amount=$2,receipt_url=$3,notes=$4,
+           confirmed_by=case when $1='paid' then $5 else confirmed_by end,
+           paid_at=case when $1='paid' then coalesce(paid_at,now()) else paid_at end,
+           amount=$6,method=$7,
+           payment_method=case when provider in ('local','manual') then $7 else payment_method end,
+           billing_reason=$8,updated_at=now()
+       where id=$9 and archived_at is null returning *`,
       [
         status,
         paidAmount,
         receiptUrl,
         notes,
         user.id,
+        amount,
+        methodName,
+        billingReason,
         id,
       ],
     );
@@ -2384,7 +2497,7 @@ async function updateManualPayment(user, body) {
         payment.status,
         status,
         user.id,
-        notes,
+        editAction ? `Cobrança editada: ${notes}` : notes,
       ],
     );
     if (status === "paid" && rows[0].appointment_id)
@@ -2435,7 +2548,7 @@ async function updateManualPayment(user, body) {
       "select profile_id from public.clients where id=$1",
       [rows[0].client_id],
     );
-    if (profile.rows[0]) {
+    if (profile.rows[0] && !editAction) {
       const rejected = receiptAction === "reject";
       const confirmed = status === "paid";
       const notificationData = JSON.stringify({
@@ -2474,7 +2587,15 @@ async function updateManualPayment(user, body) {
       [
         user.id,
         id,
-        JSON.stringify({ status, receiptId: receipt?.id || null, receiptAction }),
+        JSON.stringify({
+          status,
+          amount,
+          method: methodName,
+          billingReason,
+          receiptId: receipt?.id || null,
+          receiptAction,
+          action: editAction ? "edit" : "status",
+        }),
       ],
     );
     return { payment: rows[0], contact: activationContact };
@@ -2686,6 +2807,117 @@ async function createAdminBilling(user, body) {
   ).catch(err => console.error("Failed to insert billing audit log", err));
 
   return result;
+}
+
+async function resendAdminPayment(user, body) {
+  requireRole(user, ["admin"]);
+  const id = validUuid(body.id, "Pagamento");
+  await query("alter table public.payments add column if not exists billing_reason text");
+  await query("alter table public.payments add column if not exists archived_at timestamptz");
+  const payment = (
+    await query(
+      `select pay.*,p.full_name,p.phone,u.email
+       from public.payments pay
+       join public.clients c on c.id=pay.client_id
+       join public.profiles p on p.id=c.profile_id
+       join auth.users u on u.id=p.id
+       where pay.id=$1 and pay.archived_at is null`,
+      [id],
+    )
+  ).rows[0];
+  if (!payment) throw appError("Pagamento não encontrado.", 404);
+  if (["paid", "refunded"].includes(payment.status))
+    throw appError("Uma cobrança paga ou reembolsada não pode ser reenviada.", 409);
+
+  let checkoutUrl = payment.hosted_checkout_url;
+  let regenerated = false;
+  const checkoutAge = Date.now() - new Date(payment.updated_at || payment.created_at).getTime();
+  const checkoutExpired = checkoutAge > 25 * 60 * 1000;
+  if (payment.provider === "sumup") {
+    if (
+      !checkoutUrl ||
+      !payment.provider_checkout_id ||
+      checkoutExpired ||
+      ["failed", "expired", "cancelled"].includes(payment.status)
+    ) {
+      if (payment.provider_checkout_id) {
+        await deactivateSumupCheckout(payment.provider_checkout_id).catch(() => undefined);
+      }
+      const reference = `CAROLSOL-RESEND-${id.slice(0, 8).toUpperCase()}-${Date.now()}`;
+      const baseReturnUrl = sumupConfig().returnUrl;
+      const returnUrl = `${baseReturnUrl}${baseReturnUrl.includes("?") ? "&" : "?"}payment_id=${encodeURIComponent(id)}`;
+      const checkout = await createSumupCheckout({
+        reference,
+        amount: Number(payment.amount),
+        description: `Cobrança: ${payment.billing_reason || payment.notes || "Carol Sol"}`,
+        returnUrl,
+        hostedCheckout: true,
+      });
+      if (!checkout.hostedUrl)
+        throw appError("A SumUp não retornou o novo link de pagamento.", 502);
+      checkoutUrl = checkout.hostedUrl;
+      regenerated = true;
+      await transaction(async (client) => {
+        await client.query(
+          `update public.payments
+           set provider_checkout_id=$2,checkout_reference=$3,hosted_checkout_url=$4,
+               provider_status=$5,status='awaiting_confirmation',failure_reason=null,updated_at=now()
+           where id=$1`,
+          [id, checkout.id, reference, checkout.hostedUrl, checkout.status || "PENDING"],
+        );
+        await client.query(
+          `insert into public.payment_status_history(payment_id,old_status,new_status,changed_by,notes)
+           values($1,$2,'awaiting_confirmation',$3,'Novo link SumUp gerado para reenvio')`,
+          [id, payment.status, user.id],
+        );
+      });
+      await logSumupCheckoutAttempt({
+        paymentId: id,
+        eventType: "checkout.resend",
+        checkout,
+      });
+    }
+  } else {
+    const appUrl = clean(process.env.APP_URL) || "https://agenda.carolsol.com.br";
+    checkoutUrl = `${appUrl}/cliente/pagamentos/${id}`;
+  }
+
+  const reason = payment.billing_reason || payment.notes || "Cobrança Carol Sol";
+  const formattedValue = Number(payment.amount).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+  const text = `Olá, *${payment.full_name}*! 😊\n\nEstamos reenviando sua cobrança:\n*Motivo:* ${reason}\n*Valor:* ${formattedValue}\n\nAcesse o link seguro para consultar e realizar o pagamento:\n${checkoutUrl}`;
+  const deliveries = [];
+  if (payment.phone) {
+    deliveries.push(
+      sendWhatsApp({ to: payment.phone, text }).then(() => "whatsapp"),
+    );
+  }
+  if (payment.email) {
+    deliveries.push(
+      sendEmail({
+        to: payment.email,
+        subject: `Cobrança reenviada - Carol Sol`,
+        html: `<div style="font-family:Arial,sans-serif;color:#292524"><h2>Cobrança Carol Sol</h2><p>Olá, <strong>${payment.full_name}</strong>.</p><p><strong>Motivo:</strong> ${reason}<br/><strong>Valor:</strong> ${formattedValue}</p><p><a href="${checkoutUrl}">Abrir link de pagamento</a></p></div>`,
+      }).then(() => "email"),
+    );
+  }
+  if (!deliveries.length)
+    throw appError("A cliente não possui WhatsApp nem e-mail para reenvio.", 409);
+  const results = await Promise.allSettled(deliveries);
+  const channels = results
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => result.value);
+  if (!channels.length)
+    throw appError("Não foi possível reenviar por WhatsApp ou e-mail.", 502);
+
+  await query(
+    `insert into public.audit_logs(actor_id,action,entity_type,entity_id,new_data)
+     values($1,'resend','payment',$2,$3)`,
+    [user.id, id, JSON.stringify({ channels, regenerated })],
+  );
+  return { id, checkoutUrl, channels, regenerated };
 }
 
 async function addClientNote(user, body) {
@@ -3999,7 +4231,8 @@ async function mutate(user, resource, body, method = "POST") {
   if (resource === "admin-client-removal") return removeAdminClient(user, body);
   if (resource === "referrals") return createReferral(user, body);
   if (resource === "notification-read") return markNotification(user, body);
-  if (resource === "admin-payment") return updateManualPayment(user, body);
+  if (resource === "admin-payment") return updateManualPayment(user, body, method);
+  if (resource === "admin-payment-resend") return resendAdminPayment(user, body);
   if (resource === "admin-billing") return createAdminBilling(user, body);
   if (resource === "client-note") return addClientNote(user, body);
   if (resource === "client-status") return updateClientStatus(user, body);

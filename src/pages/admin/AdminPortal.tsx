@@ -1233,6 +1233,16 @@ export function AdminPaymentsPage() {
     reason: "Sinal",
     notes: "",
   });
+  const [editPayment, setEditPayment] = useState<any>(null);
+  const [editPaymentForm, setEditPaymentForm] = useState({
+    amount: "",
+    paidAmount: "",
+    method: "money",
+    billingReason: "",
+    notes: "",
+  });
+  const [statusPayment, setStatusPayment] = useState<any>(null);
+  const [statusForm, setStatusForm] = useState({ status: "pending", notes: "" });
 
   if (p.loading) return <LoadingState />;
   if (!p.data) return <ErrorBox text={p.error} />;
@@ -1438,6 +1448,126 @@ export function AdminPaymentsPage() {
     }
   };
 
+  const openEditPayment = (payment: any) => {
+    setEditPayment(payment);
+    setEditPaymentForm({
+      amount: String(payment.amount || ""),
+      paidAmount: String(payment.paid_amount || 0),
+      method: payment.method || "money",
+      billingReason: payment.billing_reason || "",
+      notes: payment.notes || "",
+    });
+  };
+
+  const submitEditPayment = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!editPayment) return;
+    const amount = Number(editPaymentForm.amount);
+    const paidAmount = Number(editPaymentForm.paidAmount || 0);
+    if (!Number.isFinite(amount) || amount <= 0 || paidAmount < 0 || paidAmount > amount) {
+      setToast("Confira o valor total e o valor pago.");
+      setTimeout(() => setToast(""), 2600);
+      return;
+    }
+    setBusy(editPayment.id);
+    try {
+      await apiFetch("/api/portal?resource=admin-payment", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: editPayment.id,
+          action: "edit",
+          amount,
+          paidAmount,
+          method: editPaymentForm.method,
+          billingReason: editPaymentForm.billingReason,
+          notes: editPaymentForm.notes,
+        }),
+      });
+      await p.reload();
+      setEditPayment(null);
+      setToast("Cobrança atualizada.");
+    } catch (error) {
+      console.error("Payment edit error", error);
+      setToast(error instanceof Error ? error.message : "Não foi possível editar a cobrança.");
+    } finally {
+      setBusy("");
+      setTimeout(() => setToast(""), 2800);
+    }
+  };
+
+  const submitPaymentStatus = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!statusPayment) return;
+    setBusy(statusPayment.id);
+    try {
+      await apiFetch("/api/portal?resource=admin-payment", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: statusPayment.id,
+          status: statusForm.status,
+          notes: statusForm.notes || "Status alterado pelo administrador",
+        }),
+      });
+      await p.reload();
+      setStatusPayment(null);
+      setToast("Status da cobrança atualizado.");
+    } catch (error) {
+      console.error("Payment status error", error);
+      setToast(error instanceof Error ? error.message : "Não foi possível alterar o status.");
+    } finally {
+      setBusy("");
+      setTimeout(() => setToast(""), 2800);
+    }
+  };
+
+  const resendPayment = async (payment: any) => {
+    setBusy(payment.id);
+    try {
+      const response = await apiFetch<{ data: any }>(
+        "/api/portal?resource=admin-payment-resend",
+        { method: "POST", body: JSON.stringify({ id: payment.id }) },
+      );
+      const result = response.data;
+      await p.reload();
+      const channels = result?.channels?.join(" e ") || "canal disponível";
+      setToast(
+        result?.regenerated
+          ? `Novo link gerado e reenviado por ${channels}.`
+          : `Cobrança reenviada por ${channels}.`,
+      );
+    } catch (error) {
+      console.error("Payment resend error", error);
+      setToast(error instanceof Error ? error.message : "Não foi possível reenviar a cobrança.");
+    } finally {
+      setBusy("");
+      setTimeout(() => setToast(""), 3200);
+    }
+  };
+
+  const removePayment = async (payment: any) => {
+    if (
+      !window.confirm(
+        `Remover a cobrança de ${payment.client}? Ela sairá da lista, mas o histórico financeiro será preservado para auditoria.`,
+      )
+    )
+      return;
+    setBusy(payment.id);
+    try {
+      await apiFetch("/api/portal?resource=admin-payment", {
+        method: "DELETE",
+        body: JSON.stringify({ id: payment.id }),
+      });
+      await p.reload();
+      setToast("Cobrança removida da lista.");
+    } catch (error) {
+      console.error("Payment removal error", error);
+      setToast(error instanceof Error ? error.message : "Não foi possível remover a cobrança.");
+    } finally {
+      setBusy("");
+      setTimeout(() => setToast(""), 2800);
+    }
+  };
+
   return (
     <div>
       <Toast show={!!toast} message={toast} />
@@ -1507,8 +1637,9 @@ export function AdminPaymentsPage() {
               <Badge tone={tone(x.status)}>
                 {labels[x.status] || x.status}
               </Badge>
-              {x.latest_receipt_status === "under_review" ? (
-                <span className="flex flex-wrap justify-end gap-2">
+              <div className="flex max-w-md flex-wrap justify-end gap-2">
+                {x.latest_receipt_status === "under_review" ? (
+                  <>
                   <button
                     disabled={busy === x.id}
                     onClick={() =>
@@ -1535,31 +1666,31 @@ export function AdminPaymentsPage() {
                   >
                     Aprovar
                   </button>
-                </span>
-              ) : x.provider === "sumup" && x.provider_checkout_id ? (
-                <button
-                  disabled={busy === x.id}
-                  onClick={() => sync(x.id)}
-                  className="btn-secondary !min-h-9 !px-3"
-                >
-                  {busy === x.id ? "Sincronizando…" : "Atualizar status"}
-                </button>
-              ) : (x.provider === "local" || x.provider === "manual") && x.status !== "paid" ? (
-                <div className="flex gap-2">
+                  </>
+                ) : x.provider === "sumup" && x.provider_checkout_id ? (
                   <button
                     disabled={busy === x.id}
-                    onClick={() => {
-                      setPartialPayment(x);
-                      setPartialForm({
-                        paidAmount: String(x.paid_amount || 0),
-                        notes: "",
-                      });
-                      setPartialModalOpen(true);
-                    }}
+                    onClick={() => sync(x.id)}
                     className="btn-secondary !min-h-9 !px-3"
                   >
-                    Parcial
+                    {busy === x.id ? "Sincronizando…" : "Sincronizar"}
                   </button>
+                ) : (x.provider === "local" || x.provider === "manual") && x.status !== "paid" ? (
+                  <>
+                    <button
+                      disabled={busy === x.id}
+                      onClick={() => {
+                        setPartialPayment(x);
+                        setPartialForm({
+                          paidAmount: String(x.paid_amount || 0),
+                          notes: "",
+                        });
+                        setPartialModalOpen(true);
+                      }}
+                      className="btn-secondary !min-h-9 !px-3"
+                    >
+                      Parcial
+                    </button>
                   <button
                     disabled={busy === x.id}
                     onClick={() => confirm(x.id)}
@@ -1567,12 +1698,52 @@ export function AdminPaymentsPage() {
                   >
                     {busy === x.id ? "Confirmando…" : "Confirmar"}
                   </button>
-                </div>
+                  </>
               ) : x.provider === "pix_manual" && x.status !== "paid" ? (
                 <small className="max-w-28 text-right text-stone-400">
                   Aguardando comprovante
                 </small>
-              ) : <span />}
+                ) : null}
+                <button
+                  type="button"
+                  disabled={busy === x.id}
+                  onClick={() => openEditPayment(x)}
+                  className="btn-secondary !min-h-9 !px-3"
+                  title="Editar cobrança"
+                >
+                  <Pencil size={13} /> Editar
+                </button>
+                <button
+                  type="button"
+                  disabled={busy === x.id}
+                  onClick={() => {
+                    setStatusPayment(x);
+                    setStatusForm({ status: x.status || "pending", notes: "" });
+                  }}
+                  className="btn-secondary !min-h-9 !px-3"
+                  title="Alterar status"
+                >
+                  <ArrowUpDown size={13} /> Status
+                </button>
+                <button
+                  type="button"
+                  disabled={busy === x.id || ["paid", "refunded"].includes(x.status)}
+                  onClick={() => resendPayment(x)}
+                  className="btn-secondary !min-h-9 !px-3"
+                  title="Reenviar cobrança"
+                >
+                  <RefreshCw size={13} /> Reenviar
+                </button>
+                <button
+                  type="button"
+                  disabled={busy === x.id}
+                  onClick={() => removePayment(x)}
+                  className="btn-secondary !min-h-9 !border-rose-200 !px-3 !text-rose-700 hover:!bg-rose-50"
+                  title="Remover cobrança"
+                >
+                  <Trash2 size={13} /> Remover
+                </button>
+              </div>
             </div>
           ))}
         </section>
@@ -1582,6 +1753,120 @@ export function AdminPaymentsPage() {
           text="Os pagamentos aparecerão aqui."
         />
       )}
+
+      <Modal
+        open={Boolean(editPayment)}
+        onClose={() => {
+          if (!busy) setEditPayment(null);
+        }}
+        title="Editar cobrança"
+      >
+        {editPayment ? (
+          <form onSubmit={submitEditPayment} className="space-y-4">
+            <div className="rounded-2xl bg-warm p-4 text-xs">
+              <strong>{editPayment.client}</strong>
+              <span className="mt-1 block text-stone-500">
+                {editPayment.provider === "sumup"
+                  ? "O valor do checkout SumUp não pode ser alterado após a geração."
+                  : "Edite os dados operacionais da cobrança manual."}
+              </span>
+            </div>
+            <Input
+              label="Valor total (R$)"
+              type="number"
+              value={editPaymentForm.amount}
+              set={(value) => setEditPaymentForm((current) => ({ ...current, amount: value }))}
+              disabled={editPayment.provider === "sumup"}
+            />
+            <Input
+              label="Valor pago (R$)"
+              type="number"
+              value={editPaymentForm.paidAmount}
+              set={(value) => setEditPaymentForm((current) => ({ ...current, paidAmount: value }))}
+              disabled={editPayment.provider === "sumup"}
+            />
+            <label className="block">
+              <span className="mb-2 block text-xs font-bold">Método</span>
+              <select
+                className="field"
+                value={editPaymentForm.method}
+                disabled={["sumup", "pix_manual"].includes(editPayment.provider)}
+                onChange={(event) =>
+                  setEditPaymentForm((current) => ({ ...current, method: event.target.value }))
+                }
+              >
+                <option value="money">Dinheiro</option>
+                <option value="pix">Pix local</option>
+                <option value="credit">Cartão de crédito</option>
+                <option value="debit">Cartão de débito</option>
+                <option value="card">SumUp</option>
+              </select>
+            </label>
+            <Input
+              label="Motivo da cobrança"
+              value={editPaymentForm.billingReason}
+              set={(value) => setEditPaymentForm((current) => ({ ...current, billingReason: value }))}
+            />
+            <Input
+              label="Observações"
+              value={editPaymentForm.notes}
+              set={(value) => setEditPaymentForm((current) => ({ ...current, notes: value }))}
+            />
+            <button disabled={busy === editPayment.id} className="btn-primary w-full">
+              {busy === editPayment.id ? "Salvando…" : "Salvar alterações"}
+            </button>
+          </form>
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={Boolean(statusPayment)}
+        onClose={() => {
+          if (!busy) setStatusPayment(null);
+        }}
+        title="Alterar status da cobrança"
+      >
+        {statusPayment ? (
+          <form onSubmit={submitPaymentStatus} className="space-y-4">
+            <div className="rounded-2xl bg-warm p-4 text-xs">
+              <strong>{statusPayment.client}</strong>
+              <span className="mt-1 block text-stone-500">
+                {brl(statusPayment.amount)} · {labels[statusPayment.status] || statusPayment.status}
+              </span>
+            </div>
+            <label className="block">
+              <span className="mb-2 block text-xs font-bold">Novo status</span>
+              <select
+                className="field"
+                value={statusForm.status}
+                onChange={(event) =>
+                  setStatusForm((current) => ({ ...current, status: event.target.value }))
+                }
+              >
+                <option value="pending">Pendente</option>
+                <option value="under_review">Em análise</option>
+                <option value="partial">Pagamento parcial</option>
+                <option value="paid" disabled={statusPayment.provider === "sumup"}>
+                  Pago {statusPayment.provider === "sumup" ? "(sincronize com a SumUp)" : ""}
+                </option>
+                <option value="cancelled">Cancelado</option>
+                <option value="refunded" disabled={statusPayment.provider === "sumup"}>
+                  Reembolsado {statusPayment.provider === "sumup" ? "(confirme na SumUp)" : ""}
+                </option>
+              </select>
+            </label>
+            <Input
+              label="Motivo da alteração"
+              value={statusForm.notes}
+              set={(value) => setStatusForm((current) => ({ ...current, notes: value }))}
+              placeholder="Registre o motivo para o histórico"
+            />
+            <button disabled={busy === statusPayment.id} className="btn-primary w-full">
+              {busy === statusPayment.id ? "Atualizando…" : "Atualizar status"}
+            </button>
+          </form>
+        ) : null}
+      </Modal>
 
       {/* Modal Criar Cobrança */}
       <Modal open={createModalOpen} onClose={() => setCreateModalOpen(false)} title="Criar cobrança manual">
@@ -2960,6 +3245,7 @@ export function AdminAppointmentsPage() {
       setTimeout(() => setToast(""), 2600);
     }
   };
+
   const removeAppointment = async (appointment: any) => {
     if (
       !confirm(

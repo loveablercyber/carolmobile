@@ -190,6 +190,11 @@ export async function createSumupCheckout({
 export const retrieveSumupCheckout = (id) =>
   sumupRequest(`/v0.1/checkouts/${encodeURIComponent(id)}`).then((result) => result.data);
 
+export const deactivateSumupCheckout = (id) =>
+  sumupRequest(`/v0.1/checkouts/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  }).then((result) => result.data);
+
 export const processSumupCheckout = ({ checkoutId, token, customerId }) =>
   sumupRequest(`/v0.1/checkouts/${encodeURIComponent(checkoutId)}`, {
     method: "PUT",
