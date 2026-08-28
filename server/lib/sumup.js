@@ -16,12 +16,91 @@ export function sumupConfig() {
 
 function configured() {
   const config = sumupConfig();
-  if (!config.enabled || !config.apiKey || !config.merchantCode)
+  if (!config.enabled || !config.apiKey)
     throw Object.assign(
       new Error("A integração SumUp ainda não está configurada."),
       { status: 503 },
     );
   return config;
+}
+
+const MERCHANT_CODE_PATTERN = /^[A-Z0-9]{8}$/;
+let merchantCodePromise = null;
+
+const normalizeMerchantCode = (value) =>
+  typeof value === "string" ? value.trim().toUpperCase() : "";
+
+function findMerchantCode(value, depth = 0) {
+  if (!value || depth > 5) return "";
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findMerchantCode(item, depth + 1);
+      if (found) return found;
+    }
+    return "";
+  }
+  if (typeof value !== "object") return "";
+  for (const key of ["merchant_code", "merchantCode"]) {
+    const candidate = normalizeMerchantCode(value[key]);
+    if (MERCHANT_CODE_PATTERN.test(candidate)) return candidate;
+  }
+  for (const nested of Object.values(value)) {
+    const found = findMerchantCode(nested, depth + 1);
+    if (found) return found;
+  }
+  return "";
+}
+
+async function fetchMerchantCode(path, config) {
+  const response = await fetch(`https://api.sumup.com${path}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      "Content-Type": "application/json",
+    },
+  });
+  if (!response.ok) return "";
+  return findMerchantCode(await response.json());
+}
+
+async function resolveMerchantCode() {
+  if (merchantCodePromise) return merchantCodePromise;
+  merchantCodePromise = (async () => {
+    const config = configured();
+    const configuredCode = normalizeMerchantCode(config.merchantCode);
+    try {
+      const detectedCode =
+        (await fetchMerchantCode("/v0.1/me", config)) ||
+        (await fetchMerchantCode(
+          "/v0.1/memberships?kind=merchant&limit=25",
+          config,
+        ));
+      if (detectedCode) {
+        if (configuredCode && detectedCode !== configuredCode) {
+          console.warn(
+            "[SumUp] SUMUP_MERCHANT_CODE does not match SUMUP_API_KEY; using the API profile.",
+          );
+        }
+        return detectedCode;
+      }
+      if (MERCHANT_CODE_PATTERN.test(configuredCode)) return configuredCode;
+    } catch (error) {
+      if (MERCHANT_CODE_PATTERN.test(configuredCode)) return configuredCode;
+      console.warn("[SumUp] Merchant profile lookup unavailable.", error);
+    }
+    throw Object.assign(
+      new Error(
+        "SUMUP_MERCHANT_CODE inválido. Informe o código comercial de 8 caracteres da conta vinculada à SUMUP_API_KEY; não use CPF, código do proprietário nem chave pública.",
+      ),
+      { status: 503 },
+    );
+  })();
+  try {
+    return await merchantCodePromise;
+  } catch (error) {
+    merchantCodePromise = null;
+    throw error;
+  }
 }
 
 async function sumupRequest(path, options = {}) {
@@ -49,7 +128,14 @@ async function sumupRequest(path, options = {}) {
       data?.message ||
       data?.error_message ||
       `SumUp respondeu ${response.status}`;
-    throw Object.assign(new Error(message), {
+    if (data?.param === "merchant_code") {
+      merchantCodePromise = null;
+    }
+    const safeMessage =
+      data?.param === "merchant_code"
+        ? "merchant_code rejeitado pela SumUp. A SUMUP_API_KEY deve ser uma chave secreta criada pela mesma conta comercial; não use chave pública, CPF ou código do proprietário."
+        : message;
+    throw Object.assign(new Error(safeMessage), {
       status: response.status >= 500 ? 502 : 400,
       providerStatus: response.status,
       providerCode: data?.error_code || null,
@@ -71,6 +157,7 @@ export async function createSumupCheckout({
   hostedCheckout = false,
 }) {
   const config = configured();
+  const merchantCode = await resolveMerchantCode();
   const callbackUrl = returnUrl || (useDefaultReturnUrl ? config.returnUrl : "");
   const { data: checkout, requestPayload } = await sumupRequest("/v0.1/checkouts", {
     method: "POST",
@@ -78,7 +165,7 @@ export async function createSumupCheckout({
       checkout_reference: reference,
       amount: Number(amount),
       currency: "BRL",
-      merchant_code: config.merchantCode,
+      merchant_code: merchantCode,
       description,
       ...(callbackUrl
         ? { return_url: callbackUrl, redirect_url: callbackUrl }

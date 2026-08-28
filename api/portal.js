@@ -2575,7 +2575,13 @@ async function createAdminBilling(user, body) {
     } catch (err) {
       await logSumupCheckoutAttempt({ paymentId: payment.id, error: err });
       console.error("SumUp checkout creation failed for admin billing", err);
-      throw appError("Não foi possível gerar o link de pagamento neste momento. A equipe foi notificada automaticamente. Tente novamente em alguns minutos.", 502);
+      const detail = err instanceof Error ? err.message : "";
+      throw appError(
+        detail.includes("merchant_code") || detail.includes("SUMUP_MERCHANT_CODE")
+          ? detail
+          : "Não foi possível gerar o link de pagamento neste momento. A equipe foi notificada automaticamente. Tente novamente em alguns minutos.",
+        502,
+      );
     }
 
     if (!checkout.hostedUrl) {

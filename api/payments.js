@@ -762,8 +762,11 @@ export default async function handler(req, res) {
           providerStatus: error.providerStatus,
           providerCode: error.providerCode,
         });
+        const detail = error instanceof Error ? error.message : "";
         throw appError(
-          "Não foi possível gerar o link de pagamento neste momento. A equipe foi notificada automaticamente. Tente novamente em alguns minutos.",
+          detail.includes("merchant_code") || detail.includes("SUMUP_MERCHANT_CODE")
+            ? detail
+            : "Não foi possível gerar o link de pagamento neste momento. A equipe foi notificada automaticamente. Tente novamente em alguns minutos.",
           502,
         );
       }

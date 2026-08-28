@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mapSumupStatus, sumupConfig } from "../server/lib/sumup.js";
+import {
+  createSumupCheckout,
+  mapSumupStatus,
+  sumupConfig,
+} from "../server/lib/sumup.js";
 import {
   receiptSubmissionError,
   resolveProviderTransition,
@@ -46,6 +50,46 @@ test("reads SumUp configuration and respects enabled flags", () => {
   process.env.SUMUP_ENABLED = "false";
   const configDisabled = sumupConfig();
   assert.equal(configDisabled.enabled, false);
+});
+
+test("uses the merchant owned by the secret API key instead of a mismatched env value", async () => {
+  process.env.SUMUP_ENABLED = "true";
+  process.env.SUMUP_API_KEY = "sup_sk_secret";
+  process.env.SUMUP_MERCHANT_CODE = "WRONG123";
+  process.env.SUMUP_RETURN_URL = "https://agenda.example/return";
+  const originalFetch = global.fetch;
+  const requests = [];
+  global.fetch = async (url, options = {}) => {
+    requests.push({ url: String(url), options });
+    if (String(url).endsWith("/v0.1/me")) {
+      return new Response(
+        JSON.stringify({ merchant_profile: { merchant_code: "MK10CL2A" } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        id: "checkout-1",
+        status: "PENDING",
+        hosted_checkout_url: "https://checkout.sumup.com/pay/checkout-1",
+      }),
+      { status: 201, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    await createSumupCheckout({
+      reference: "payment-1",
+      amount: 10,
+      description: "Teste",
+      hostedCheckout: true,
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+
+  const checkoutBody = JSON.parse(requests[1].options.body);
+  assert.equal(checkoutBody.merchant_code, "MK10CL2A");
 });
 
 test("does not regress a paid payment on delayed provider updates", () => {
