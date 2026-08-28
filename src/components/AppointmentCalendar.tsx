@@ -220,7 +220,7 @@ export function AppointmentCalendar({
       </div>
       <div className="w-full overflow-hidden sm:overflow-x-auto">
         <div className="w-full sm:min-w-[760px]">
-          <div className="grid grid-cols-7 border-b border-black/5 bg-warm/70 text-center text-[10px] font-bold uppercase tracking-wider text-stone-400">
+          <div className="mobile-calendar-weekdays grid grid-cols-7 border-b border-black/5 bg-warm/70 text-center text-[10px] font-bold uppercase tracking-wider text-stone-400">
             {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"].map((day) => (
               <div key={day} className="px-0 py-2 sm:p-3">
                 {day}
@@ -244,13 +244,13 @@ export function AppointmentCalendar({
                   role="button"
                   tabIndex={0}
                   aria-label={`${day.toLocaleDateString("pt-BR")}${dayItems.length ? `, ${dayItems.length} agendamento(s)` : ", sem agendamentos"}`}
-                  className={`min-h-[52px] min-w-0 border-b border-r border-black/5 px-0.5 py-1 text-center sm:min-h-32 sm:p-2 sm:text-left ${
+                  className={`mobile-calendar-day min-h-[52px] min-w-0 border-b border-r border-black/5 px-0.5 py-1 text-center sm:min-h-32 sm:p-2 sm:text-left ${
                     currentMonth ? "bg-white" : "bg-stone-50/70"
                   }`}
                 >
                   <div className="flex items-center justify-center sm:mb-2 sm:justify-between">
                     <span
-                      className={`grid h-7 w-7 place-items-center rounded-full text-[11px] font-bold ${
+                      className={`mobile-calendar-day-number grid h-7 w-7 place-items-center rounded-full text-[11px] font-bold ${
                         active
                           ? "bg-ink text-white"
                           : currentMonth

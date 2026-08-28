@@ -3179,8 +3179,8 @@ export function AdminAppointmentsPage() {
               <span className="text-xs">
                 {a.date} {a.time}
               </span>
-              <b className="hidden text-xs sm:block">{a.client}</b>
-              <span className="hidden text-xs sm:block">
+              <b className="min-w-0 text-base sm:block">{a.client}</b>
+              <span className="min-w-0 text-sm sm:block">
                 {a.service} • {a.professional}
               </span>
               <Badge tone={tone(a.status)}>

@@ -226,7 +226,7 @@ export function AppShell({
           <div className="lg:hidden">
             <Logo compact />
           </div>
-          <h1 className="pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap font-display text-lg font-semibold sm:text-xl lg:hidden">
+          <h1 className="mobile-shell-title pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap font-display text-lg font-semibold sm:text-xl lg:hidden">
             {role === "admin" ? "Admin" : role === "profissional" ? "Profissional" : "Cliente"} <span aria-hidden="true">•</span> {title}
           </h1>
           <div className="hidden lg:block">
@@ -348,7 +348,7 @@ export function AppShell({
             key={path}
             to={path}
             className={({ isActive }) =>
-              `flex min-w-0 flex-col items-center gap-1 py-2.5 text-[9px] font-bold transition ${isActive ? "text-champagne" : "text-stone-400"}`
+              `mobile-bottom-nav-item flex min-w-0 flex-col items-center gap-1 py-2.5 text-[9px] font-bold transition ${isActive ? "text-champagne" : "text-stone-400"}`
             }
           >
             <Icon size={19} />
