@@ -973,9 +973,6 @@ function ClientAgenda() {
     serviceVariantId: "",
     addonIds: "",
   });
-  // State for removing appointments
-  const [removingApptId, setRemovingApptId] = useState<string | null>(null);
-  const [confirmRemoveApptId, setConfirmRemoveApptId] = useState<string | null>(null);
   const [validatingCoupon, setValidatingCoupon] = useState(false);
   const [couponInfo, setCouponInfo] = useState<{ code: string; discount: number; total: number; error?: string } | null>(null);
   const [success, setSuccess] = useState(false);
@@ -1675,15 +1672,6 @@ function ClientAgenda() {
                         ? "Faltou"
                         : "Cancelado"}
                   </Badge>
-                  <button
-                    type="button"
-                    title="Remover agendamento"
-                    disabled={removingApptId === item.id}
-                    onClick={() => setConfirmRemoveApptId(item.id)}
-                    className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-rose-400 hover:bg-rose-100 transition disabled:opacity-40"
-                  >
-                    <Trash2 size={13} />
-                  </button>
                 </div>
               ))}
             </div>
@@ -1733,56 +1721,6 @@ function ClientAgenda() {
           </div>
         </aside>
       </div>
-      {/* Confirm remove appointment modal */}
-      <Modal
-        open={!!confirmRemoveApptId}
-        onClose={() => !removingApptId && setConfirmRemoveApptId(null)}
-        title="Remover agendamento"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-stone-600">
-            Tem certeza que deseja remover este agendamento do seu histórico?
-          </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={!!removingApptId}
-              onClick={() => setConfirmRemoveApptId(null)}
-              className="btn-secondary flex-1"
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              disabled={!!removingApptId}
-              onClick={async () => {
-                if (!confirmRemoveApptId) return;
-                setRemovingApptId(confirmRemoveApptId);
-                try {
-                  await apiFetch("/api/data?resource=appointments", {
-                    method: "DELETE",
-                    body: JSON.stringify({ id: confirmRemoveApptId }),
-                  });
-                  await refreshAppointments();
-                  setToastMessage("Agendamento removido.");
-                  setToast(true);
-                } catch (err) {
-                  console.error("Remove appointment error", err);
-                  setToastMessage(err instanceof Error ? err.message : "Não foi possível remover.");
-                  setToast(true);
-                } finally {
-                  setRemovingApptId(null);
-                  setConfirmRemoveApptId(null);
-                  setTimeout(() => setToast(false), 2400);
-                }
-              }}
-              className="btn-primary flex-1 bg-rose-600 hover:bg-rose-700 border-transparent"
-            >
-              {removingApptId ? "Removendo..." : "Confirmar"}
-            </button>
-          </div>
-        </div>
-      </Modal>
       <Modal
         open={booking}
         onClose={() => setBooking(false)}

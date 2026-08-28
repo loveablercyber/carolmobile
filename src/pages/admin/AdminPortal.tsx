@@ -2673,6 +2673,7 @@ export function AdminAppointmentsPage() {
     "/api/portal?resource=admin-schedule",
   );
   const [busy, setBusy] = useState("");
+  const [removedAppointmentIds, setRemovedAppointmentIds] = useState<string[]>([]);
   const [toast, setToast] = useState("");
   const [appointmentOpen, setAppointmentOpen] = useState(false);
   const [appointmentSaving, setAppointmentSaving] = useState(false);
@@ -2768,6 +2769,8 @@ export function AdminAppointmentsPage() {
       })),
   ];
   const filteredItems = items.filter((item: any) => {
+    if (removedAppointmentIds.includes(item.id)) return false;
+    if (!filters.status && item.status === "cancelled") return false;
     if (filters.professionalId && item.professional_id !== filters.professionalId)
       return false;
     if (filters.serviceId && item.service_id !== filters.serviceId) return false;
@@ -2952,6 +2955,38 @@ export function AdminAppointmentsPage() {
     } catch (e) {
       console.error("Admin appointment update error", e);
       setToast(e instanceof Error ? e.message : "Não foi possível atualizar o status.");
+    } finally {
+      setBusy("");
+      setTimeout(() => setToast(""), 2600);
+    }
+  };
+  const removeAppointment = async (appointment: any) => {
+    if (
+      !confirm(
+        `Remover o agendamento de ${appointment.client || "Cliente"} da agenda? Ele será cancelado e preservado no histórico.`,
+      )
+    )
+      return;
+    setBusy(appointment.id);
+    try {
+      await apiFetch("/api/data?resource=appointments", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: appointment.id,
+          status: "cancelled",
+          note: "Removido da agenda pelo administrador",
+          cancellationReason: "Removido da agenda pelo administrador",
+        }),
+      });
+      setRemovedAppointmentIds((current) => [...current, appointment.id]);
+      setToast("Agendamento cancelado e removido da lista.");
+    } catch (error) {
+      console.error("Admin appointment remove error", error);
+      setToast(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível remover o agendamento.",
+      );
     } finally {
       setBusy("");
       setTimeout(() => setToast(""), 2600);
@@ -3203,6 +3238,16 @@ export function AdminAppointmentsPage() {
                 >
                   <Pencil size={14} />
                   Editar
+                </button>
+                <button
+                  type="button"
+                  disabled={busy === a.id || a.status === "blocked"}
+                  onClick={() => removeAppointment(a)}
+                  className="btn-secondary !min-h-9 !border-rose-200 !px-3 !text-rose-700 hover:!bg-rose-50"
+                  title="Remover agendamento"
+                >
+                  <Trash2 size={14} />
+                  Remover
                 </button>
                 <select
                   disabled={busy === a.id}

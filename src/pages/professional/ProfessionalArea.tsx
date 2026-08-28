@@ -626,6 +626,7 @@ function ProfessionalAgenda() {
   const selectedAgendaItems = agendaItems.filter((item) => {
     const day = String(item.starts_at || "").slice(0, 10);
     const rawStatus = String(item.rawStatus || remote.find((entry) => entry.id === item.id)?.status || "");
+    if (!quickStatus && rawStatus === "cancelled") return false;
     return (!selectedDay || day === selectedDay) && (!quickStatus || rawStatus === quickStatus);
   });
   const periodLabel =
@@ -889,11 +890,11 @@ function ProfessionalAgenda() {
                       setUpdating((c) => ({ ...c, [statusKey]: true }));
                       try {
                         await apiFetch("/api/data?resource=appointments", {
-                          method: "DELETE",
-                          body: JSON.stringify({ id: a.id }),
+                          method: "PATCH",
+                          body: JSON.stringify({ id: a.id, status: "cancelled", note: "Removido da agenda pela profissional", cancellationReason: "Removido da agenda pela profissional" }),
                         });
                         setRemote((c) => c.filter((item) => item.id !== a.id));
-                        setToastMessage("Agendamento removido.");
+                        setToastMessage("Agendamento cancelado e removido da lista.");
                       } catch (err) {
                         console.error("Delete appointment error", err);
                         setToastMessage(err instanceof Error ? err.message : "Não foi possível remover.");
