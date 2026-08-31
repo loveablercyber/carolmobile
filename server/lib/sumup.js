@@ -26,6 +26,7 @@ function configured() {
 
 const MERCHANT_CODE_PATTERN = /^[A-Z0-9]{8}$/;
 let merchantCodePromise = null;
+let merchantCodeApiKey = "";
 
 const normalizeMerchantCode = (value) =>
   typeof value === "string" ? value.trim().toUpperCase() : "";
@@ -51,6 +52,26 @@ function findMerchantCode(value, depth = 0) {
   return "";
 }
 
+function findMembershipMerchantCodes(value) {
+  if (!value || typeof value !== "object") return [];
+  const items = Array.isArray(value.items) ? value.items : [];
+  const codes = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const resource = item.resource && typeof item.resource === "object"
+      ? item.resource
+      : {};
+    const type = String(item.type || resource.type || "").toLowerCase();
+    const status = String(item.status || "accepted").toLowerCase();
+    if (type !== "merchant" || !["accepted", ""].includes(status)) continue;
+    const candidate = normalizeMerchantCode(item.resource_id || resource.id);
+    if (MERCHANT_CODE_PATTERN.test(candidate) && !codes.includes(candidate)) {
+      codes.push(candidate);
+    }
+  }
+  return codes;
+}
+
 async function fetchMerchantCode(path, config) {
   const response = await fetch(`https://api.sumup.com${path}`, {
     method: "GET",
@@ -59,38 +80,106 @@ async function fetchMerchantCode(path, config) {
       "Content-Type": "application/json",
     },
   });
+  if (response.status === 401) {
+    throw new Error("SUMUP_API_KEY recusada pela SumUp. Gere e configure uma nova chave secreta.");
+  }
   if (!response.ok) return "";
   return findMerchantCode(await response.json());
 }
 
+async function fetchMembershipMerchantCodes(config) {
+  const response = await fetch(
+    "https://api.sumup.com/v0.1/memberships?kind=merchant&status=accepted&limit=25",
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+      },
+    },
+  );
+  if (response.status === 401) {
+    throw new Error("SUMUP_API_KEY recusada pela SumUp. Gere e configure uma nova chave secreta.");
+  }
+  if (!response.ok) return [];
+  return findMembershipMerchantCodes(await response.json());
+}
+
+async function validateConfiguredMerchantCode(code, config) {
+  if (!MERCHANT_CODE_PATTERN.test(code)) return false;
+  const response = await fetch(
+    `https://api.sumup.com/v1/merchants/${encodeURIComponent(code)}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+      },
+    },
+  );
+  if (response.status === 401) {
+    throw new Error("SUMUP_API_KEY recusada pela SumUp. Gere e configure uma nova chave secreta.");
+  }
+  if (!response.ok) return false;
+  return findMerchantCode(await response.json()) === code;
+}
+
 async function resolveMerchantCode() {
+  const currentConfig = configured();
+  if (merchantCodeApiKey !== currentConfig.apiKey) {
+    merchantCodePromise = null;
+    merchantCodeApiKey = currentConfig.apiKey;
+  }
   if (merchantCodePromise) return merchantCodePromise;
   merchantCodePromise = (async () => {
-    const config = configured();
+    const config = currentConfig;
     const configuredCode = normalizeMerchantCode(config.merchantCode);
     try {
-      const detectedCode =
-        (await fetchMerchantCode("/v0.1/me", config)) ||
-        (await fetchMerchantCode(
-          "/v0.1/memberships?kind=merchant&limit=25",
-          config,
-        ));
-      if (detectedCode) {
-        if (configuredCode && detectedCode !== configuredCode) {
+      const profileCode = await fetchMerchantCode("/v0.1/me", config);
+      if (profileCode) {
+        if (configuredCode && profileCode !== configuredCode) {
           console.warn(
             "[SumUp] SUMUP_MERCHANT_CODE does not match SUMUP_API_KEY; using the API profile.",
           );
         }
-        return detectedCode;
+        return profileCode;
       }
-      if (MERCHANT_CODE_PATTERN.test(configuredCode)) return configuredCode;
+
+      const membershipCodes = await fetchMembershipMerchantCodes(config);
+      if (configuredCode && membershipCodes.includes(configuredCode)) {
+        return configuredCode;
+      }
+      if (membershipCodes.length === 1) {
+        if (configuredCode && membershipCodes[0] !== configuredCode) {
+          console.warn(
+            "[SumUp] SUMUP_MERCHANT_CODE does not match the API-key membership; using the authorized merchant.",
+          );
+        }
+        return membershipCodes[0];
+      }
+      if (membershipCodes.length > 1) {
+        throw new Error(
+          "A chave possui mais de uma conta comercial. Configure SUMUP_MERCHANT_CODE com uma das contas vinculadas.",
+        );
+      }
+      if (
+        MERCHANT_CODE_PATTERN.test(configuredCode) &&
+        (await validateConfiguredMerchantCode(configuredCode, config))
+      ) {
+        return configuredCode;
+      }
     } catch (error) {
-      if (MERCHANT_CODE_PATTERN.test(configuredCode)) return configuredCode;
       console.warn("[SumUp] Merchant profile lookup unavailable.", error);
+      if (
+        error?.message?.includes("mais de uma conta comercial") ||
+        error?.message?.includes("SUMUP_API_KEY recusada")
+      ) {
+        throw error;
+      }
     }
     throw Object.assign(
       new Error(
-        "SUMUP_MERCHANT_CODE inválido. Informe o código comercial de 8 caracteres da conta vinculada à SUMUP_API_KEY; não use CPF, código do proprietário nem chave pública.",
+        "A SumUp autenticou a chave, mas não informou uma conta comercial autorizada. Gere uma nova chave secreta dentro da conta comercial correta.",
       ),
       { status: 503 },
     );
@@ -133,7 +222,7 @@ async function sumupRequest(path, options = {}) {
     }
     const safeMessage =
       data?.param === "merchant_code"
-        ? "merchant_code rejeitado pela SumUp. A SUMUP_API_KEY deve ser uma chave secreta criada pela mesma conta comercial; não use chave pública, CPF ou código do proprietário."
+        ? "A SumUp não reconheceu uma conta comercial autorizada para esta chave. Gere a chave secreta dentro da conta comercial que receberá o pagamento."
         : message;
     throw Object.assign(new Error(safeMessage), {
       status: response.status >= 500 ? 502 : 400,

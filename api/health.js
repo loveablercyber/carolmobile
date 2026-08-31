@@ -31,8 +31,7 @@ export default async function handler(req, res) {
               : "none",
         sumup: Boolean(
           process.env.SUMUP_ENABLED &&
-            process.env.SUMUP_API_KEY &&
-            process.env.SUMUP_MERCHANT_CODE,
+            process.env.SUMUP_API_KEY,
         ),
         notifications: Boolean(process.env.ADMIN_NOTIFICATION_EMAIL),
       },

@@ -92,6 +92,60 @@ test("uses the merchant owned by the secret API key instead of a mismatched env 
   assert.equal(checkoutBody.merchant_code, "MK10CL2A");
 });
 
+test("uses the merchant resource_id returned by SumUp memberships without an env code", async () => {
+  process.env.SUMUP_ENABLED = "true";
+  process.env.SUMUP_API_KEY = "sup_sk_membership_secret";
+  delete process.env.SUMUP_MERCHANT_CODE;
+  process.env.SUMUP_RETURN_URL = "https://agenda.example/return";
+  const originalFetch = global.fetch;
+  const requests = [];
+  global.fetch = async (url, options = {}) => {
+    requests.push({ url: String(url), options });
+    if (String(url).endsWith("/v0.1/me")) {
+      return new Response(JSON.stringify({ id: "user-id" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (String(url).includes("/v0.1/memberships?")) {
+      return new Response(
+        JSON.stringify({
+          items: [{
+            type: "merchant",
+            status: "accepted",
+            resource_id: "M2DDT39A",
+            resource: { id: "M2DDT39A", type: "merchant" },
+          }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        id: "checkout-membership",
+        status: "PENDING",
+        hosted_checkout_url: "https://checkout.sumup.com/pay/checkout-membership",
+      }),
+      { status: 201, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    await createSumupCheckout({
+      reference: "payment-membership",
+      amount: 10,
+      description: "Teste membership",
+      hostedCheckout: true,
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+
+  const checkoutRequest = requests.find(({ url }) => url.endsWith("/v0.1/checkouts"));
+  assert.ok(checkoutRequest);
+  assert.equal(JSON.parse(checkoutRequest.options.body).merchant_code, "M2DDT39A");
+});
+
 test("does not regress a paid payment on delayed provider updates", () => {
   assert.deepEqual(resolveProviderTransition("paid", "pending"), {
     status: "paid",
