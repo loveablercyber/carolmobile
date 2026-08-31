@@ -213,21 +213,41 @@ async function sumupRequest(path, options = {}) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const message =
-      data?.message ||
-      data?.error_message ||
-      `SumUp respondeu ${response.status}`;
-    if (data?.param === "merchant_code") {
+    const providerParam = String(data?.param || "").trim();
+    const providerCode = String(data?.error_code || "").trim() || null;
+    const providerMessage =
+      data?.message || data?.error_message || `SumUp respondeu ${response.status}`;
+    if (providerParam === "merchant_code") {
       merchantCodePromise = null;
     }
-    const safeMessage =
-      data?.param === "merchant_code"
-        ? "A SumUp não reconheceu uma conta comercial autorizada para esta chave. Gere a chave secreta dentro da conta comercial que receberá o pagamento."
-        : message;
+    let code = "SUMUP_REQUEST_FAILED";
+    let safeMessage =
+      "A SumUp recusou a criação do pagamento. Tente novamente ou consulte o suporte da SumUp.";
+    if (response.status === 401) {
+      code = "SUMUP_API_KEY_REJECTED";
+      safeMessage =
+        "A SUMUP_API_KEY foi recusada. Gere uma nova chave secreta na conta comercial correta.";
+    } else if (providerParam === "merchant_code") {
+      code = "SUMUP_MERCHANT_REJECTED";
+      safeMessage =
+        "A SumUp autenticou a chave, mas rejeitou a conta comercial ao criar o checkout. Confirme no painel SumUp que Pagamentos Online e Hosted Checkout estão habilitados para essa conta; se já estiverem, solicite à SumUp a liberação do merchant_code para a API de Checkouts.";
+    } else if (
+      response.status === 403 ||
+      providerMessage === "checkout_payments_not_allowed"
+    ) {
+      code = "SUMUP_CHECKOUT_NOT_ALLOWED";
+      safeMessage =
+        "A SumUp ainda não autorizou pagamentos online para esta conta. Ative Pagamentos Online e Hosted Checkout no painel SumUp ou solicite a liberação ao suporte.";
+    } else if (providerCode === "DUPLICATED_CHECKOUT") {
+      code = "SUMUP_DUPLICATED_CHECKOUT";
+      safeMessage = "A SumUp informou que esta cobrança já possui um checkout.";
+    }
     throw Object.assign(new Error(safeMessage), {
+      code,
       status: response.status >= 500 ? 502 : 400,
       providerStatus: response.status,
-      providerCode: data?.error_code || null,
+      providerCode,
+      providerParam: providerParam || null,
       providerResponse: data,
       requestPayload,
     });
@@ -267,6 +287,7 @@ export async function createSumupCheckout({
   const links = Array.isArray(checkout.links) ? checkout.links : [];
   const hostedUrl =
     checkout.hosted_checkout_url ||
+    checkout.hosted_checkout?.hosted_checkout_url ||
     checkout.checkout_url ||
     checkout.redirect_url ||
     links.find((link) =>

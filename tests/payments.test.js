@@ -146,6 +146,49 @@ test("uses the merchant resource_id returned by SumUp memberships without an env
   assert.equal(JSON.parse(checkoutRequest.options.body).merchant_code, "M2DDT39A");
 });
 
+test("returns an actionable error when SumUp rejects the authenticated merchant", async () => {
+  process.env.SUMUP_ENABLED = "true";
+  process.env.SUMUP_API_KEY = "sup_sk_rejected_merchant";
+  delete process.env.SUMUP_MERCHANT_CODE;
+  process.env.SUMUP_RETURN_URL = "https://agenda.example/return";
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    if (String(url).endsWith("/v0.1/me")) {
+      return new Response(
+        JSON.stringify({ merchant_profile: { merchant_code: "MU97C6DC" } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        error_code: "INVALID",
+        message: "Validation error",
+        param: "merchant_code",
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    await assert.rejects(
+      createSumupCheckout({
+        reference: "payment-rejected-merchant",
+        amount: 10,
+        description: "Teste merchant rejeitado",
+        hostedCheckout: true,
+      }),
+      (error) => {
+        assert.equal(error.code, "SUMUP_MERCHANT_REJECTED");
+        assert.equal(error.providerParam, "merchant_code");
+        assert.match(error.message, /Pagamentos Online/);
+        return true;
+      },
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("does not regress a paid payment on delayed provider updates", () => {
   assert.deepEqual(resolveProviderTransition("paid", "pending"), {
     status: "paid",
