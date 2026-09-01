@@ -13,6 +13,7 @@ import {
   ClipboardList,
   CreditCard,
   Gift,
+  Globe2,
   Heart,
   Home,
   LayoutDashboard,
@@ -173,6 +174,13 @@ export function AppShell({
           </NavLink>
         ))}
       </nav>
+      <a
+        href={`/api/auth?sso_start=${encodeURIComponent("https://carolsol.com.br")}&returnTo=${encodeURIComponent("/conta")}`}
+        className="mx-4 mb-2 flex items-center gap-3 rounded-2xl border border-white/10 px-4 py-3 text-xs font-semibold text-white/70 transition hover:bg-white/[.07] hover:text-white"
+      >
+        <Globe2 size={17} />
+        <span>Painel principal CarolSol</span>
+      </a>
       <button
         onClick={async () => {
           await logout();

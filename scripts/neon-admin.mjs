@@ -77,6 +77,7 @@ const expectedTables = [
   "ai_request_logs",
   "knowledge_articles",
   "marketing_promotions",
+  "carolsol_sso_codes",
 ];
 
 const client = new Client({
@@ -175,6 +176,10 @@ async function setup() {
   );
   const aiHumanAutoResumeMigration = await readFile(
     resolve("database/neon-ai-human-auto-resume.sql"),
+    "utf8",
+  );
+  const unifiedSsoMigration = await readFile(
+    resolve("database/neon-unified-sso.sql"),
     "utf8",
   );
 
@@ -343,6 +348,15 @@ async function setup() {
       await client.query(aiHumanAutoResumeMigration);
       await client.query(
         "insert into public._luxe_migrations(version, description) values ('016_ai_human_auto_resume', 'Retomada automática da IA após espera pelo atendimento humano')",
+      );
+    }
+    const { rowCount: unifiedSsoApplied } = await client.query(
+      "select 1 from public._luxe_migrations where version = '017_unified_sso'",
+    );
+    if (!unifiedSsoApplied) {
+      await client.query(unifiedSsoMigration);
+      await client.query(
+        "insert into public._luxe_migrations(version, description) values ('017_unified_sso', 'Login único CarolSol com códigos temporários entre domínios')",
       );
     }
     await client.query("commit");

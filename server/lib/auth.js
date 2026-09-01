@@ -1,9 +1,14 @@
 import { SignJWT, jwtVerify } from 'jose'
+import { createHash } from 'node:crypto'
 import { getCookie, appError } from './http.js'
 import { query } from './db.js'
 
 const COOKIE_NAME = 'carol_sol_session'
 const key = () => new TextEncoder().encode(process.env.JWT_SECRET || 'development-only-change-me')
+
+function credentialVersion(passwordHash) {
+  return createHash('sha256').update(String(passwordHash || '')).digest('base64url').slice(0, 22)
+}
 
 export function shouldUseSecureSessionCookie() {
   const override = String(process.env.SESSION_COOKIE_SECURE || '').trim().toLowerCase()
@@ -22,7 +27,23 @@ export function shouldUseSecureSessionCookie() {
 }
 
 export async function createSession(user) {
-  return new SignJWT({ role: user.role, profileId: user.id, name: user.full_name })
+  const { rows } = await query(
+    `select u.encrypted_password,u.email,p.role,p.full_name,p.account_status
+       from auth.users u join public.profiles p on p.id=u.id
+      where u.id=$1 limit 1`,
+    [user.id],
+  )
+  const identity = rows[0]
+  if (!identity?.encrypted_password || ['blocked', 'anonymized', 'deleted'].includes(identity.account_status)) {
+    throw appError('Conta de autenticação não encontrada.', 401)
+  }
+  return new SignJWT({
+    role: identity.role,
+    profileId: user.id,
+    name: identity.full_name,
+    email: identity.email,
+    cv: credentialVersion(identity.encrypted_password),
+  })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(user.id)
     .setIssuedAt()
@@ -35,7 +56,17 @@ export async function readSession(req) {
   if (!token) return null
   try {
     const { payload } = await jwtVerify(token, key())
-    return { id: payload.sub, role: payload.role, name: payload.name }
+    if (!payload.sub) return null
+    const { rows } = await query(
+      `select u.encrypted_password,p.role,p.full_name,p.account_status
+         from auth.users u join public.profiles p on p.id=u.id
+        where u.id=$1 limit 1`,
+      [payload.sub],
+    )
+    const identity = rows[0]
+    if (!identity || ['blocked', 'anonymized', 'deleted'].includes(identity.account_status)) return null
+    if (!payload.cv || payload.cv !== credentialVersion(identity.encrypted_password)) return null
+    return { id: payload.sub, role: identity.role, name: identity.full_name }
   } catch {
     return null
   }

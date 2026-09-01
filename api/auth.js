@@ -5,6 +5,7 @@ import { createSession, readSession, setSessionCookie, clearSessionCookie } from
 import { appError, getBody, handleError, methodNotAllowed, send } from '../server/lib/http.js'
 import { sendEmail, sendWhatsApp } from '../server/lib/integrations.js'
 import { brazilianPhoneCandidates, normalizeBrazilianPhone } from '../server/lib/phone.js'
+import { consumeSsoCode, issueSsoCode, requestPublicOrigin } from '../server/lib/sso.js'
 
 export async function processReferralCode(client, { refCode, newClientId, fullName, phone, userId }) {
   const code = String(refCode || '').trim().toUpperCase().slice(0, 80)
@@ -74,6 +75,57 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return send(res, 204, {})
   try {
     if (req.method === 'GET') {
+      const publicOrigin = requestPublicOrigin(req)
+      const ssoCode = String(req.query?.sso_code || '')
+      if (ssoCode) {
+        const consumed = await consumeSsoCode({ code: ssoCode, targetOrigin: publicOrigin })
+        if (!consumed) {
+          res.statusCode = 302
+          res.setHeader('Location', `${publicOrigin}/entrar?sso=invalid`)
+          res.setHeader('Cache-Control', 'no-store')
+          return res.end()
+        }
+        const { rows } = await query(
+          `select id,role,full_name,phone,avatar_url,account_status
+             from public.profiles where id=$1 limit 1`,
+          [consumed.identityId],
+        )
+        const profile = rows[0]
+        if (!profile || ['blocked','anonymized','deleted'].includes(profile.account_status)) {
+          res.statusCode = 302
+          res.setHeader('Location', `${publicOrigin}/entrar?sso=invalid`)
+          return res.end()
+        }
+        const token = await createSession(profile)
+        setSessionCookie(res, token)
+        res.statusCode = 302
+        res.setHeader('Location', new URL(consumed.returnPath, publicOrigin).toString())
+        res.setHeader('Cache-Control', 'no-store')
+        return res.end()
+      }
+
+      const ssoTarget = String(req.query?.sso_start || '')
+      if (ssoTarget) {
+        const session = await readSession(req)
+        if (!session) {
+          res.statusCode = 302
+          res.setHeader('Location', `${publicOrigin}/entrar`)
+          return res.end()
+        }
+        const issued = await issueSsoCode({
+          identityId: session.id,
+          targetOrigin: ssoTarget,
+          returnPath: req.query?.returnTo,
+          sourceOrigin: publicOrigin,
+        })
+        const destination = new URL('/api/auth', issued.target)
+        destination.searchParams.set('sso_code', issued.code)
+        res.statusCode = 302
+        res.setHeader('Location', destination.toString())
+        res.setHeader('Cache-Control', 'no-store')
+        return res.end()
+      }
+
       const session = await readSession(req)
       if (!session) return send(res, 200, { user: null })
       const { rows } = await query('select id, role, full_name, phone, avatar_url,account_status from public.profiles where id = $1', [session.id])
