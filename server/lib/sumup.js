@@ -1,11 +1,16 @@
 const truthy = (value) =>
   ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
 
+const MERCHANT_CODE_PATTERN = /^[A-Z0-9]{8}$/;
+
+const normalizeMerchantCode = (value) =>
+  typeof value === "string" ? value.trim().toUpperCase() : "";
+
 export function sumupConfig() {
   return {
     enabled: truthy(process.env.SUMUP_ENABLED),
-    apiKey: process.env.SUMUP_API_KEY,
-    merchantCode: process.env.SUMUP_MERCHANT_CODE,
+    apiKey: String(process.env.SUMUP_API_KEY || "").trim(),
+    merchantCode: normalizeMerchantCode(process.env.SUMUP_MERCHANT_CODE),
     environment: process.env.SUMUP_ENVIRONMENT || "sandbox",
     returnUrl:
       process.env.SUMUP_RETURN_URL ||
@@ -16,180 +21,22 @@ export function sumupConfig() {
 
 function configured() {
   const config = sumupConfig();
-  if (!config.enabled || !config.apiKey)
-    throw Object.assign(
-      new Error("A integração SumUp ainda não está configurada."),
-      { status: 503 },
-    );
-  return config;
-}
-
-const MERCHANT_CODE_PATTERN = /^[A-Z0-9]{8}$/;
-let merchantCodePromise = null;
-let merchantCodeApiKey = "";
-
-const normalizeMerchantCode = (value) =>
-  typeof value === "string" ? value.trim().toUpperCase() : "";
-
-function findMerchantCode(value, depth = 0) {
-  if (!value || depth > 5) return "";
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findMerchantCode(item, depth + 1);
-      if (found) return found;
-    }
-    return "";
-  }
-  if (typeof value !== "object") return "";
-  for (const key of ["merchant_code", "merchantCode"]) {
-    const candidate = normalizeMerchantCode(value[key]);
-    if (MERCHANT_CODE_PATTERN.test(candidate)) return candidate;
-  }
-  for (const nested of Object.values(value)) {
-    const found = findMerchantCode(nested, depth + 1);
-    if (found) return found;
-  }
-  return "";
-}
-
-function findMembershipMerchantCodes(value) {
-  if (!value || typeof value !== "object") return [];
-  const items = Array.isArray(value.items) ? value.items : [];
-  const codes = [];
-  for (const item of items) {
-    if (!item || typeof item !== "object") continue;
-    const resource = item.resource && typeof item.resource === "object"
-      ? item.resource
-      : {};
-    const type = String(item.type || resource.type || "").toLowerCase();
-    const status = String(item.status || "accepted").toLowerCase();
-    if (type !== "merchant" || !["accepted", ""].includes(status)) continue;
-    const candidate = normalizeMerchantCode(item.resource_id || resource.id);
-    if (MERCHANT_CODE_PATTERN.test(candidate) && !codes.includes(candidate)) {
-      codes.push(candidate);
-    }
-  }
-  return codes;
-}
-
-async function fetchMerchantCode(path, config) {
-  const response = await fetch(`https://api.sumup.com${path}`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-    },
-  });
-  if (response.status === 401) {
-    throw new Error("SUMUP_API_KEY recusada pela SumUp. Gere e configure uma nova chave secreta.");
-  }
-  if (!response.ok) return "";
-  return findMerchantCode(await response.json());
-}
-
-async function fetchMembershipMerchantCodes(config) {
-  const response = await fetch(
-    "https://api.sumup.com/v0.1/memberships?kind=merchant&status=accepted&limit=25",
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-    },
-  );
-  if (response.status === 401) {
-    throw new Error("SUMUP_API_KEY recusada pela SumUp. Gere e configure uma nova chave secreta.");
-  }
-  if (!response.ok) return [];
-  return findMembershipMerchantCodes(await response.json());
-}
-
-async function validateConfiguredMerchantCode(code, config) {
-  if (!MERCHANT_CODE_PATTERN.test(code)) return false;
-  const response = await fetch(
-    `https://api.sumup.com/v1/merchants/${encodeURIComponent(code)}`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-    },
-  );
-  if (response.status === 401) {
-    throw new Error("SUMUP_API_KEY recusada pela SumUp. Gere e configure uma nova chave secreta.");
-  }
-  if (!response.ok) return false;
-  return findMerchantCode(await response.json()) === code;
-}
-
-async function resolveMerchantCode() {
-  const currentConfig = configured();
-  if (merchantCodeApiKey !== currentConfig.apiKey) {
-    merchantCodePromise = null;
-    merchantCodeApiKey = currentConfig.apiKey;
-  }
-  if (merchantCodePromise) return merchantCodePromise;
-  merchantCodePromise = (async () => {
-    const config = currentConfig;
-    const configuredCode = normalizeMerchantCode(config.merchantCode);
-    try {
-      const profileCode = await fetchMerchantCode("/v0.1/me", config);
-      if (profileCode) {
-        if (configuredCode && profileCode !== configuredCode) {
-          console.warn(
-            "[SumUp] SUMUP_MERCHANT_CODE does not match SUMUP_API_KEY; using the API profile.",
-          );
-        }
-        return profileCode;
-      }
-
-      const membershipCodes = await fetchMembershipMerchantCodes(config);
-      if (configuredCode && membershipCodes.includes(configuredCode)) {
-        return configuredCode;
-      }
-      if (membershipCodes.length === 1) {
-        if (configuredCode && membershipCodes[0] !== configuredCode) {
-          console.warn(
-            "[SumUp] SUMUP_MERCHANT_CODE does not match the API-key membership; using the authorized merchant.",
-          );
-        }
-        return membershipCodes[0];
-      }
-      if (membershipCodes.length > 1) {
-        throw new Error(
-          "A chave possui mais de uma conta comercial. Configure SUMUP_MERCHANT_CODE com uma das contas vinculadas.",
-        );
-      }
-      if (
-        MERCHANT_CODE_PATTERN.test(configuredCode) &&
-        (await validateConfiguredMerchantCode(configuredCode, config))
-      ) {
-        return configuredCode;
-      }
-    } catch (error) {
-      console.warn("[SumUp] Merchant profile lookup unavailable.", error);
-      if (
-        error?.message?.includes("mais de uma conta comercial") ||
-        error?.message?.includes("SUMUP_API_KEY recusada")
-      ) {
-        throw error;
-      }
-    }
+  if (!config.enabled || !config.apiKey || !config.merchantCode)
     throw Object.assign(
       new Error(
-        "A SumUp autenticou a chave, mas não informou uma conta comercial autorizada. Gere uma nova chave secreta dentro da conta comercial correta.",
+        "A integração SumUp ainda não está configurada. Defina SUMUP_API_KEY e SUMUP_MERCHANT_CODE no ambiente.",
       ),
-      { status: 503 },
+      { status: 503, code: "SUMUP_NOT_CONFIGURED" },
     );
-  })();
-  try {
-    return await merchantCodePromise;
-  } catch (error) {
-    merchantCodePromise = null;
-    throw error;
+  if (!MERCHANT_CODE_PATTERN.test(config.merchantCode)) {
+    throw Object.assign(
+      new Error(
+        "SUMUP_MERCHANT_CODE inválido. Use o código comercial de 8 caracteres exibido no painel SumUp.",
+      ),
+      { status: 503, code: "SUMUP_MERCHANT_INVALID_CONFIG" },
+    );
   }
+  return config;
 }
 
 async function sumupRequest(path, options = {}) {
@@ -217,9 +64,6 @@ async function sumupRequest(path, options = {}) {
     const providerCode = String(data?.error_code || "").trim() || null;
     const providerMessage =
       data?.message || data?.error_message || `SumUp respondeu ${response.status}`;
-    if (providerParam === "merchant_code") {
-      merchantCodePromise = null;
-    }
     let code = "SUMUP_REQUEST_FAILED";
     let safeMessage =
       "A SumUp recusou a criação do pagamento. Tente novamente ou consulte o suporte da SumUp.";
@@ -266,7 +110,6 @@ export async function createSumupCheckout({
   hostedCheckout = false,
 }) {
   const config = configured();
-  const merchantCode = await resolveMerchantCode();
   const callbackUrl = returnUrl || (useDefaultReturnUrl ? config.returnUrl : "");
   const { data: checkout, requestPayload } = await sumupRequest("/v0.1/checkouts", {
     method: "POST",
@@ -274,7 +117,7 @@ export async function createSumupCheckout({
       checkout_reference: reference,
       amount: Number(amount),
       currency: "BRL",
-      merchant_code: merchantCode,
+      merchant_code: config.merchantCode,
       description,
       ...(callbackUrl
         ? { return_url: callbackUrl, redirect_url: callbackUrl }

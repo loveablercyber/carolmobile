@@ -42,7 +42,7 @@ test("reads SumUp configuration and respects enabled flags", () => {
   const config = sumupConfig();
   assert.equal(config.enabled, true);
   assert.equal(config.apiKey, "test-api-key");
-  assert.equal(config.merchantCode, "test-merchant");
+  assert.equal(config.merchantCode, "TEST-MERCHANT");
   assert.equal(config.environment, "sandbox");
   assert.equal(config.returnUrl, "http://localhost:5173/return");
 
@@ -52,21 +52,15 @@ test("reads SumUp configuration and respects enabled flags", () => {
   assert.equal(configDisabled.enabled, false);
 });
 
-test("uses the merchant owned by the secret API key instead of a mismatched env value", async () => {
+test("uses the explicitly configured merchant without automatic account switching", async () => {
   process.env.SUMUP_ENABLED = "true";
   process.env.SUMUP_API_KEY = "sup_sk_secret";
-  process.env.SUMUP_MERCHANT_CODE = "WRONG123";
+  process.env.SUMUP_MERCHANT_CODE = "mu97c6dc";
   process.env.SUMUP_RETURN_URL = "https://agenda.example/return";
   const originalFetch = global.fetch;
   const requests = [];
   global.fetch = async (url, options = {}) => {
     requests.push({ url: String(url), options });
-    if (String(url).endsWith("/v0.1/me")) {
-      return new Response(
-        JSON.stringify({ merchant_profile: { merchant_code: "MK10CL2A" } }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
     return new Response(
       JSON.stringify({
         id: "checkout-1",
@@ -88,77 +82,51 @@ test("uses the merchant owned by the secret API key instead of a mismatched env 
     global.fetch = originalFetch;
   }
 
-  const checkoutBody = JSON.parse(requests[1].options.body);
-  assert.equal(checkoutBody.merchant_code, "MK10CL2A");
+  assert.equal(requests.length, 1);
+  const checkoutBody = JSON.parse(requests[0].options.body);
+  assert.equal(checkoutBody.merchant_code, "MU97C6DC");
 });
 
-test("uses the merchant resource_id returned by SumUp memberships without an env code", async () => {
+test("requires an explicit merchant code instead of selecting a linked account", async () => {
   process.env.SUMUP_ENABLED = "true";
   process.env.SUMUP_API_KEY = "sup_sk_membership_secret";
   delete process.env.SUMUP_MERCHANT_CODE;
   process.env.SUMUP_RETURN_URL = "https://agenda.example/return";
   const originalFetch = global.fetch;
-  const requests = [];
-  global.fetch = async (url, options = {}) => {
-    requests.push({ url: String(url), options });
-    if (String(url).endsWith("/v0.1/me")) {
-      return new Response(JSON.stringify({ id: "user-id" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-    if (String(url).includes("/v0.1/memberships?")) {
-      return new Response(
-        JSON.stringify({
-          items: [{
-            type: "merchant",
-            status: "accepted",
-            resource_id: "M2DDT39A",
-            resource: { id: "M2DDT39A", type: "merchant" },
-          }],
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    return new Response(
-      JSON.stringify({
-        id: "checkout-membership",
-        status: "PENDING",
-        hosted_checkout_url: "https://checkout.sumup.com/pay/checkout-membership",
-      }),
-      { status: 201, headers: { "Content-Type": "application/json" } },
-    );
+  let fetchCalled = false;
+  global.fetch = async () => {
+    fetchCalled = true;
+    throw new Error("fetch should not be called");
   };
 
   try {
-    await createSumupCheckout({
-      reference: "payment-membership",
-      amount: 10,
-      description: "Teste membership",
-      hostedCheckout: true,
-    });
+    await assert.rejects(
+      createSumupCheckout({
+        reference: "payment-membership",
+        amount: 10,
+        description: "Teste membership",
+        hostedCheckout: true,
+      }),
+      (error) => {
+        assert.equal(error.code, "SUMUP_NOT_CONFIGURED");
+        assert.match(error.message, /SUMUP_MERCHANT_CODE/);
+        return true;
+      },
+    );
   } finally {
     global.fetch = originalFetch;
   }
 
-  const checkoutRequest = requests.find(({ url }) => url.endsWith("/v0.1/checkouts"));
-  assert.ok(checkoutRequest);
-  assert.equal(JSON.parse(checkoutRequest.options.body).merchant_code, "M2DDT39A");
+  assert.equal(fetchCalled, false);
 });
 
 test("returns an actionable error when SumUp rejects the authenticated merchant", async () => {
   process.env.SUMUP_ENABLED = "true";
   process.env.SUMUP_API_KEY = "sup_sk_rejected_merchant";
-  delete process.env.SUMUP_MERCHANT_CODE;
+  process.env.SUMUP_MERCHANT_CODE = "MU97C6DC";
   process.env.SUMUP_RETURN_URL = "https://agenda.example/return";
   const originalFetch = global.fetch;
-  global.fetch = async (url) => {
-    if (String(url).endsWith("/v0.1/me")) {
-      return new Response(
-        JSON.stringify({ merchant_profile: { merchant_code: "MU97C6DC" } }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
+  global.fetch = async () => {
     return new Response(
       JSON.stringify({
         error_code: "INVALID",
