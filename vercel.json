@@ -29,7 +29,7 @@
     },
     {
       "path": "/api/cron-tasks?task=reminders",
-      "schedule": "0 11 * * *"
+      "schedule": "*/15 * * * *"
     }
   ],
   "rewrites": [

@@ -284,6 +284,62 @@ async function notificationPreferences(phone, email, profileId = null) {
   };
 }
 
+const professionalEventLabels = {
+  product_sold: "Produto vendido",
+  appointment_cancelled: "Agendamento cancelado",
+  donation_created: "Nova doação",
+  course_requested: "Curso solicitado",
+};
+
+export async function notifyActiveProfessionals({
+  type,
+  title = "",
+  message,
+  professionalId = null,
+  data = {},
+}) {
+  const eventTitle = title || professionalEventLabels[type] || "Nova atualização";
+  const { rows: recipients } = await query(
+    `select pr.id as professional_id,p.id as profile_id,p.full_name,p.phone
+       from public.professionals pr
+       join public.profiles p on p.id=pr.profile_id
+       left join public.notification_preferences np on np.profile_id=p.id
+      where pr.active and p.account_status='active'
+        and nullif(regexp_replace(coalesce(p.phone,''),'\\D','','g'),'') is not null
+        and coalesce(np.whatsapp,true)
+        and ($1::uuid is null or pr.id=$1::uuid)
+      order by p.full_name`,
+    [professionalId || null],
+  );
+  const text = [`🔔 *${eventTitle}*`, "", message, "", "Acesse o painel de agendamento para acompanhar."].filter(Boolean).join("\n");
+  const results = await Promise.allSettled(recipients.map(async (recipient) => {
+    const notification = await query(
+      `insert into public.notifications(profile_id,kind,title,body,data,action_url,metadata)
+       values($1,$2,$3,$4,$5,'/profissional/dashboard',$5) returning id`,
+      [recipient.profile_id, type, eventTitle, message, JSON.stringify(data || {})],
+    );
+    try {
+      const result = await sendWhatsApp({ to: recipient.phone, text });
+      await recordAppointmentDelivery({
+        notificationId: notification.rows[0]?.id,
+        channel: "whatsapp",
+        recipient: recipient.phone,
+        result,
+      });
+      return { professionalId: recipient.professional_id, result };
+    } catch (error) {
+      await recordAppointmentDelivery({
+        notificationId: notification.rows[0]?.id,
+        channel: "whatsapp",
+        recipient: recipient.phone,
+        error,
+      });
+      throw error;
+    }
+  }));
+  return { recipients: recipients.length, results };
+}
+
 export async function notifyAppointmentChange({
   notificationId,
   profileId,

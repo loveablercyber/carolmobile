@@ -12,6 +12,9 @@ const maxBodyBytes = Number(process.env.MAX_BODY_BYTES || 5 * 1024 * 1024)
 const internalCronEnabled = ['1', 'true', 'yes', 'sim'].includes(
   String(process.env.INTERNAL_CRON_ENABLED || '').toLowerCase(),
 )
+const appointmentReminderSchedulerEnabled = !['0', 'false', 'no', 'nao', 'não'].includes(
+  String(process.env.APPOINTMENT_REMINDER_SCHEDULER_ENABLED ?? 'true').toLowerCase(),
+)
 const aiHumanResumeSchedulerEnabled = !['0', 'false', 'no', 'nao', 'não'].includes(
   String(process.env.AI_HUMAN_RESUME_SCHEDULER_ENABLED ?? 'true').toLowerCase(),
 )
@@ -197,7 +200,7 @@ async function runInternalCronJob(job) {
 }
 
 function startInternalCronScheduler() {
-  if (!internalCronEnabled && !aiHumanResumeSchedulerEnabled) return
+  if (!internalCronEnabled && !aiHumanResumeSchedulerEnabled && !appointmentReminderSchedulerEnabled) return
   if (!process.env.CRON_SECRET) {
     console.warn('[cron] INTERNAL_CRON_ENABLED=true, mas CRON_SECRET nao esta configurado.')
     return
@@ -216,10 +219,10 @@ function startInternalCronScheduler() {
       url: () => `${baseUrl}/api/cron-ai-human-resume`,
     })
   }
-  if (internalCronEnabled && (whatsappConfigured || emailConfigured)) {
+  if (appointmentReminderSchedulerEnabled && (whatsappConfigured || emailConfigured)) {
     jobs.push({
       name: 'reminders',
-      everyMs: 10 * 60 * 1000,
+      everyMs: 5 * 60 * 1000,
       url: () => `${baseUrl}/api/cron-reminders?execute=1`,
     })
   }

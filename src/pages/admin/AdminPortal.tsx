@@ -5880,7 +5880,8 @@ export function AdminInventoryPage() {
         method: "POST",
         body: JSON.stringify({
           inventoryId: movementItem.id,
-          kind: movementForm.kind,
+          reason: movementForm.kind === "sale" ? "sale" : undefined,
+          kind: movementForm.kind === "sale" ? "exit" : movementForm.kind,
           quantity: qtyNum,
           note: movementForm.note,
         }),
@@ -6236,6 +6237,7 @@ export function AdminInventoryPage() {
               >
                 <option value="entry">Entrada (Adicionar ao estoque)</option>
                 <option value="exit">Saída (Retirar do estoque)</option>
+                <option value="sale">Saída por venda (Notificar profissional)</option>
                 <option value="adjustment">Ajuste (Definir saldo absoluto)</option>
               </select>
             </label>

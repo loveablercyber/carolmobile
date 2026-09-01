@@ -2,13 +2,38 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
+  DEFAULT_BUSINESS_ADDRESS,
   appointmentChangeMessage,
   appointmentNotificationVersion,
   dueAppointmentReminderWindows,
   generateGoogleCalendarUrl,
+  loadAppointmentAutomationContext,
   normalizeAppointmentAutomationSettings,
   whatsappAppointmentIdempotencyKey,
 } from "../server/lib/appointment-automation.js";
+
+test("uses the physical Bauru address when no business address is configured", async () => {
+  const context = await loadAppointmentAutomationContext(async (sql) => ({
+    rows: sql.includes("business_profile") ? [{ value: {} }] : [],
+  }));
+  assert.equal(DEFAULT_BUSINESS_ADDRESS, "Rua Castro Alves, 6-37, Bauru/SP");
+  assert.equal(context.address, DEFAULT_BUSINESS_ADDRESS);
+});
+
+test("Coolify schedules reminders by default and recovers interrupted deliveries", async () => {
+  const [server, cron, bot] = await Promise.all([
+    readFile("server.mjs", "utf8"),
+    readFile("api/cron-tasks.js", "utf8"),
+    readFile("server/lib/whatsapp-ai-engine.js", "utf8"),
+  ]);
+  assert.match(server, /APPOINTMENT_REMINDER_SCHEDULER_ENABLED \?\? 'true'/);
+  assert.match(server, /name: 'reminders',[\s\S]*everyMs: 5 \* 60 \* 1000/);
+  assert.match(cron, /left join auth\.users cu/i);
+  assert.match(cron, /delivery_status='processing'[\s\S]*interval '15 minutes'/);
+  assert.match(cron, /req\.headers\["x-cron-secret"\] === expected/);
+  assert.match(bot, /📍 Endereço:/);
+  assert.match(bot, /location\.rows\[0\]\?\.address \|\| automation\.address/);
+});
 
 test("normalizes appointment automation with safe limits", () => {
   const settings = normalizeAppointmentAutomationSettings({

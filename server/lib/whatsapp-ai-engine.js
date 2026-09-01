@@ -2983,7 +2983,7 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
     if (conflict.rowCount) throw new Error("Este horário acabou de ficar indisponível.");
 
     const location = await client.query(
-      "select id,name from public.salon_locations where active order by name limit 1",
+      "select id,name,address from public.salon_locations where active order by name limit 1",
     );
     const appointmentId = (await client.query("select uuid_generate_v4() as id")).rows[0].id;
     const bookingCode = `CS-${String(appointmentId).replace(/-/g, "").slice(-12).toUpperCase()}`;
@@ -3209,7 +3209,7 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       startsAt: startsAt.toISOString(),
       endsAt: endsAt.toISOString(),
       durationMinutes,
-      location: location.rows[0]?.name || automation.address || "",
+      location: location.rows[0]?.address || automation.address || "",
       paymentId,
       paymentAmount: paymentInfo.amount,
       paymentUrl,
@@ -4321,6 +4321,7 @@ export async function handleStructuredBookingFlow({
       `🗓️ Data: *${formatDateLabel(state.date)}*`,
       `🕒 Horário: *${state.time}*`,
       appointment.professional ? `👩‍💼 Profissional: *${appointment.professional}*` : "",
+      appointment.location ? `📍 Endereço: *${appointment.location}*` : "",
       appointment.bookingCode ? `🔑 Protocolo: *${appointment.bookingCode}*` : "",
       appointment.calendarUrl ? `📅 Adicionar ao Google Calendar:\n${appointment.calendarUrl}` : "",
       ...bookingCreatedPaymentLines(appointment),

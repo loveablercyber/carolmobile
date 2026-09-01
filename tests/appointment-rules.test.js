@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import {
   appointmentRange,
   appointmentStatuses,
@@ -49,4 +50,20 @@ test("client status permissions remain restricted", () => {
     );
   }
   assert.equal(canUpdateAppointmentStatus("client", "invalid"), false);
+});
+
+test("casts the cancellation actor to the appointments UUID type", async () => {
+  const dataApi = await readFile("api/data.js", "utf8");
+
+  assert.match(
+    dataApi,
+    /cancelled_by=case when \$5 in \('cancelled','no_show'\) then \$13::uuid else null end/,
+  );
+  assert.match(dataApi, /cancelled_by=\$1::uuid/);
+});
+
+test("notifies the assigned professional about appointment cancellations", async () => {
+  const dataApi = await readFile("api/data.js", "utf8");
+  assert.match(dataApi, /type: "appointment_cancelled"/);
+  assert.match(dataApi, /professionalId: change\.professional_id/);
 });

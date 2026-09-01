@@ -1,5 +1,7 @@
 import { query } from "./db.js";
 
+export const DEFAULT_BUSINESS_ADDRESS = "Rua Castro Alves, 6-37, Bauru/SP";
+
 export const DEFAULT_APPOINTMENT_AUTOMATION_SETTINGS = Object.freeze({
   bookingEnabled: true,
   notifyClientOnCreate: true,
@@ -123,7 +125,7 @@ export async function loadAppointmentAutomationContext(queryer = query) {
       timezone: profile.timezone || settings.timezone,
     }),
     businessName: String(profile.businessName || "Carol Sol").trim() || "Carol Sol",
-    address: String(profile.address || "").trim(),
+    address: String(profile.address || DEFAULT_BUSINESS_ADDRESS).trim() || DEFAULT_BUSINESS_ADDRESS,
   };
 }
 

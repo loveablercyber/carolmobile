@@ -29,6 +29,7 @@ import {
   isConfiguredCloudinaryUrl,
   notifyAppointment,
   notifyAppointmentChange,
+  notifyActiveProfessionals,
   sendEmail,
   sendWhatsApp,
   getMessageTemplate,
@@ -1406,7 +1407,7 @@ async function updateAppointmentV2(req, res, user, body) {
         notes=$6,estimated_value=$7,original_value=$8,discount_amount=$9,
         coupon_id=$10,cancellation_reason=$11,
         cancelled_at=case when $5 in ('cancelled','no_show') then coalesce(cancelled_at,now()) else null end,
-        cancelled_by=case when $5 in ('cancelled','no_show') then $13 else null end,
+        cancelled_by=case when $5 in ('cancelled','no_show') then $13::uuid else null end,
         confirmed_at=case when $5='confirmed' then coalesce(confirmed_at,now()) else confirmed_at end,
         updated_at=now()
        where id=$12 returning id,status,updated_at`,
@@ -1480,7 +1481,7 @@ async function updateAppointmentV2(req, res, user, body) {
       `select c.profile_id as client_profile_id,a.client_id,a.coupon_id,a.discount_amount,a.booking_code,
         a.starts_at,a.ends_at,a.notes,a.estimated_value,l.name as location,s.name as service,
         cp.full_name as client_name,cp.phone as client_phone,cu.email as client_email,
-        pr.profile_id as professional_profile_id,pp.full_name as professional_name,
+        pr.id as professional_id,pr.profile_id as professional_profile_id,pp.full_name as professional_name,
         pp.phone as professional_phone,pu.email as professional_email
        from public.appointments a
        join public.clients c on c.id=a.client_id
@@ -1597,7 +1598,49 @@ async function updateAppointmentV2(req, res, user, body) {
       console.error("Appointment change notification error:", error.message);
     }
   }
+  if (change && updated.status_changed && ["cancelled", "no_show"].includes(updated.status)) {
+    notifyActiveProfessionals({
+      type: "appointment_cancelled",
+      professionalId: change.professional_id,
+      message: [
+        `Cliente: ${change.client_name || "Cliente"}`,
+        `Serviço: ${change.service || "Atendimento"}`,
+        `Data: ${new Date(change.starts_at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}`,
+        body.cancellationReason ? `Motivo: ${body.cancellationReason}` : "",
+      ].filter(Boolean).join("\n"),
+      data: { appointment_id: body.id, status: updated.status },
+    }).catch((error) => console.error("Professional cancellation notification error:", error.message));
+  }
   return send(res, 200, { appointment: { id: updated.id, status: updated.status, updated_at: updated.updated_at } });
+}
+
+async function createBusinessEvent(res, user, body) {
+  const type = String(body.type || "").trim();
+  if (!["donation_created", "course_requested", "product_sold"].includes(type))
+    throw appError("Tipo de evento comercial inválido.");
+  const clientName = String(body.clientName || user.name || "Cliente").trim();
+  const description = String(body.description || "").trim();
+  if (!description) throw appError("Informe os detalhes da solicitação.");
+  await query(`create table if not exists public.business_event_requests (
+    id uuid primary key default uuid_generate_v4(), type text not null,
+    requested_by uuid references public.profiles(id), client_name text,
+    contact_phone text, description text not null, metadata jsonb not null default '{}',
+    status text not null default 'pending', created_at timestamptz not null default now()
+  )`);
+  const { rows } = await query(
+    `insert into public.business_event_requests(type,requested_by,client_name,contact_phone,description,metadata)
+     values($1,$2,$3,$4,$5,$6) returning *`,
+    [type, user.id, clientName, String(body.phone || "").trim() || null, description, JSON.stringify(body.metadata || {})],
+  );
+  const labels = { donation_created: "Nova doação recebida", course_requested: "Novo curso solicitado", product_sold: "Nova venda de produto" };
+  notifyActiveProfessionals({
+    type,
+    title: labels[type],
+    message: [`Cliente: ${clientName}`, body.phone ? `Contato: ${body.phone}` : "", `Detalhes: ${description}`].filter(Boolean).join("\n"),
+    professionalId: body.professionalId || null,
+    data: { business_event_id: rows[0].id, type },
+  }).catch((error) => console.error("Business event WhatsApp notification error:", error.message));
+  return send(res, 201, { event: rows[0] });
 }
 
 async function requestReschedule(res, user, body) {
@@ -2006,7 +2049,7 @@ async function createInventoryMovement(req, res, user, body) {
 
   const result = await transaction(async (client) => {
     const itemResult = await client.query(
-      "select quantity, unit_cost from public.hair_inventory where id=$1 for update",
+      "select code,category,color,quantity,unit_cost,suggested_price from public.hair_inventory where id=$1 for update",
       [inventoryId]
     );
     if (!itemResult.rows[0]) throw appError("Item de estoque não encontrado.", 404);
@@ -2029,8 +2072,22 @@ async function createInventoryMovement(req, res, user, body) {
        values($1, $2, $3, $4, $5, $6) returning *`,
       [inventoryId, kind, quantity, unitCost, note, user.id]
     );
-    return { movement: rows[0], quantity: newQty };
+    return { movement: rows[0], quantity: newQty, item: itemResult.rows[0] };
   });
+
+  if (kind === "exit" && body.reason === "sale") {
+    notifyActiveProfessionals({
+      type: "product_sold",
+      message: [
+        `Produto: ${result.item.code || result.item.category || "Item de estoque"}`,
+        result.item.color ? `Cor: ${result.item.color}` : "",
+        `Quantidade: ${quantity}`,
+        `Valor estimado: ${Number(result.item.suggested_price || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}`,
+        note ? `Observação: ${note}` : "",
+      ].filter(Boolean).join("\n"),
+      data: { inventory_movement_id: result.movement.id, inventory_id: inventoryId },
+    }).catch((error) => console.error("Product sale WhatsApp notification error:", error.message));
+  }
 
   return send(res, 201, result);
 }
@@ -2371,6 +2428,8 @@ export default async function handler(req, res) {
       return await createDiscoveryRecommendation(res, user, body);
     if (req.method === "POST" && resource === "appointments")
       return await createAppointment(req, res, user, body);
+    if (req.method === "POST" && resource === "business-event")
+      return await createBusinessEvent(res, user, body);
     if (req.method === "POST" && resource === "reschedule-requests")
       return await requestReschedule(res, user, body);
     if (req.method === "POST" && resource === "photos")
@@ -2402,7 +2461,7 @@ export default async function handler(req, res) {
           throw appError("Este agendamento não pode mais ser cancelado.", 409);
         await client.query(
           `update public.appointments set status='cancelled',cancelled_at=coalesce(cancelled_at,now()),
-             cancelled_by=$1,notes=coalesce(notes,'') || ' [Removido]',updated_at=now() where id=$2`,
+             cancelled_by=$1::uuid,notes=coalesce(notes,'') || ' [Removido]',updated_at=now() where id=$2`,
           [user.id, id],
         );
         await client.query(
@@ -2416,9 +2475,26 @@ export default async function handler(req, res) {
            values($1,$2,'cancelled',$3,'Cancelado pelo aplicativo')`,
           [id, previous.rows[0].status, user.id],
         );
-        return true;
+        const details = await client.query(
+          `select a.professional_id,a.starts_at,s.name as service,cp.full_name as client_name
+             from public.appointments a join public.services s on s.id=a.service_id
+             join public.clients c on c.id=a.client_id join public.profiles cp on cp.id=c.profile_id
+            where a.id=$1`,
+          [id],
+        );
+        return details.rows[0] || { id };
       });
       if (!cancelled) throw appError("Não foi possível cancelar o agendamento.");
+      notifyActiveProfessionals({
+        type: "appointment_cancelled",
+        professionalId: cancelled.professional_id || null,
+        message: [
+          `Cliente: ${cancelled.client_name || "Cliente"}`,
+          `Serviço: ${cancelled.service || "Atendimento"}`,
+          cancelled.starts_at ? `Data: ${new Date(cancelled.starts_at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}` : "",
+        ].filter(Boolean).join("\n"),
+        data: { appointment_id: id, status: "cancelled" },
+      }).catch((error) => console.error("Professional cancellation notification error:", error.message));
       return send(res, 200, { success: true, id });
     }
     if (req.method === "POST" && resource === "admin-color") {

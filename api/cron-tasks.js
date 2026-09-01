@@ -77,7 +77,8 @@ async function handleReminders(req, res) {
   const settings = automation.settings;
   const maxHours = Math.max(settings.reminder24hHoursBefore, settings.reminder2hHoursBefore) + 3;
   const { rows } = await query(`
-    select a.id,a.booking_code,a.starts_at,a.ends_at,a.updated_at,s.name as service,l.name as location,
+    select a.id,a.booking_code,a.starts_at,a.ends_at,a.updated_at,s.name as service,
+      coalesce(nullif(l.address,''),$2) as location,
       cp.id as client_profile_id,cp.full_name as client_name,cp.phone as client_phone,cu.email as client_email,
       pp.id as professional_profile_id,pp.full_name as professional_name,pp.phone as professional_phone,pu.email as professional_email,
       coalesce(cnp.email,true) as client_wants_email,
@@ -88,7 +89,7 @@ async function handleReminders(req, res) {
       coalesce(pnp.reminders,true) as professional_wants_reminders
     from public.appointments a
     join public.services s on s.id=a.service_id
-    join public.clients c on c.id=a.client_id join public.profiles cp on cp.id=c.profile_id join auth.users cu on cu.id=cp.id
+    join public.clients c on c.id=a.client_id join public.profiles cp on cp.id=c.profile_id left join auth.users cu on cu.id=cp.id
     join public.professionals pr on pr.id=a.professional_id join public.profiles pp on pp.id=pr.profile_id
     left join auth.users pu on pu.id=pp.id
     left join public.salon_locations l on l.id=a.location_id
@@ -96,7 +97,7 @@ async function handleReminders(req, res) {
     left join public.notification_preferences pnp on pnp.profile_id=pp.id
     where a.status in ('confirmed','pending_deposit')
       and a.starts_at between now() and now()+($1::text || ' hours')::interval
-  `, [String(maxHours)])
+  `, [String(maxHours), automation.address])
   let sent = 0
   let failed = 0
   for (const appointment of rows) {
@@ -113,14 +114,14 @@ async function handleReminders(req, res) {
           phone: appointment.client_phone, email: appointment.client_email,
           wantsEmail: appointment.client_wants_email, wantsWhatsapp: appointment.client_wants_whatsapp,
           enabled: appointment.client_wants_reminders,
-          text: `🔔 Lembrete de agendamento\n\nOlá, ${appointment.client_name}! Seu atendimento de ${appointment.service} com ${appointment.professional_name} será ${reminderLabel(window)}.\nData e horário: ${prettyDateTime(appointment.starts_at)}${calendarUrl ? `\n\n📅 Adicionar ao Google Calendar:\n${calendarUrl}` : ""}`,
+          text: `🔔 Lembrete de agendamento\n\nOlá, ${appointment.client_name}! Seu atendimento de ${appointment.service} com ${appointment.professional_name} será ${reminderLabel(window)}.\nData e horário: ${prettyDateTime(appointment.starts_at)}${appointment.location ? `\n📍 Endereço: ${appointment.location}` : ""}${calendarUrl ? `\n\n📅 Adicionar ao Google Calendar:\n${calendarUrl}` : ""}`,
         },
         {
           type: "professional", profileId: appointment.professional_profile_id, name: appointment.professional_name,
           phone: appointment.professional_phone, email: appointment.professional_email,
           wantsEmail: appointment.professional_wants_email, wantsWhatsapp: appointment.professional_wants_whatsapp,
           enabled: appointment.professional_wants_reminders,
-          text: `🔔 Lembrete de atendimento\n\nVocê possui um atendimento ${reminderLabel(window)}.\nCliente: ${appointment.client_name}\nServiço: ${appointment.service}\nData e horário: ${prettyDateTime(appointment.starts_at)}${calendarUrl ? `\n\n📅 Adicionar ao Google Calendar:\n${calendarUrl}` : ""}`,
+          text: `🔔 Lembrete de atendimento\n\nVocê possui um atendimento ${reminderLabel(window)}.\nCliente: ${appointment.client_name}\nServiço: ${appointment.service}\nData e horário: ${prettyDateTime(appointment.starts_at)}${appointment.location ? `\n📍 Endereço: ${appointment.location}` : ""}${calendarUrl ? `\n\n📅 Adicionar ao Google Calendar:\n${calendarUrl}` : ""}`,
         },
       ];
       for (const recipient of recipients) {
@@ -133,7 +134,9 @@ async function handleReminders(req, res) {
            on conflict(notification_key) where notification_key is not null do update
              set delivery_status='processing',delivery_attempts=public.notifications.delivery_attempts+1,
                  last_delivery_error=null,updated_at=now()
-             where public.notifications.delivery_status='failed'
+             where (public.notifications.delivery_status='failed'
+                    or (public.notifications.delivery_status='processing'
+                        and public.notifications.updated_at < now()-interval '15 minutes'))
                and public.notifications.delivery_attempts < $7
            returning id`,
           [recipient.profileId, appointment.id, `Lembrete de agendamento — ${window.key}`, recipient.text,
@@ -145,7 +148,8 @@ async function handleReminders(req, res) {
         const results = [];
         if (recipient.wantsEmail) results.push(await deliverReminder({ notificationId, channel: "email", recipient: recipient.email, sendDelivery: () => sendEmail({ to: recipient.email, subject: "Lembrete de agendamento — Carol Sol", html: `<p style="white-space:pre-line">${recipient.text}</p>` }) }));
         if (recipient.wantsWhatsapp) results.push(await deliverReminder({ notificationId, channel: "whatsapp", recipient: recipient.phone, sendDelivery: () => sendWhatsApp({ to: recipient.phone, text: recipient.text }) }));
-        const hasFailure = results.length === 0 || results.some((result) => !result.delivered);
+        const hasDelivery = results.some((result) => result.delivered);
+        const hasFailure = !hasDelivery;
         const errorMessage = results.filter((result) => result.error).map((result) => result.error).join(" | ") || null;
         await query(
           `update public.notifications set delivery_status=$2,last_delivery_error=$3,
@@ -283,7 +287,9 @@ export default async function handler(req, res) {
       return send(res, 405, { error: "Método não permitido." });
     
     const expected = process.env.CRON_SECRET;
-    if (!expected || req.headers.authorization !== `Bearer ${expected}`) {
+    const suppliedSecret = req.headers.authorization === `Bearer ${expected}` ||
+      req.headers["x-cron-secret"] === expected;
+    if (!expected || !suppliedSecret) {
       return send(res, 401, { error: "Não autorizado." });
     }
 
