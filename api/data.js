@@ -479,7 +479,7 @@ async function getResource(req, res, user, resource) {
           `select duration_minutes from public.services
            where catalog_code='assessment-extensions' and active limit 1`,
         );
-        bookingDuration = Number(assessment.rows[0]?.duration_minutes || 60);
+        bookingDuration = Number(assessment.rows[0]?.duration_minutes || 15);
       } else {
         bookingDuration = Number(variant.rows[0].duration_minutes) + Number(addonDuration.rows[0].duration || 0);
       }
@@ -920,7 +920,7 @@ async function createAppointment(req, res, user, body) {
       professional.id,
     ]);
     const bookingDuration = variant?.requires_assessment
-      ? Number((await client.query(`select duration_minutes from public.services where catalog_code='assessment-extensions' and active limit 1`)).rows[0]?.duration_minutes || 60)
+      ? Number((await client.query(`select duration_minutes from public.services where catalog_code='assessment-extensions' and active limit 1`)).rows[0]?.duration_minutes || 15)
       : variant
       ? totalCatalogDuration(variant, addons)
       : Number(service.duration_minutes);
