@@ -49,6 +49,29 @@ test("2026 migration is idempotent and keeps commercial variants separate from i
   assert.doesNotMatch(sql, /insert into public\.hair_inventory/i);
 });
 
+test("salon treatments, coloring and haircut are active in the shared web and WhatsApp catalog", async () => {
+  const sql = await readFile(
+    new URL("../database/neon-salon-services-2026.sql", import.meta.url),
+    "utf8",
+  );
+  const runner = await readFile(new URL("../scripts/neon-admin.mjs", import.meta.url), "utf8");
+  for (const code of [
+    "treatment-acidification",
+    "treatment-hair-shielding",
+    "treatment-organic-botox",
+    "treatment-selante-blond",
+    "treatment-espelhamento-3d",
+    "coloring",
+    "haircut-complete",
+  ]) assert.match(sql, new RegExp(`'${code}'`));
+  assert.match(sql, /'percentage', 30, true/);
+  assert.match(sql, /show_online_booking = true/);
+  assert.match(sql, /allow_whatsapp_booking = true/);
+  assert.match(sql, /018_salon_services_2026/);
+  assert.match(runner, /neon-salon-services-2026\.sql/);
+  assert.match(runner, /018_salon_services_2026/);
+});
+
 test("2026 normalization preserves history and restores the official catalog links", async () => {
   const sql = await readFile(
     new URL("../database/neon-service-catalog-2026-normalization.sql", import.meta.url),
