@@ -182,6 +182,14 @@ async function setup() {
     resolve("database/neon-unified-sso.sql"),
     "utf8",
   );
+  const salonServicesMigration = await readFile(
+    resolve("database/neon-salon-services-2026.sql"),
+    "utf8",
+  );
+  const assessmentDurationMigration = await readFile(
+    resolve("database/neon-assessment-duration-15-minutes.sql"),
+    "utf8",
+  );
 
   await client.query("begin");
   try {
@@ -357,6 +365,24 @@ async function setup() {
       await client.query(unifiedSsoMigration);
       await client.query(
         "insert into public._luxe_migrations(version, description) values ('017_unified_sso', 'Login único CarolSol com códigos temporários entre domínios')",
+      );
+    }
+    const { rowCount: salonServicesApplied } = await client.query(
+      "select 1 from public._luxe_migrations where version = '018_salon_services_2026'",
+    );
+    if (!salonServicesApplied) {
+      await client.query(salonServicesMigration);
+      await client.query(
+        "insert into public._luxe_migrations(version, description) values ('018_salon_services_2026', 'Serviços de alinhamento, coloração e corte com sinal de 30%')",
+      );
+    }
+    const { rowCount: assessmentDurationApplied } = await client.query(
+      "select 1 from public._luxe_migrations where version = '019_assessment_duration_15_minutes'",
+    );
+    if (!assessmentDurationApplied) {
+      await client.query(assessmentDurationMigration);
+      await client.query(
+        "insert into public._luxe_migrations(version, description) values ('019_assessment_duration_15_minutes', 'Avaliação com duração máxima de 15 minutos')",
       );
     }
     await client.query("commit");

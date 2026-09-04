@@ -2797,12 +2797,14 @@ async function availableBookingSlots(client, { serviceId, serviceVariantId = "",
   let durationMinutes = Number(service.rows[0].duration_minutes || 60);
   if (serviceVariantId) {
     const variant = await client.query(
-      `select duration_minutes from public.service_variants
+          `select duration_minutes,requires_assessment from public.service_variants
        where id=$1 and service_id=$2 and active and allow_whatsapp_booking limit 1`,
       [serviceVariantId, serviceId],
     );
     if (!variant.rows[0]) return { service: null, slots: [] };
-    durationMinutes = Number(variant.rows[0].duration_minutes || durationMinutes);
+    durationMinutes = variant.rows[0].requires_assessment
+      ? 15
+      : Number(variant.rows[0].duration_minutes || durationMinutes);
   }
 
   const professionals = await client.query(
@@ -2954,7 +2956,9 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
 
     const startsAt = new Date(`${state.date}T${state.time}:00-03:00`);
     const addonDuration = addons.rows.reduce((sum, addon) => sum + Number(addon.duration_minutes || 0), 0);
-    const durationMinutes = Number(variant.rows[0]?.duration_minutes || service.rows[0].duration_minutes || 60) + addonDuration;
+    const durationMinutes = variant.rows[0]?.requires_assessment
+      ? 15
+      : Number(variant.rows[0]?.duration_minutes || service.rows[0].duration_minutes || 60) + addonDuration;
     const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000);
     const { period, error: periodError } = schedulePeriod(startsAt, endsAt);
     if (periodError) throw new Error(periodError);

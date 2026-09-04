@@ -103,7 +103,7 @@ select v.name,v.description,true from (values
 where not exists(select 1 from public.hair_methods m where lower(m.name)=lower(v.name));
 
 with catalog(code,name,description,duration,price,deposit,category,method) as (values
- ('assessment-extensions','Avaliação para alongamento','Avaliação obrigatória para confirmar técnica, características do cabelo, disponibilidade do material e condições do procedimento.',60,0,0,'Avaliação',null),
+ ('assessment-extensions','Avaliação para alongamento','Avaliação obrigatória para confirmar técnica, características do cabelo, disponibilidade do material e condições do procedimento.',15,0,0,'Avaliação',null),
  ('combo-fita','Combo Fibra Russa + Fita Adesiva','Fibra sintética comercial Fibra Russa e colocação por Fita Adesiva inclusas. Disponibilidade confirmada por uma profissional após avaliação.',180,390,0,'Aplicação com cabelo/fibra inclusa','Fita Adesiva'),
  ('combo-ponto','Combo Fibra Russa + Ponto Americano Invisível','Fibra sintética comercial Fibra Russa e colocação por Ponto Americano Invisível inclusas. Disponibilidade confirmada após avaliação.',240,390,50,'Aplicação com cabelo/fibra inclusa','Ponto Americano Invisível'),
  ('combo-entrelace','Combo Fibra Russa + Entrelace','Fibra sintética comercial Fibra Russa e colocação por Entrelace inclusas. Disponibilidade confirmada após avaliação.',360,690,50,'Aplicação com cabelo/fibra inclusa','Entrelace'),
@@ -137,7 +137,7 @@ create temporary table catalog_variants (
 
 insert into catalog_variants values
 -- Avaliação
-('assessment-extensions','assessment-extensions','Avaliação para alongamento','general','evaluation','not_applicable',null,null,null,'flat',null,null,0,60,'none',0,false,false,1),
+('assessment-extensions','assessment-extensions','Avaliação para alongamento','general','evaluation','not_applicable',null,null,null,'flat',null,null,0,15,'none',0,false,false,1),
 -- Combos Fita: sinal corresponde ao custo integral do material, definido após avaliação.
 ('combo-fita','combo-fita-60-100','60/65/70 cm — 100 g','full_head','package_application','included','60/65/70 cm',100,'exact','gram',100,'exact',440,180,'material_cost',0,false,true,1),
 ('combo-fita','combo-fita-60-150','60/65/70 cm — 150 g','full_head','package_application','included','60/65/70 cm',150,'exact','gram',150,'exact',525,180,'material_cost',0,false,true,2),

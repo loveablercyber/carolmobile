@@ -49,6 +49,52 @@ test("2026 migration is idempotent and keeps commercial variants separate from i
   assert.doesNotMatch(sql, /insert into public\.hair_inventory/i);
 });
 
+test("salon treatments, coloring and haircut are active in the shared web and WhatsApp catalog", async () => {
+  const sql = await readFile(
+    new URL("../database/neon-salon-services-2026.sql", import.meta.url),
+    "utf8",
+  );
+  const runner = await readFile(new URL("../scripts/neon-admin.mjs", import.meta.url), "utf8");
+  for (const code of [
+    "treatment-acidification",
+    "treatment-hair-shielding",
+    "treatment-organic-botox",
+    "treatment-selante-blond",
+    "treatment-espelhamento-3d",
+    "coloring",
+    "haircut-complete",
+  ]) assert.match(sql, new RegExp(`'${code}'`));
+  assert.match(sql, /'percentage', 30, true/);
+  assert.match(sql, /show_online_booking = true/);
+  assert.match(sql, /allow_whatsapp_booking = true/);
+  assert.match(sql, /018_salon_services_2026/);
+  assert.match(runner, /neon-salon-services-2026\.sql/);
+  assert.match(runner, /018_salon_services_2026/);
+});
+
+test("assessment is standardized at 15 minutes for existing and new databases", async () => {
+  const catalog = await readFile(
+    new URL("../database/neon-service-catalog-2026.sql", import.meta.url),
+    "utf8",
+  );
+  const migration = await readFile(
+    new URL("../database/neon-assessment-duration-15-minutes.sql", import.meta.url),
+    "utf8",
+  );
+  const runner = await readFile(new URL("../scripts/neon-admin.mjs", import.meta.url), "utf8");
+  const web = await readFile(new URL("../api/data.js", import.meta.url), "utf8");
+  const bot = await readFile(new URL("../server/lib/whatsapp-ai-engine.js", import.meta.url), "utf8");
+  assert.match(catalog, /'assessment-extensions'[\s\S]*?,15,0,0,'Avaliação'/);
+  assert.match(migration, /set duration_minutes = 15/);
+  assert.match(
+    migration,
+    /update public\.services\s+set duration_minutes = 15\s+where catalog_code = 'assessment-extensions';/i,
+  );
+  assert.match(runner, /019_assessment_duration_15_minutes/);
+  assert.match(web, /duration_minutes \|\| 15/);
+  assert.match(bot, /requires_assessment\s*\?\s*15/);
+});
+
 test("2026 normalization preserves history and restores the official catalog links", async () => {
   const sql = await readFile(
     new URL("../database/neon-service-catalog-2026-normalization.sql", import.meta.url),
