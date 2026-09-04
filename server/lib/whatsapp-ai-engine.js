@@ -3030,6 +3030,29 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       "Confirmar disponibilidade e detalhes com a cliente antes do atendimento.",
     ].filter(Boolean).join(" ");
     const idempotencyKey = whatsappAppointmentIdempotencyKey(conversationId, state.previousAppointmentId);
+    const existingAppointment = await client.query(
+      `select id,booking_code
+         from public.appointments
+        where idempotency_key=$1
+          and status not in ('cancelled','rejected')
+        limit 1`,
+      [idempotencyKey],
+    );
+    if (existingAppointment.rows[0]) {
+      const existing = existingAppointment.rows[0];
+      await client.query(
+        `update public.whatsapp_conversations
+            set appointment_id=$2, updated_at=now()
+          where id=$1`,
+        [conversationId, existing.id],
+      );
+      return {
+        id: existing.id,
+        bookingCode: existing.booking_code || state.bookingCode || "",
+        alreadyCreated: true,
+        persisted: true,
+      };
+    }
 
     if (variant.rows[0]) {
       await client.query(

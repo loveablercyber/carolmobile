@@ -916,9 +916,28 @@ async function createAppointment(req, res, user, body) {
       [body.professionalId, body.serviceId],
     );
     if (!professional) throw appError("Profissional não encontrada.");
+    const source = user.role === "admin" ? "admin" : user.role === "professional" ? "professional" : "client";
+    const idempotencyKey = String(body.idempotencyKey || `${source}:${user.id}:${service.id}:${professional.id}:${startsAt.toISOString()}`).slice(0, 300);
+    const replay = async () => {
+      const existing = await client.query(
+        "select id,client_id from public.appointments where idempotency_key=$1 limit 1",
+        [idempotencyKey],
+      );
+      if (!existing.rowCount) return null;
+      if (existing.rows[0].client_id !== clientId)
+        throw appError("Esta chave de idempotência já pertence a outro agendamento.", 409);
+      const details = await client.query(`${appointmentSelect} where a.id=$1`, [existing.rows[0].id]);
+      return { ...details.rows[0], idempotent_replay: true };
+    };
+    const priorAppointment = await replay();
+    if (priorAppointment) return priorAppointment;
     await client.query("select pg_advisory_xact_lock(hashtext($1))", [
       professional.id,
     ]);
+    // A second identical request can have begun before the first committed and
+    // waited on this lock. Check again before testing availability or inserting.
+    const lockedReplay = await replay();
+    if (lockedReplay) return lockedReplay;
     const bookingDuration = variant?.requires_assessment
       ? Number((await client.query(`select duration_minutes from public.services where catalog_code='assessment-extensions' and active limit 1`)).rows[0]?.duration_minutes || 60)
       : variant
@@ -1005,10 +1024,8 @@ async function createAppointment(req, res, user, body) {
       total: couponResult.total,
       deposit,
     });
-    const source = user.role === "admin" ? "admin" : user.role === "professional" ? "professional" : "client";
-    const idempotencyKey = String(body.idempotencyKey || `${source}:${user.id}:${service.id}:${professional.id}:${startsAt.toISOString()}`).slice(0, 300);
     const { rows } = await client.query(
-      `insert into public.appointments(id,booking_code,client_id,professional_id,service_id,service_variant_id,location_id,starts_at,ends_at,status,notes,estimated_value,original_value,discount_amount,coupon_id,intake_data,catalog_snapshot,created_by,source,timezone,duration_minutes,idempotency_key) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) returning id`,
+      `insert into public.appointments(id,booking_code,client_id,professional_id,service_id,service_variant_id,location_id,starts_at,ends_at,status,notes,estimated_value,original_value,discount_amount,coupon_id,intake_data,catalog_snapshot,created_by,source,timezone,duration_minutes,idempotency_key) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) on conflict (idempotency_key) where idempotency_key is not null do nothing returning id`,
       [
         appointmentId,
         bookingCode,
@@ -1034,6 +1051,11 @@ async function createAppointment(req, res, user, body) {
         idempotencyKey,
       ],
     );
+    if (!rows.length) {
+      const duplicate = await replay();
+      if (duplicate) return duplicate;
+      throw appError("Não foi possível confirmar a repetição do agendamento.", 409);
+    }
     for (const addon of addons) {
       await client.query(
         `insert into public.appointment_addons(appointment_id,addon_id,addon_code,addon_name,price,duration_minutes)
@@ -1137,6 +1159,8 @@ async function createAppointment(req, res, user, body) {
       professional_notification_id: profNotification.rows[0]?.id,
     };
   });
+  if (appointment.idempotent_replay)
+    return send(res, 200, { appointment: formatAppointment(appointment, automation), idempotent: true });
   const contact = await query(
     `select u.email,p.phone,p.full_name from public.clients c join public.profiles p on p.id=c.profile_id join auth.users u on u.id=p.id where c.id=$1`,
     [appointment.client_id],
