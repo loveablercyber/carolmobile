@@ -4,8 +4,7 @@
 begin;
 
 update public.services
-   set duration_minutes = 15,
-       updated_at = now()
+   set duration_minutes = 15
  where catalog_code = 'assessment-extensions';
 
 update public.service_variants variant

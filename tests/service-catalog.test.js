@@ -86,6 +86,7 @@ test("assessment is standardized at 15 minutes for existing and new databases", 
   const bot = await readFile(new URL("../server/lib/whatsapp-ai-engine.js", import.meta.url), "utf8");
   assert.match(catalog, /'assessment-extensions'[\s\S]*?,15,0,0,'Avaliação'/);
   assert.match(migration, /set duration_minutes = 15/);
+  assert.doesNotMatch(migration, /public\.services[\s\S]*updated_at/);
   assert.match(runner, /019_assessment_duration_15_minutes/);
   assert.match(web, /duration_minutes \|\| 15/);
   assert.match(bot, /requires_assessment\s*\?\s*15/);
