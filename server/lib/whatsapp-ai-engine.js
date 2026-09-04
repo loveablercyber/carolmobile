@@ -3035,7 +3035,7 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
     ].filter(Boolean).join(" ");
     const idempotencyKey = whatsappAppointmentIdempotencyKey(conversationId, state.previousAppointmentId);
     const existingAppointment = await client.query(
-      `select id,booking_code
+      `select id, booking_code
          from public.appointments
         where idempotency_key=$1
           and status not in ('cancelled','rejected')
@@ -3058,13 +3058,16 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       };
     }
 
+    let appointmentInsert;
     if (variant.rows[0]) {
-      await client.query(
+      appointmentInsert = await client.query(
         `insert into public.appointments(
           id,booking_code,client_id,professional_id,service_id,service_variant_id,location_id,starts_at,ends_at,
           status,notes,estimated_value,original_value,discount_amount,intake_data,catalog_snapshot,created_by,
           source,timezone,duration_minutes,idempotency_key
-        ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,0,$13,$14,$15,$16,$17,$18,$19)`,
+        ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,0,$13,$14,$15,$16,$17,$18,$19)
+          on conflict (idempotency_key) where idempotency_key is not null do nothing
+          returning id`,
         [appointmentId,bookingCode,bookingClient.client_id,professional.rows[0].id,service.rows[0].id,
           variant.rows[0].id,location.rows[0]?.id || null,startsAt.toISOString(),endsAt.toISOString(),
           initialStatus,notes,selectedValue,JSON.stringify(intake),
@@ -3080,16 +3083,37 @@ async function createWhatsappAppointment({ conversationId, phoneNumber, state })
       }
     } else {
       // Keep the legacy statement stable for services that do not use the 2026 catalog.
-      await client.query(
+      appointmentInsert = await client.query(
         `insert into public.appointments(
           id,booking_code,client_id,professional_id,service_id,location_id,starts_at,ends_at,
           status,notes,estimated_value,original_value,discount_amount,intake_data,created_by,
           source,timezone,duration_minutes,idempotency_key
-        ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,0,$12,$13,$14,$15,$16,$17)`,
+        ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,0,$12,$13,$14,$15,$16,$17)
+          on conflict (idempotency_key) where idempotency_key is not null do nothing
+          returning id`,
         [appointmentId,bookingCode,bookingClient.client_id,professional.rows[0].id,service.rows[0].id,
           location.rows[0]?.id || null,startsAt.toISOString(),endsAt.toISOString(),initialStatus,notes,
           selectedValue,JSON.stringify(intake),bookingClient.profile_id || null,"bot",automation.settings.timezone,durationMinutes,idempotencyKey],
       );
+    }
+    if (!appointmentInsert?.rowCount) {
+      const duplicate = await client.query(
+        "select id, booking_code from public.appointments where idempotency_key=$1 limit 1",
+        [idempotencyKey],
+      );
+      if (!duplicate.rows[0]) throw new Error("Não foi possível recuperar o pré-agendamento repetido.");
+      await client.query(
+        `update public.whatsapp_conversations
+            set appointment_id=$2, updated_at=now()
+          where id=$1`,
+        [conversationId, duplicate.rows[0].id],
+      );
+      return {
+        id: duplicate.rows[0].id,
+        bookingCode: duplicate.rows[0].booking_code || state.bookingCode || "",
+        alreadyCreated: true,
+        persisted: true,
+      };
     }
     let paymentId = null;
     let paymentUrl = null;
